@@ -1,5 +1,7 @@
 from rest_framework.permissions import BasePermission, IsAuthenticated
 
+from user_management.services.admin_access import is_verified_admin
+
 
 class IsVerifiedCustomer(IsAuthenticated):
     message = 'Email verification is required before placing an order.'
@@ -9,6 +11,8 @@ class IsVerifiedCustomer(IsAuthenticated):
             return False
 
         user = request.user
+        if is_verified_admin(user):
+            return True
         if user.is_superuser:
             return True
 
@@ -24,6 +28,6 @@ class IsOrderOwnerOrAdmin(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.is_superuser:
+        if is_verified_admin(user) or user.is_superuser:
             return True
         return obj.customer.user_id == user.id

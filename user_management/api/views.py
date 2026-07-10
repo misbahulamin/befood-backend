@@ -9,9 +9,17 @@ from rest_framework.authtoken.models import Token
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ..services.auth_service import get_login_response, register_customer
+from ..services.admin_access import is_verified_admin
+from ..services.auth_service import get_admin_login_response, get_login_response, register_customer
 from ..services.email_verification import get_user_from_uid, mark_email_verified, send_activation_email, verify_token
-from .serializers import CurrentUserSerializer, CustomerLoginSerializer, CustomerRegistrationSerializer, ResendVerificationSerializer
+from .serializers import (
+    AdminCurrentUserSerializer,
+    AdminLoginSerializer,
+    CurrentUserSerializer,
+    CustomerLoginSerializer,
+    CustomerRegistrationSerializer,
+    ResendVerificationSerializer,
+)
 
 
 class CustomerRegistrationView(APIView):
@@ -98,3 +106,34 @@ class LogoutView(APIView):
     def post(self, request):
         Token.objects.filter(user=request.user).delete()
         return Response({'message': 'Logged out successfully.'})
+
+
+class AdminLoginView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        tags=['Admin Auth'],
+        request=AdminLoginSerializer,
+        description='Login verified admin using email and password.',
+    )
+    def post(self, request):
+        serializer = AdminLoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            errors = serializer.errors
+            if 'non_field_errors' in errors and errors['non_field_errors']:
+                detail = errors['non_field_errors'][0]
+                return Response({'detail': str(detail)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+        response_data = get_admin_login_response(serializer.validated_data['user'])
+        return Response(response_data)
+
+
+class AdminCurrentUserView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(tags=['Admin Auth'], description='Get current authenticated admin information.')
+    def get(self, request):
+        if not is_verified_admin(request.user):
+            return Response({'detail': 'Admin access required.'}, status=status.HTTP_403_FORBIDDEN)
+        serializer = AdminCurrentUserSerializer(request.user)
+        return Response(serializer.data)

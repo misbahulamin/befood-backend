@@ -128,6 +128,16 @@ class StaffProfile(models.Model):
     outlet_id = models.IntegerField(null=True, blank=True)
 
 
+class AdminProfile(TimeStampedModel):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='admin_profile')
+    is_verified = models.BooleanField(default=False)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    def __str__(self):
+        return self.user.email
+
+
 class DeviceToken(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='device_tokens')
     token = models.CharField(max_length=255)

@@ -1,5 +1,7 @@
 from rest_framework.permissions import BasePermission, IsAuthenticated
 
+from user_management.services.admin_access import is_verified_admin
+
 
 class HasCustomerProfile(IsAuthenticated):
     message = 'Customer profile not found for this account.'
@@ -18,3 +20,10 @@ class IsCustomerAddressOwner(BasePermission):
         if profile is None:
             return False
         return obj.customer_profile_id == profile.id
+
+
+class IsVerifiedAdmin(IsAuthenticated):
+    message = 'Verified admin access required.'
+
+    def has_permission(self, request, view):
+        return super().has_permission(request, view) and is_verified_admin(request.user)

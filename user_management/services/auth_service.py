@@ -59,3 +59,26 @@ def get_login_response(user):
             'is_email_verified': profile.is_email_verified,
         },
     }
+
+
+def get_admin_login_response(user):
+    token, _ = Token.objects.get_or_create(user=user)
+    admin_profile = getattr(user, 'admin_profile', None)
+    response = {
+        'token': token.key,
+        'user': {
+            'id': user.id,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'is_superuser': user.is_superuser,
+        },
+        'groups': list(user.groups.values_list('name', flat=True)),
+        'is_admin': True,
+    }
+    if admin_profile is not None:
+        response['admin_profile'] = {
+            'is_verified': admin_profile.is_verified,
+            'verified_at': admin_profile.verified_at,
+        }
+    return response

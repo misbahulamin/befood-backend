@@ -1,6 +1,37 @@
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
+from django.contrib.auth.models import Group, User
+from django.utils import timezone
 
-from .models import CustomerAddress, CustomerProfile
+from .models import AdminProfile, CustomerAddress, CustomerProfile
+
+
+admin.site.unregister(User)
+
+
+@admin.register(User)
+class UserAdmin(DjangoUserAdmin):
+    search_fields = ('username', 'email', 'first_name', 'last_name')
+
+
+@admin.register(AdminProfile)
+class AdminProfileAdmin(admin.ModelAdmin):
+    list_display = ('user', 'is_verified', 'verified_at', 'created_at')
+    list_filter = ('is_verified',)
+    search_fields = ('user__email', 'user__first_name', 'user__last_name')
+    autocomplete_fields = ('user',)
+    readonly_fields = ('verified_at', 'created_at', 'updated_at')
+
+    def save_model(self, request, obj, form, change):
+        if obj.is_verified and obj.verified_at is None:
+            obj.verified_at = timezone.now()
+        if not obj.is_verified:
+            obj.verified_at = None
+        super().save_model(request, obj, form, change)
+        admin_group, _ = Group.objects.get_or_create(name='ADMIN')
+        obj.user.groups.add(admin_group)
+        obj.user.is_active = obj.is_verified
+        obj.user.save(update_fields=['is_active'])
 
 
 @admin.register(CustomerProfile)

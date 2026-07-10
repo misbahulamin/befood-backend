@@ -41,6 +41,9 @@ class CustomerRegistrationSerializer(serializers.Serializer):
         return validated_data
 
 
+from ..services.admin_access import is_verified_admin
+
+
 class CustomerLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
@@ -55,6 +58,69 @@ class CustomerLoginSerializer(serializers.Serializer):
             raise serializers.ValidationError('Please verify your email before login.')
         attrs['user'] = user
         return attrs
+
+
+class AdminLoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        email = attrs.get('email').lower()
+        password = attrs.get('password')
+        user = User.objects.filter(email__iexact=email).first()
+        if not user or not user.check_password(password):
+            raise serializers.ValidationError('Invalid credentials.')
+        if user.is_superuser:
+            if not user.is_active:
+                raise serializers.ValidationError('Account is inactive.')
+            attrs['user'] = user
+            return attrs
+        admin_profile = getattr(user, 'admin_profile', None)
+        if admin_profile is None:
+            raise serializers.ValidationError('This account is not authorized for admin login.')
+        if not admin_profile.is_verified:
+            raise serializers.ValidationError('Admin account is not verified yet.')
+        if not user.groups.filter(name='ADMIN').exists():
+            raise serializers.ValidationError('This account is not authorized for admin login.')
+        if not user.is_active:
+            raise serializers.ValidationError('Account is inactive.')
+        attrs['user'] = user
+        return attrs
+
+
+class AdminCurrentUserSerializer(serializers.Serializer):
+    user = serializers.SerializerMethodField()
+    groups = serializers.SerializerMethodField()
+    admin_profile = serializers.SerializerMethodField()
+    is_admin = serializers.SerializerMethodField()
+    is_authenticated = serializers.SerializerMethodField()
+
+    def get_user(self, obj):
+        return {
+            'id': obj.id,
+            'email': obj.email,
+            'first_name': obj.first_name,
+            'last_name': obj.last_name,
+            'is_superuser': obj.is_superuser,
+        }
+
+    def get_groups(self, obj):
+        return list(obj.groups.values_list('name', flat=True))
+
+    def get_admin_profile(self, obj):
+        admin_profile = getattr(obj, 'admin_profile', None)
+        if admin_profile is None:
+            return None
+        return {
+            'is_verified': admin_profile.is_verified,
+            'verified_at': admin_profile.verified_at,
+        }
+
+    def get_is_admin(self, obj):
+        return is_verified_admin(obj)
+
+    def get_is_authenticated(self, obj):
+        return obj.is_authenticated
 
 
 class CurrentUserSerializer(serializers.Serializer):
