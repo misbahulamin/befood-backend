@@ -1,0 +1,25 @@
+from django.urls import path
+from rest_framework.routers import DefaultRouter
+
+from .profile_views import CustomerAddressViewSet, CustomerProfileView, SetDefaultDeliveryAddressView
+from .views import CustomerLoginView, CustomerRegistrationView, CurrentUserView, LogoutView, ResendVerificationView, VerifyEmailView
+
+app_name = 'user_management'
+
+router = DefaultRouter()
+router.register(r'customer/addresses', CustomerAddressViewSet, basename='customer-address')
+
+urlpatterns = [
+    path('customer/register/', CustomerRegistrationView.as_view(), name='customer-register'),
+    path('login/', CustomerLoginView.as_view(), name='login'),
+    path('verify-email/<uidb64>/<token>/', VerifyEmailView.as_view(), name='verify-email'),
+    path('resend-verification/', ResendVerificationView.as_view(), name='resend-verification'),
+    path('me/', CurrentUserView.as_view(), name='me'),
+    path('logout/', LogoutView.as_view(), name='logout'),
+    path('customer/profile/', CustomerProfileView.as_view(), name='customer-profile'),
+    path(
+        'customer/addresses/<int:pk>/set-default/',
+        SetDefaultDeliveryAddressView.as_view(),
+        name='customer-address-set-default',
+    ),
+] + router.urls

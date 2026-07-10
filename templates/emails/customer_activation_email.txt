@@ -1,0 +1,10 @@
+Hi {{ first_name }},
+
+Welcome to {{ brand_name }}.
+
+Please activate your account by clicking the link below:
+{{ activation_link }}
+
+This link expires in 24 hours.
+
+If you did not register, please ignore this email.

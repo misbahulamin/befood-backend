@@ -1,0 +1,222 @@
+from datetime import date
+
+from rest_framework import serializers
+
+from ..models import CustomerAddress, CustomerProfile
+from ..services.customer_address import (
+    assign_default_if_first_present,
+    ensure_single_default_delivery,
+    handle_default_on_delete,
+)
+from ..services.profile_completion import update_profile_completion
+from ..validators import validate_bangladesh_phone
+
+
+class CustomerAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerAddress
+        fields = (
+            'id',
+            'address_type',
+            'full_address',
+            'city',
+            'area',
+            'building_name',
+            'floor',
+            'flat_number',
+            'landmark',
+            'latitude',
+            'longitude',
+            'is_default_delivery',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+
+class CustomerAddressCreateUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerAddress
+        fields = (
+            'address_type',
+            'full_address',
+            'city',
+            'area',
+            'building_name',
+            'floor',
+            'flat_number',
+            'landmark',
+            'latitude',
+            'longitude',
+            'is_default_delivery',
+        )
+
+    def validate_full_address(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError('Full address is required.')
+        return value.strip()
+
+    def validate(self, attrs):
+        address_type = attrs.get('address_type', getattr(self.instance, 'address_type', None))
+        is_default = attrs.get(
+            'is_default_delivery',
+            getattr(self.instance, 'is_default_delivery', False),
+        )
+        if is_default and address_type != CustomerAddress.AddressType.PRESENT:
+            raise serializers.ValidationError(
+                {'is_default_delivery': 'Only present addresses can be set as default delivery.'}
+            )
+        return attrs
+
+    def create(self, validated_data):
+        customer_profile = self.context['customer_profile']
+        is_default = validated_data.pop('is_default_delivery', False)
+        address = CustomerAddress.objects.create(
+            customer_profile=customer_profile,
+            **validated_data,
+        )
+        if is_default:
+            ensure_single_default_delivery(customer_profile, exclude_address_id=address.pk)
+            address.is_default_delivery = True
+            address.save(update_fields=['is_default_delivery', 'updated_at'])
+        else:
+            assign_default_if_first_present(customer_profile, address)
+        update_profile_completion(customer_profile)
+        return address
+
+    def update(self, instance, validated_data):
+        customer_profile = instance.customer_profile
+        is_default = validated_data.pop('is_default_delivery', instance.is_default_delivery)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if is_default:
+            ensure_single_default_delivery(customer_profile, exclude_address_id=instance.pk)
+            instance.is_default_delivery = True
+        else:
+            instance.is_default_delivery = is_default
+        instance.save()
+        update_profile_completion(customer_profile)
+        return instance
+
+
+class CustomerProfileFieldsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerProfile
+        fields = (
+            'phone',
+            'occupation',
+            'is_bachelor',
+            'is_email_verified',
+            'birth_date',
+            'gender',
+            'height_cm',
+            'weight_kg',
+            'emergency_contact_name',
+            'emergency_contact_phone',
+            'organization_name',
+            'academic_year_or_position',
+            'has_allergy',
+            'allergy_details',
+            'restricted_foods',
+            'preferred_food_type',
+            'spice_level',
+            'religious',
+            'delivery_instruction',
+            'preferred_delivery_time',
+            'profile_completed',
+            'profile_completion_percentage',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = (
+            'phone',
+            'occupation',
+            'is_bachelor',
+            'is_email_verified',
+            'profile_completed',
+            'profile_completion_percentage',
+            'created_at',
+            'updated_at',
+        )
+
+
+class CustomerExtendedProfileUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerProfile
+        fields = (
+            'birth_date',
+            'gender',
+            'height_cm',
+            'weight_kg',
+            'emergency_contact_name',
+            'emergency_contact_phone',
+            'organization_name',
+            'academic_year_or_position',
+            'has_allergy',
+            'allergy_details',
+            'restricted_foods',
+            'preferred_food_type',
+            'spice_level',
+            'religious',
+            'delivery_instruction',
+            'preferred_delivery_time',
+        )
+
+    def validate_birth_date(self, value):
+        if value and value > date.today():
+            raise serializers.ValidationError('Birth date cannot be in the future.')
+        return value
+
+    def validate_height_cm(self, value):
+        if value is not None and value <= 0:
+            raise serializers.ValidationError('Height must be a positive value.')
+        return value
+
+    def validate_weight_kg(self, value):
+        if value is not None and value <= 0:
+            raise serializers.ValidationError('Weight must be a positive value.')
+        return value
+
+    def validate_emergency_contact_phone(self, value):
+        return validate_bangladesh_phone(value, 'emergency_contact_phone')
+
+    def validate(self, attrs):
+        has_allergy = attrs.get('has_allergy', getattr(self.instance, 'has_allergy', False))
+        allergy_details = attrs.get('allergy_details', getattr(self.instance, 'allergy_details', ''))
+        if has_allergy and not (allergy_details and allergy_details.strip()):
+            raise serializers.ValidationError(
+                {'allergy_details': 'Allergy details are required when has_allergy is true.'}
+            )
+        return attrs
+
+    def update(self, instance, validated_data):
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        update_profile_completion(instance)
+        return instance
+
+
+class CustomerExtendedProfileSerializer(serializers.Serializer):
+    user = serializers.SerializerMethodField()
+    customer_profile = serializers.SerializerMethodField()
+    addresses = CustomerAddressSerializer(many=True, read_only=True)
+    profile_completion_percentage = serializers.IntegerField(read_only=True)
+    profile_completed = serializers.BooleanField(read_only=True)
+
+    def get_user(self, profile):
+        user = profile.user
+        return {
+            'id': user.id,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+        }
+
+    def get_customer_profile(self, profile):
+        return CustomerProfileFieldsSerializer(profile).data
+
+
+class CustomerProfileCompletionSerializer(serializers.Serializer):
+    profile_completion_percentage = serializers.IntegerField(read_only=True)
+    profile_completed = serializers.BooleanField(read_only=True)
