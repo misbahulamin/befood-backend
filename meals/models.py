@@ -1,3 +1,4 @@
+from datetime import time
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -233,3 +234,120 @@ class MealCyclePlanLine(models.Model):
 
     def __str__(self):
         return f'{self.plan_id}: {self.ingredient.name} × {self.servings_count}'
+
+
+class MonthlyMenuSchedule(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = 'draft', 'Draft'
+        PUBLISHED = 'published', 'Published'
+
+    plan = models.OneToOneField(
+        MealCyclePlan,
+        on_delete=models.CASCADE,
+        related_name='menu_schedule',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+    notes = models.TextField(blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Schedule {self.plan} ({self.status})'
+
+    @property
+    def is_published(self) -> bool:
+        return self.status == self.Status.PUBLISHED
+
+
+class MonthlyMenuSlot(models.Model):
+    class MealPeriod(models.TextChoices):
+        LUNCH = 'lunch', 'Lunch'
+        DINNER = 'dinner', 'Dinner'
+
+    schedule = models.ForeignKey(
+        MonthlyMenuSchedule,
+        on_delete=models.CASCADE,
+        related_name='slots',
+    )
+    service_date = models.DateField()
+    meal_period = models.CharField(max_length=10, choices=MealPeriod.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['service_date', 'meal_period']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['schedule', 'service_date', 'meal_period'],
+                name='unique_menu_slot_per_schedule_date_period',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.service_date} {self.meal_period} (schedule {self.schedule_id})'
+
+
+class MonthlyMenuSlotItem(models.Model):
+    slot = models.ForeignKey(
+        MonthlyMenuSlot,
+        on_delete=models.CASCADE,
+        related_name='items',
+    )
+    ingredient = models.ForeignKey(
+        Ingredient,
+        on_delete=models.PROTECT,
+        related_name='menu_slot_items',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['ingredient__name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['slot', 'ingredient'],
+                name='unique_menu_slot_item_ingredient',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.slot_id}: {self.ingredient.name}'
+
+
+class MenuRevealSettings(models.Model):
+    """Singleton row controlling when today's lunch/dinner become visible to customers."""
+
+    timezone = models.CharField(max_length=64, default='Asia/Dhaka')
+    lunch_reveal_time = models.TimeField(default=time(8, 0))
+    dinner_reveal_time = models.TimeField(default=time(16, 0))
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Menu reveal settings'
+        verbose_name_plural = 'Menu reveal settings'
+
+    def __str__(self):
+        return (
+            f'Reveal lunch={self.lunch_reveal_time} dinner={self.dinner_reveal_time} '
+            f'({self.timezone})'
+        )
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls) -> 'MenuRevealSettings':
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj

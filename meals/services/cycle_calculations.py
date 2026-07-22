@@ -210,9 +210,25 @@ def finalize_plan(plan: MealCyclePlan) -> MealCyclePlan:
 
 @transaction.atomic
 def reopen_plan(plan: MealCyclePlan) -> MealCyclePlan:
+    from meals.models import MonthlyMenuSchedule
+
     plan = MealCyclePlan.objects.select_for_update().get(pk=plan.pk)
     if not plan.is_finalized:
         raise ValidationError({'status': 'Only finalized plans can be reopened.'})
+
+    schedule = MonthlyMenuSchedule.objects.filter(plan_id=plan.pk).first()
+    if schedule is not None:
+        if schedule.is_published:
+            raise ValidationError(
+                {
+                    'menu_schedule': (
+                        'Cannot reopen plan while its monthly menu schedule is published. '
+                        'Unpublish or delete the schedule first.'
+                    )
+                }
+            )
+        # Draft schedule would become quota-orphan after line edits — delete it.
+        schedule.delete()
 
     plan.status = MealCyclePlan.Status.DRAFT
     plan.snapshot_product_cost = None

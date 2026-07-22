@@ -1,6 +1,13 @@
 import django_filters
 
-from meals.models import Ingredient, MealCategory, MealCycle, MealCyclePlan, MealCyclePlanLine
+from meals.models import (
+    Ingredient,
+    MealCategory,
+    MealCycle,
+    MealCyclePlan,
+    MealCyclePlanLine,
+    MonthlyMenuSchedule,
+)
 
 
 class MealCategoryFilter(django_filters.FilterSet):
@@ -51,3 +58,16 @@ class MealCyclePlanLineFilter(django_filters.FilterSet):
     class Meta:
         model = MealCyclePlanLine
         fields = ['plan', 'ingredient']
+
+
+class MonthlyMenuScheduleFilter(django_filters.FilterSet):
+    cycle = django_filters.NumberFilter(field_name='plan__cycle_id')
+    meal_category = django_filters.NumberFilter(field_name='plan__meal_category_id')
+    plan = django_filters.NumberFilter(field_name='plan_id')
+    status = django_filters.ChoiceFilter(choices=MonthlyMenuSchedule.Status.choices)
+    year = django_filters.NumberFilter(field_name='plan__cycle__year')
+    month = django_filters.NumberFilter(field_name='plan__cycle__month')
+
+    class Meta:
+        model = MonthlyMenuSchedule
+        fields = ['cycle', 'meal_category', 'plan', 'status', 'year', 'month']

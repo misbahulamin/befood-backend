@@ -1,12 +1,34 @@
 from django.contrib import admin
 
-from .models import Ingredient, MealCategory, MealCycle, MealCyclePlan, MealCyclePlanLine
+from .models import (
+    Ingredient,
+    MealCategory,
+    MealCycle,
+    MealCyclePlan,
+    MealCyclePlanLine,
+    MenuRevealSettings,
+    MonthlyMenuSchedule,
+    MonthlyMenuSlot,
+    MonthlyMenuSlotItem,
+)
 
 
 class MealCyclePlanLineInline(admin.TabularInline):
     model = MealCyclePlanLine
     extra = 0
     autocomplete_fields = ('ingredient',)
+
+
+class MonthlyMenuSlotItemInline(admin.TabularInline):
+    model = MonthlyMenuSlotItem
+    extra = 0
+    autocomplete_fields = ('ingredient',)
+
+
+class MonthlyMenuSlotInline(admin.TabularInline):
+    model = MonthlyMenuSlot
+    extra = 0
+    show_change_link = True
 
 
 @admin.register(MealCategory)
@@ -76,3 +98,34 @@ class MealCyclePlanLineAdmin(admin.ModelAdmin):
     search_fields = ('ingredient__name', 'plan__meal_category__meal_name')
     autocomplete_fields = ('plan', 'ingredient')
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(MonthlyMenuSchedule)
+class MonthlyMenuScheduleAdmin(admin.ModelAdmin):
+    list_display = ('plan', 'status', 'published_at', 'created_at')
+    list_filter = ('status', 'plan__cycle__year', 'plan__cycle__month')
+    search_fields = ('plan__meal_category__meal_name',)
+    autocomplete_fields = ('plan',)
+    readonly_fields = ('published_at', 'created_at', 'updated_at')
+    inlines = [MonthlyMenuSlotInline]
+
+
+@admin.register(MonthlyMenuSlot)
+class MonthlyMenuSlotAdmin(admin.ModelAdmin):
+    list_display = ('schedule', 'service_date', 'meal_period')
+    list_filter = ('meal_period',)
+    search_fields = ('schedule__plan__meal_category__meal_name',)
+    autocomplete_fields = ('schedule',)
+    inlines = [MonthlyMenuSlotItemInline]
+
+
+@admin.register(MonthlyMenuSlotItem)
+class MonthlyMenuSlotItemAdmin(admin.ModelAdmin):
+    list_display = ('slot', 'ingredient', 'created_at')
+    autocomplete_fields = ('slot', 'ingredient')
+
+
+@admin.register(MenuRevealSettings)
+class MenuRevealSettingsAdmin(admin.ModelAdmin):
+    list_display = ('timezone', 'lunch_reveal_time', 'dinner_reveal_time', 'updated_at')
+    readonly_fields = ('updated_at',)
