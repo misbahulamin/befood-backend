@@ -5,6 +5,7 @@ from orders.models import Order
 from orders.services.order_service import (
     InactiveMealError,
     MonthLockError,
+    UnpricedMealError,
     create_meal_order,
 )
 from user_management.models import CustomerProfile
@@ -21,6 +22,10 @@ class OrderCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError('Meal not found.')
         if not meal.is_active:
             raise serializers.ValidationError('This meal package is not available for ordering.')
+        if meal.total_price is None:
+            raise serializers.ValidationError(
+                'This meal package has no published price yet. Finalize a cycle plan first.'
+            )
         self.context['meal'] = meal
         return value
 
@@ -46,6 +51,8 @@ class OrderCreateSerializer(serializers.Serializer):
         except MonthLockError as exc:
             raise serializers.ValidationError({'non_field_errors': [str(exc)]})
         except InactiveMealError as exc:
+            raise serializers.ValidationError({'meal_id': [str(exc)]})
+        except UnpricedMealError as exc:
             raise serializers.ValidationError({'meal_id': [str(exc)]})
 
 

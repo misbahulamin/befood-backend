@@ -1,0 +1,45 @@
+---
+description: Client-aware DRF APIs for web dashboard vs mobile operators (X-Client-Type, lean vs rich payloads)
+alwaysApply: true
+---
+
+# Multi-Client DRF Architecture
+
+Backend is client-aware but client-agnostic:
+
+- **Mobile (operators):** lean payloads, low bandwidth, local/QR context, JWT.
+- **Web (management):** rich nesting, analytics, global filters, broader access.
+
+Never send heavy web payloads to a mobile scanner. Never let operators accidentally query unrestricted management data.
+
+## Routing
+
+- Shared: `/api/v1/...` — behavior may vary by client/auth scope.
+- Mobile-only: `/api/v1/mobile/...` — instant actions, minimal nesting.
+- Web-only: `/api/v1/web/...` — reports, heavy aggregations.
+
+## Client header (shared endpoints)
+
+```python
+client_type = request.headers.get("X-Client-Type", "web")  # "web" | "mobile"
+```
+
+Use `client_type` to choose serializer fields, nesting depth, and pagination defaults.
+
+## Serialization & pagination
+
+| Concern | Mobile | Web |
+|--------|--------|-----|
+| Payload | Flat, few fields, IDs + display labels | Nested relations OK when useful |
+| Pagination | Small pages or action responses without lists | Standard list pagination |
+| Errors | Short, operator-safe messages | Richer field errors OK |
+
+## Permissions & scope
+
+- Use `HasGroupPermission` from `permissions/base_permissions.py`.
+- Enforce company/branch (or equivalent) object scope; never trust client-supplied org IDs alone.
+- Mobile list/detail endpoints must stay scoped to the operator's allowed context.
+
+## Example
+
+Shared machine detail: mobile returns id, name, status, qr; web may include history, nested location, open WO counts.

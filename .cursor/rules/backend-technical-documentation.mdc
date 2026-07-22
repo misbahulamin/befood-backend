@@ -1,0 +1,52 @@
+---
+description: When models/workflows/API behavior change — update backend technical docs under app/docs/backend/
+globs:
+  - "**/services/**/*.py"
+  - "**/models.py"
+  - "**/docs/backend/**/*.md"
+alwaysApply: false
+---
+
+# Backend Technical Documentation
+
+## When this applies
+
+Write or update docs when:
+
+- New feature, model change, or business workflow change
+- API behavior changes beyond a trivial fix
+- User explicitly asks for backend technical docs
+
+**Skip** for pure internal refactors with no behavior, model, or contract change.
+
+## Location
+
+`<app>/docs/backend/<feature-name>.md` (kebab-case).
+
+Full-document outline (integration guide)
+What is this feature? (plain language + example)
+Who uses which flow? (roles)
+Mental model / important rules
+Auth, headers, base path, permissions, QR formats
+Full workflow A (numbered steps, API-by-API)
+Full workflow B if a second role exists
+Optional / helper endpoints
+Status values glossary
+Global error shape + cheat sheet
+Quick checklist
+How to verify (seed + tests)
+Links to OpenSpec / backend technical notes
+Must Need Do: After implement any new featue always give me a clearn robust very easy to understand, mentioned each any everyting(post, respose body, why this api, query paramet, all of the filed meaning, how to use) .md file documentaion.  need to mention full workflow, which api call need first then which, wiht call what happent. mainly you need to think, an docuemntation reader doest not know anything, so your documentaion need much more clear.
+## Must-include outline
+
+1. Quick summary & endpoint grid
+2. Permissions matrix
+3. Key models / fields involved
+4. Business validation rules
+5. Request/response examples for main flows
+6. Error codes / HTTP status map
+7. State transitions (if any) — table or mermaid
+8. How to verify (Swagger steps mapping to automated tests when known)
+
+
+ <!-- use the `api-docs-update` skill → `reference.md`. -->

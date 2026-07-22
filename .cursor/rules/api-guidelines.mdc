@@ -1,0 +1,765 @@
+---
+description: Enforce consistent, secure, well-documented REST API design based on apiguide.dev and modern HTTP standards
+alwaysApply: true
+---
+
+# API Design Guidelines (apiguide.dev)
+
+You are an expert API developer. When designing, implementing, or reviewing API endpoints, controllers, and schemas in this project, you must strictly adhere to the following authoritative API design patterns from https://apiguide.dev.
+
+
+# API Design and Documentation Rules
+
+Apply these rules whenever creating, modifying, reviewing, or documenting an HTTP API endpoint.
+
+These rules apply to:
+
+* Routes and URL configuration
+* Controllers, views, viewsets, and handlers
+* Serializers, schemas, DTOs, and validators
+* Authentication and authorization
+* Filtering, sorting, searching, and pagination
+* Error handling
+* OpenAPI and Swagger documentation
+* API tests
+* Background jobs, webhooks, uploads, and integrations
+
+Follow the existing project architecture and naming conventions unless they conflict with security, correctness, or the rules below.
+
+## 1. General API Principles
+
+* Design APIs around resources, not controller actions.
+* Treat every public endpoint, request field, response field, status code, error type, and header as part of a long-term contract.
+* Keep API behavior consistent across all modules.
+* Prefer predictable conventions over clever or endpoint-specific designs.
+* Do not silently introduce breaking changes.
+* Before implementing an endpoint, inspect related endpoints, serializers, permissions, schemas, and tests.
+* Reuse existing shared utilities for pagination, errors, authentication, permissions, validation, and response formatting.
+* Do not duplicate API infrastructure that already exists.
+* Keep requests stateless. Every request must contain the authentication and context required to process it.
+* Do not store client navigation or workflow state in server sessions unless the project explicitly requires session-based authentication.
+
+## 2. Resource and URL Naming
+
+Use nouns for resource URLs. The HTTP method represents the action.
+
+Correct:
+
+```text
+GET    /api/v1/orders
+POST   /api/v1/orders
+GET    /api/v1/orders/{order_id}
+PATCH  /api/v1/orders/{order_id}
+DELETE /api/v1/orders/{order_id}
+```
+
+Avoid:
+
+```text
+/getOrders
+/createOrder
+/orders/{order_id}/delete
+/update-order
+```
+
+Rules:
+
+* Use plural nouns for collections.
+* Use lowercase kebab-case for multi-word URL segments.
+* Do not mix singular and plural resource naming.
+* Do not include file extensions such as `.json` in URLs.
+* Do not add unnecessary trailing slashes unless the existing framework requires them consistently.
+* Use path parameters to identify resources.
+* Use query parameters to filter, sort, search, paginate, or modify a representation.
+* Keep resource nesting shallow, preferably no more than one containment level.
+
+Preferred:
+
+```text
+GET /users/{user_id}/orders
+GET /orders/{order_id}/items
+GET /items/{item_id}
+```
+
+Avoid:
+
+```text
+GET /users/{user_id}/orders/{order_id}/items/{item_id}/tax
+```
+
+For domain operations that do not naturally map to CRUD, use a documented action sub-resource:
+
+```text
+POST /orders/{order_id}/cancel
+POST /articles/{article_id}/publish
+POST /accounts/{account_id}/verify
+```
+
+Do not create action endpoints when a normal resource update would represent the operation clearly.
+
+## 3. API Versioning
+
+* Use the project’s existing versioning strategy.
+* For a new API without an established strategy, prefer a major version in the URL:
+
+```text
+/api/v1/orders
+```
+
+* Do not create a new API version for additive, backward-compatible changes.
+* Create a new major version for breaking contract changes.
+* Breaking changes include:
+
+  * Removing or renaming fields
+  * Changing field types
+  * Changing nullability
+  * Changing enum meanings
+  * Changing authentication requirements
+  * Changing existing status-code behavior
+  * Changing resource identifiers
+  * Changing pagination structure
+* Never remove a version or endpoint without a migration period.
+* When deprecating an endpoint, document:
+
+  * The replacement endpoint
+  * The deprecation date
+  * The sunset date
+  * Required client migration steps
+* Use standard `Deprecation`, `Sunset`, and `Link` response headers where supported.
+
+## 4. HTTP Method Semantics
+
+Use HTTP methods according to their defined meaning:
+
+* `GET`: Retrieve a resource or collection. Must not modify server state.
+* `POST`: Create a resource or trigger a non-idempotent operation.
+* `PUT`: Completely replace a resource. Must be idempotent.
+* `PATCH`: Partially update a resource.
+* `DELETE`: Delete or deactivate a resource. Repeated requests must not create additional side effects.
+* `HEAD`: Return the same headers as `GET` without a response body.
+* `OPTIONS`: Describe supported methods or handle CORS preflight.
+
+Do not route every operation through `POST`.
+
+Do not perform state-changing operations through `GET`.
+
+## 5. HTTP Status Codes
+
+Return the most specific appropriate HTTP status code.
+
+Success responses:
+
+* `200 OK`: Successful retrieval or update with a response body.
+* `201 Created`: Resource successfully created.
+* `202 Accepted`: Request accepted for asynchronous processing.
+* `204 No Content`: Successful operation with no response body.
+* `206 Partial Content`: Successful range response when supported.
+
+Redirect and cache responses:
+
+* `303 See Other`: Direct clients from a completed job to its generated result.
+* `304 Not Modified`: Resource has not changed for a conditional request.
+
+Client errors:
+
+* `400 Bad Request`: Malformed JSON, invalid query syntax, invalid cursor format, or structurally invalid input.
+* `401 Unauthorized`: Missing, invalid, or expired authentication credentials.
+* `403 Forbidden`: Authenticated client lacks permission.
+* `404 Not Found`: Resource or route does not exist, or must be hidden from the caller.
+* `405 Method Not Allowed`: Route exists but does not support the requested method.
+* `406 Not Acceptable`: Requested response representation is unsupported.
+* `409 Conflict`: Resource-state conflict, duplicate operation, or idempotency conflict.
+* `410 Gone`: Resource was permanently removed and will not return.
+* `412 Precondition Failed`: ETag or conditional update requirement failed.
+* `413 Content Too Large`: Request payload exceeds the allowed size.
+* `415 Unsupported Media Type`: Request content type is unsupported.
+* `422 Unprocessable Content`: Structurally valid input violates validation or business rules.
+* `428 Precondition Required`: Conditional update is required.
+* `429 Too Many Requests`: Rate limit exceeded.
+
+Server errors:
+
+* `500 Internal Server Error`: Unexpected server failure.
+* `502 Bad Gateway`: Invalid upstream service response.
+* `503 Service Unavailable`: Service temporarily unavailable.
+* `504 Gateway Timeout`: Upstream service timed out.
+
+Additional requirements:
+
+* Never return `200 OK` with an error hidden in the response body.
+* A `204 No Content` response must not contain a response body.
+* A successful `POST` creating a resource should return `201 Created`.
+* Include a `Location` header with the URI of a newly created resource when practical.
+* Return `Retry-After` with `429` and temporary `503` responses when the retry time is known.
+
+## 6. Request and Response Format
+
+* Use JSON unless another media type is explicitly required.
+* Use `Content-Type: application/json` for normal JSON requests and responses.
+* Use `application/problem+json` for error responses.
+* Follow the project’s existing JSON naming convention.
+* For this project, prefer `snake_case` unless an established API convention requires another style.
+* Do not mix `snake_case` and `camelCase` across endpoints.
+
+Naming conventions:
+
+```json
+{
+  "id": "resource-id",
+  "created_at": "2026-07-16T08:30:00Z",
+  "updated_at": "2026-07-16T09:00:00Z",
+  "is_active": true
+}
+```
+
+* Use `_at` for timestamps.
+* Use `_id` for related resource identifiers.
+* Use predicate names such as `is_active`, `has_access`, or `can_edit` for booleans.
+* Use string enums for states instead of undocumented numeric values.
+* Document every allowed enum value.
+* Clients should be able to tolerate newly added enum values where practical.
+
+## 7. Dates, Times, Money, and Nullability
+
+Dates and times:
+
+* Use RFC 3339 timestamps.
+* Store and transmit timestamps in UTC.
+* Include `Z` or an explicit UTC offset.
+* Never return ambiguous or locale-specific date strings.
+* Never emit naive timestamps without timezone information.
+
+Correct:
+
+```json
+{
+  "created_at": "2026-07-16T08:30:00Z"
+}
+```
+
+Money:
+
+* Never use binary floating-point values for monetary calculations.
+* Use either:
+
+  * Integer minor units with an ISO currency code, or
+  * Exact decimal strings with an ISO currency code.
+
+Example:
+
+```json
+{
+  "amount": 4999,
+  "currency": "USD"
+}
+```
+
+Nullability:
+
+* Define the difference between an omitted field and a field containing `null`.
+* For `PATCH`:
+
+  * Omitted field normally means “leave unchanged.”
+  * Explicit `null` normally means “clear the value,” when the field is nullable.
+* Document nullable and required fields accurately in the schema.
+
+## 8. Standard Error Responses
+
+Use RFC 9457 Problem Details for all API errors.
+
+Required media type:
+
+```text
+Content-Type: application/problem+json
+```
+
+Recommended structure:
+
+```json
+{
+  "type": "https://example.com/problems/validation-failed",
+  "title": "Validation Failed",
+  "status": 422,
+  "detail": "The submitted data failed validation.",
+  "instance": "/api/v1/users",
+  "errors": {
+    "email": [
+      "A user with this email already exists."
+    ]
+  },
+  "request_id": "req_01J2ABCDEF"
+}
+```
+
+Rules:
+
+* `type` must be a stable machine-readable identifier for the error category.
+* `title` must be a short, stable category name.
+* `status` must match the actual HTTP response status.
+* `detail` must explain the specific occurrence.
+* `instance` should identify the failing request or resource when useful.
+* Field validation errors must be machine-readable.
+* Keep one consistent validation-error structure across the entire API.
+* Never expose:
+
+  * Stack traces
+  * SQL statements
+  * Secret values
+  * Internal file paths
+  * Private service addresses
+  * Framework debugging pages
+* Log internal details securely, but return safe client-facing messages.
+* Domain-specific error codes may be added as documented extension fields.
+* Do not replace correct HTTP status codes with custom application codes.
+
+## 9. Input Validation
+
+Treat all client input as untrusted.
+
+Validate:
+
+* Data type
+* Required fields
+* Length
+* Format
+* Range
+* Enum membership
+* Date boundaries
+* File type
+* File size
+* Referential integrity
+* Cross-field business rules
+
+Rules:
+
+* Validate input on the server, even when the frontend validates it.
+* Prefer allowlists over denylists.
+* Reject unknown filter operators and unsupported request fields where appropriate.
+* Do not silently ignore malformed parameters.
+* Prevent mass assignment by explicitly defining writable fields.
+* Use parameterized database queries.
+* Never build SQL, shell commands, or dynamic code using untrusted string concatenation.
+* Normalize and validate input before using it in comparisons or authorization decisions.
+* Perform business-rule validation inside the appropriate service or domain layer, not only in controllers.
+
+## 10. Authentication and Authorization
+
+* Use HTTPS for every API endpoint.
+* Never transmit credentials or tokens over plaintext HTTP.
+* Keep authentication and authorization as separate checks.
+* Authentication determines identity.
+* Authorization determines whether that identity may perform the requested action on the requested resource.
+* Apply authorization checks server-side on every protected operation.
+* Never trust user IDs, tenant IDs, roles, ownership flags, or permission values supplied by the client.
+* Prevent Broken Object Level Authorization by verifying object ownership or access for every retrieved or modified object.
+* Apply both object-level and function-level permissions.
+* Use least privilege.
+* Do not expose administrative operations to normal authenticated users.
+* Return `401` for missing or invalid authentication.
+* Return `403` when valid credentials lack permission.
+* Use `404` instead of `403` when revealing the resource’s existence would leak sensitive information.
+* Never log access tokens, refresh tokens, API keys, passwords, session cookies, or authorization headers.
+* Store secrets in environment variables or a dedicated secrets manager.
+* Do not commit secrets to source control.
+
+## 11. Pagination
+
+All potentially large collection endpoints must be paginated.
+
+* Enforce a default page size.
+* Enforce a maximum page size.
+* Never allow clients to request unlimited records.
+* Use deterministic ordering.
+* Add a unique tie-breaker such as `id` when ordering by a non-unique field.
+* Apply operations in this order:
+
+  1. Authorization scope
+  2. Filtering
+  3. Searching
+  4. Sorting
+  5. Pagination
+
+Use offset pagination for small or administrative datasets where jumping to a specific page is important.
+
+Use cursor or keyset pagination for:
+
+* Large datasets
+* Frequently changing datasets
+* Activity feeds
+* Audit logs
+* Event streams
+* High-volume transaction tables
+
+Cursor values should be opaque to clients.
+
+Do not expose raw database queries or implementation-sensitive cursor details.
+
+Document:
+
+* Default page size
+* Maximum page size
+* Cursor or page parameters
+* Ordering guarantees
+* Next and previous navigation
+* Invalid cursor behavior
+
+## 12. Filtering, Sorting, and Search
+
+Use query parameters for normal collection queries.
+
+Example:
+
+```text
+GET /api/v1/orders?status=shipped&sort=-created_at&q=customer
+```
+
+Rules:
+
+* Choose one filtering convention and apply it everywhere.
+* Do not mix multiple filtering styles between endpoints.
+* Use `sort` for sorting.
+* Prefix a field with `-` for descending order when using this convention.
+* Use comma-separated fields for multiple sort keys.
+* Use `q` for human-entered full-text search.
+* Whitelist filterable, searchable, and sortable fields.
+* Never pass arbitrary client-provided field names directly into database queries.
+* Reject unsupported filters and operators with `400 Bad Request`.
+* Ensure sorting is deterministic before pagination.
+* Use a documented search sub-resource for queries too complex for a URL:
+
+```text
+POST /api/v1/orders/search
+```
+
+Do not use complex search endpoints as an excuse to make normal retrieval operations state-changing.
+
+## 13. Idempotency and Concurrency
+
+For non-idempotent operations that may be retried, especially payments, imports, order creation, messaging, or external provisioning:
+
+* Support the `Idempotency-Key` request header.
+* Scope idempotency keys to the authenticated client and operation.
+* Store a fingerprint of the request payload.
+* Return the original status code and response for a completed replay.
+* Return `409 Conflict` when the same key is reused with a different payload.
+* Prevent simultaneous execution of requests using the same key.
+* Apply an appropriate expiration period to stored idempotency records.
+* Keep the database operation and idempotency result consistent through transactions.
+
+For concurrent updates:
+
+* Use ETags or version fields when lost updates are possible.
+* Support `If-Match` for sensitive updates.
+* Return `412 Precondition Failed` when the resource version does not match.
+* Do not silently overwrite newer changes.
+
+## 14. Rate Limiting and Resource Protection
+
+Apply limits to:
+
+* Request frequency
+* Login attempts
+* Password-reset requests
+* Payload size
+* File size
+* Page size
+* Batch size
+* Query complexity
+* Expensive reports
+* External-service calls
+
+When a limit is exceeded:
+
+```text
+HTTP/1.1 429 Too Many Requests
+Retry-After: 30
+```
+
+* Do not return unlimited datasets.
+* Do not allow unbounded loops, exports, batch operations, or nested expansions.
+* Use stricter throttles for anonymous and authentication-sensitive endpoints.
+* Document applicable rate limits and retry behavior.
+
+## 15. Caching and Conditional Requests
+
+Use caching only when it is safe for the resource.
+
+* Use `Cache-Control` intentionally.
+* Mark user-specific or sensitive responses as private or non-cacheable.
+* Use `ETag` or `Last-Modified` for cache validation where practical.
+* Support `If-None-Match` or `If-Modified-Since` for cacheable reads.
+* Return `304 Not Modified` without a response body when appropriate.
+* Include `Vary` when the representation changes based on headers such as `Accept`, `Accept-Encoding`, `Accept-Language`, or `Origin`.
+* Never allow shared caches to store personalized or authorization-sensitive responses accidentally.
+* Define cache invalidation when modifying cacheable resources.
+
+## 16. Asynchronous and Long-Running Operations
+
+Do not keep an HTTP request open for work that may exceed normal gateway or client timeouts.
+
+For long-running work:
+
+1. Accept the request.
+2. Create a job resource.
+3. Return `202 Accepted`.
+4. Include a `Location` header for the job.
+5. Include `Retry-After` when appropriate.
+6. Process the work asynchronously.
+7. Allow the client to poll the job status.
+
+Example job states:
+
+```text
+queued
+running
+succeeded
+failed
+cancelled
+```
+
+Example:
+
+```text
+POST /api/v1/reports
+
+HTTP/1.1 202 Accepted
+Location: /api/v1/jobs/{job_id}
+Retry-After: 5
+```
+
+* Make job status observable.
+* Store structured failure information on the job.
+* Do not report a queued operation as completed.
+* Make job creation idempotent when duplicate processing would be harmful.
+* Use signed webhooks when clients require completion notifications.
+
+## 17. Webhooks
+
+* Sign webhook payloads with HMAC or another approved signing mechanism.
+* Include a timestamp in the signature input.
+* Reject expired webhook timestamps to prevent replay attacks.
+* Compare signatures using constant-time comparison.
+* Give each event a stable unique identifier.
+* Make webhook processing idempotent.
+* Retry failed deliveries using exponential backoff with jitter.
+* Do not retry permanent client errors indefinitely.
+* Document event types, payloads, signatures, retry schedules, and timeout behavior.
+* Never place secrets directly inside webhook payloads.
+
+## 18. Observability
+
+Every request must be traceable without exposing sensitive information.
+
+* Assign a request or correlation ID to every incoming request.
+* Return the request ID in a response header such as `X-Request-Id`.
+* Include the request ID in structured logs.
+* Propagate trace context to downstream services.
+* Prefer structured JSON logging.
+* Record:
+
+  * Timestamp
+  * Log level
+  * Request ID
+  * Trace ID
+  * HTTP method
+  * Route template
+  * Status code
+  * Duration
+  * Authenticated actor ID when safe
+  * Error category
+* Never log secrets or complete sensitive request bodies.
+* Track API rate, error count, and latency percentiles.
+* Add tracing around database calls, external APIs, queues, and important business operations.
+* Use health endpoints appropriately:
+
+  * Liveness: process is running
+  * Readiness: service can receive traffic
+  * Startup: initialization has completed
+* Health endpoints must not expose sensitive infrastructure details publicly.
+
+## 19. OpenAPI and Swagger Documentation
+
+Every API implementation or behavior change must update the OpenAPI documentation in the same change.
+
+Do not consider an API task complete until its documentation is accurate.
+
+Document every operation with:
+
+* Path
+* HTTP method
+* Summary
+* Description
+* Unique and stable `operationId`
+* Tags
+* Authentication requirements
+* Permission requirements
+* Path parameters
+* Query parameters
+* Request headers
+* Request body schema
+* Required fields
+* Nullable fields
+* Read-only fields
+* Write-only fields
+* Enum values
+* Format constraints
+* Minimum and maximum values
+* Success responses
+* Error responses
+* Response headers
+* Pagination behavior
+* Rate-limit behavior
+* Request examples
+* Success-response examples
+* Validation-error examples
+
+Rules:
+
+* Prefer OpenAPI 3.1 for new projects when supported by project tooling.
+* Continue using the existing OpenAPI version when changing it would break current generators or documentation tools.
+* Reuse shared schemas through `components` and `$ref`.
+* Define authentication under `securitySchemes`.
+* Document bearer tokens, OAuth scopes, API keys, or cookie authentication accurately.
+* Do not document an endpoint as public when it requires authentication.
+* Do not document only the `200` response.
+* Include expected `400`, `401`, `403`, `404`, `409`, `422`, `429`, and relevant server errors.
+* Keep schemas synchronized with serializers and actual runtime behavior.
+* Never add undocumented response fields.
+* Never remove documented response fields without treating it as a breaking change.
+* Ensure Swagger UI or other generated documentation displays usable request and response examples.
+* Validate the generated OpenAPI schema during development or CI.
+* Fix schema warnings instead of suppressing them without justification.
+
+## 20. Testing Requirements
+
+Every endpoint change must include or update tests.
+
+At minimum, test:
+
+* Successful request
+* Authentication requirement
+* Permission denial
+* Object-level authorization
+* Missing resource
+* Malformed input
+* Field validation
+* Business-rule validation
+* Unsupported HTTP method
+* Correct status code
+* Correct response schema
+* Error response format
+* Pagination boundaries
+* Filtering and sorting
+* Maximum page size
+* Duplicate requests where relevant
+* Idempotency where relevant
+* Concurrent update protection where relevant
+* Rate limiting where relevant
+* OpenAPI schema generation
+
+Tests must verify response behavior, not only database state.
+
+For security-sensitive endpoints, include tests proving that one user cannot access or modify another user’s resources.
+
+## 21. Backward Compatibility
+
+Before changing an existing endpoint, determine whether the change is:
+
+* Additive and backward compatible
+* Behavior-changing
+* Schema-breaking
+* Authentication-breaking
+* Permission-breaking
+
+Generally safe additive changes:
+
+* Adding a new optional request field
+* Adding a new endpoint
+* Adding a new optional filter
+* Adding a response field when clients are expected to ignore unknown fields
+
+Potentially breaking changes:
+
+* Renaming a field
+* Removing a field
+* Making an optional field required
+* Changing a field type
+* Changing a status code
+* Changing nullability
+* Changing pagination
+* Changing enum meanings
+* Changing default sorting
+* Changing authentication or permission behavior
+
+When a breaking change is unavoidable:
+
+* Introduce a new API version or compatibility strategy.
+* Document the migration.
+* Add deprecation headers where applicable.
+* Keep the previous version operational for the agreed migration period.
+
+## 22. Implementation Workflow
+
+When asked to implement an API feature:
+
+1. Inspect the current models, routes, serializers, services, permissions, schema configuration, and tests.
+2. Identify existing API conventions.
+3. Define the request and response contract.
+4. Identify authentication and authorization requirements.
+5. Identify validation and business rules.
+6. Select correct methods and status codes.
+7. Consider pagination, filtering, idempotency, concurrency, rate limits, and caching.
+8. Implement business logic in the correct domain or service layer.
+9. Keep controllers or views thin.
+10. Use database transactions for multi-step state changes.
+11. Update OpenAPI or Swagger documentation.
+12. Add positive, negative, permission, and validation tests.
+13. Run relevant tests and schema validation.
+14. Review for backward compatibility and security.
+15. Summarize the final API contract and any migration considerations.
+
+## 23. Prohibited Patterns
+
+Do not:
+
+* Return `200 OK` for failed requests.
+* Use `GET` for state-changing operations.
+* Put verbs in every URL.
+* Mix singular and plural resource names.
+* Return unlimited collections.
+* Trust client-supplied ownership or permission fields.
+* Expose stack traces or database errors.
+* Commit API keys, passwords, or tokens.
+* Log authorization headers or sensitive request bodies.
+* Use floating-point arithmetic for money.
+* Return naive timestamps.
+* Silently ignore invalid filters or unsupported fields.
+* Permit arbitrary sorting or filtering database columns.
+* Modify an endpoint without updating its OpenAPI documentation.
+* Add undocumented fields or status codes.
+* remove or rename API fields without considering versioning.
+* Bypass serializers, validators, permissions, or service-layer business rules.
+* Duplicate shared API infrastructure.
+* Mark the task complete while relevant tests are failing.
+
+## 24. Completion Checklist
+
+Before declaring any API task complete, verify:
+
+* Resource naming is consistent.
+* HTTP method is correct.
+* Status codes are correct.
+* Request validation is complete.
+* Authentication is enforced.
+* Object-level authorization is enforced.
+* Errors use the standard API error format.
+* Sensitive information is not exposed or logged.
+* Collection endpoints are paginated.
+* Filters and sorting are allowlisted.
+* Monetary and timestamp formats are correct.
+* Idempotency and concurrency were considered.
+* Rate limiting and resource limits were considered.
+* OpenAPI documentation is complete and accurate.
+* Request and response examples are included.
+* Tests cover success, failure, permissions, and validation.
+* Existing clients remain compatible or a migration path is documented.

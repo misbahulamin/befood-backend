@@ -132,6 +132,23 @@ class OrderAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('meal_id', response.data)
 
+    def test_cannot_order_unpriced_meal(self):
+        unpriced = MealCategory.objects.create(
+            meal_name='Unpriced Package',
+            total_price=None,
+            meal_type=MealCategory.MealType.MONTHLY,
+            meal_thumbnail=make_test_image('unpriced.jpg'),
+            is_active=True,
+        )
+        self._auth()
+        response = self.client.post(
+            self.create_url,
+            self._create_order_payload(meal_id=unpriced.id),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('meal_id', response.data)
+
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
     def test_order_stores_meal_snapshot_data(self, _mock_date):
         self._auth()

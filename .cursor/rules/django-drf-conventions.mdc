@@ -1,0 +1,50 @@
+---
+description: Project Django/DRF conventions — thin views, services layer, HasGroupPermission, query and error patterns
+globs:
+  - "**/*.py"
+  - "**/api/**/*.py"
+  - "**/services/**/*.py"
+alwaysApply: false
+---
+
+# Django / DRF Conventions
+
+## Layers
+
+- **Views:** auth/permissions, parse input, call serializer/service, return response. Keep thin.
+- **Serializers:** validate shape/fields; call services after validation. No long workflows.
+- **Services:** domain workflows, multi-model writes, `transaction.atomic()`, idempotency. No `Request`/`Response`.
+- **Models:** constraints, indexes, small model behavior only — not full business orchestration.
+
+## Permissions
+
+- Prefer `HasGroupPermission` (+ `PermissionAwareMetadata` when used) from `permissions/base_permissions.py`.
+- For APIViews set `permission_model` / `permission_codename_map` as needed.
+- Superuser bypass is already handled in the base class; still enforce object/company scope in querysets/services.
+
+<!-- ## Queries
+
+- Prevent N+1 with `select_related` / `prefetch_related`.
+- Paginate lists; avoid unbounded payloads on shared/web lists.
+- Re-check state inside transactions for concurrent updates (`select_for_update` when needed).
+
+## Errors
+
+Prefer the project unified error shape:
+
+```json
+{
+  "success": false,
+  "message": "Error description",
+  "errors": { "field_name": ["Specific error details"] },
+  "error_code": "SPECIFIC_ERROR_CODE"
+}
+```
+
+Do not leak stack traces, secrets, or raw DB errors to clients.
+
+## Auth / APIs
+
+- JWT via simplejwt for API clients as established in the project.
+- URL versioning under `/api/v1/`; keep route names stable unless change is requested.
+- OpenAPI helpers live in the app’s `openapi` module (or equivalent); update on contract changes. -->

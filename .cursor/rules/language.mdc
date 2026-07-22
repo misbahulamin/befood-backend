@@ -1,0 +1,28 @@
+---
+description: Always communicate in English. It is Global and User Rules
+alwaysApply: true
+---
+
+# Language Preference
+
+- Always respond in Bangla.
+- Never use Chinese unless explicitly requested.
+- Explain technical concepts in English.
+- Write code comments in English.
+- Write commit messages in English.
+- Write documentation in English.
+
+<!-- ---
+description: Global language preference. Assistant chat in Bangla; English for code comments, commits, and documentation
+alwaysApply: true
+---
+
+# Language Preference
+
+- Always respond in Bangla in chat.
+- Never use Chinese unless explicitly requested.
+- Explain technical concepts in Bangla.
+- Write code comments in English.
+- Write commit messages in English.
+- Write documentation in English.
+- If the user explicitly requests another chat language in this conversation, follow that request for the rest of the chat. -->

@@ -1,0 +1,35 @@
+---
+description: When API contracts change — update OpenAPI and frontend docs under app/docs/frontend/
+globs:
+  - "**/api/**/*.py"
+  - "**/openapi*.py"
+  - "**/docs/frontend/**/*.md"
+alwaysApply: false
+---
+
+# API & Frontend Documentation
+
+## When this applies
+
+Update docs **only** when one of these is true:
+
+- New/changed endpoint, request fields, response shape, auth, permissions, or error codes
+- User explicitly asks for frontend/API docs
+
+**Skip** for pure refactors, renames, comment-only edits, or internal fixes with no client-visible contract change.
+
+## Required outputs
+
+1. **OpenAPI / Swagger helpers** for the touched endpoints (app `openapi` module or project equivalent).
+2. **Frontend doc** at `<app>/docs/frontend/<feature-name>.md` (kebab-case).
+
+## Frontend doc checklist
+
+- Summary (what changed + why)
+- Integration steps
+- Request/response JSON examples (success + error)
+- Headers / auth (`Authorization`, `X-Client-Type` if relevant)
+- Edge cases / UI states
+- Target client: mobile / web / both
+
+Use the `api-docs-update` skill for full templates. A feature with a contract change is incomplete without the above.

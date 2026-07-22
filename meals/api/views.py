@@ -34,11 +34,17 @@ MEAL_TYPE_VALUES = [choice.value for choice in MealCategory.MealType]
     retrieve=extend_schema(
         tags=['Meal Management'],
         summary='Retrieve meal detail',
+        description=(
+            'Public meal detail includes pricing_status and current_cycle_offering '
+            '(finalized menu servings, package total, per-meal rate) when available. '
+            'Package price is published by cycle finalize — not set on create.'
+        ),
         responses={200: MealDetailSerializer, 404: OpenApiResponse(description='Meal not found')},
     ),
     create=extend_schema(
         tags=['Meal Management'],
         summary='Create meal',
+        description='Create a meal package without total_price. Price is published when a cycle plan is finalized.',
         request={'multipart/form-data': MealCreateUpdateSerializer},
         responses={
             201: MealDetailSerializer,
@@ -51,7 +57,6 @@ MEAL_TYPE_VALUES = [choice.value for choice in MealCategory.MealType]
                 'Create meal',
                 value={
                     'meal_name': 'Chicken Rice Bowl',
-                    'total_price': '180.00',
                     'meal_type': 'daily',
                     'is_active': True,
                 },

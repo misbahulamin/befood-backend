@@ -1,0 +1,57 @@
+---
+description: Preferred Django app layout (consolidated api modules, services, utils) with legacy feature-file compatibility
+globs:
+  - "**/api/**/*.py"
+  - "**/services/**/*.py"
+  - "**/models.py"
+  - "**/urls.py"
+  - "**/tests/**/*.py"
+alwaysApply: false
+---
+
+# Django App Structure (Preferred)
+
+## Target layout (new work)
+
+```text
+your_app/
+├── models.py
+├── admin.py
+├── filters.py
+├── api/
+│   ├── urls.py
+│   ├── views.py
+│   ├── serializers.py
+│   └── openapi.py
+├── services/
+├── utils/
+├── management/
+├── tests/
+└── docs/
+    ├── frontend/
+    └── backend/
+```
+
+- Group features inside shared files with section headers (`# === ... ===`).
+- Put workflows in `services/`; reusable helpers in `utils/`.
+- Do not invent a nested `api/v1/<app_name>/` package as the app-local layout.
+
+## Legacy compatibility (important)
+
+Existing feature-suffixed modules are **valid until a dedicated refactor**, for example:
+
+- `maintenance/api/pm_views.py`
+- `maintenance/api/transfer_views.py`
+- parallel `*_serializers.py` / schema modules
+
+When editing those files:
+
+1. Do **not** treat their existence as a violation requiring an immediate merge/rename.
+2. Prefer adding **new** endpoints to consolidated `views.py` / `serializers.py` / `openapi.py` when practical.
+3. If you touch a legacy feature heavily, migrate that feature incrementally only when safe (imports, URLs, tests).
+
+## Full reference
+
+For the complete tree, naming, refactor checklist, and examples, read:
+
+`.cursor/rules/reference/django-app-structure.md`

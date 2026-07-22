@@ -30,6 +30,10 @@ class InactiveMealError(OrderServiceError):
     pass
 
 
+class UnpricedMealError(OrderServiceError):
+    pass
+
+
 def check_existing_monthly_lock(customer, order_month: str) -> None:
     has_existing = Order.objects.filter(
         customer=customer,
@@ -41,6 +45,8 @@ def check_existing_monthly_lock(customer, order_month: str) -> None:
 
 
 def prepare_snapshot_fields(meal: MealCategory, reference_date=None) -> dict:
+    if meal.total_price is None:
+        raise UnpricedMealError('This meal package has no published price yet. Finalize a cycle plan first.')
     per_meal_price = calculate_per_meal_price(meal.total_price, reference_date=reference_date)
     return {
         'meal_name_snapshot': meal.meal_name,
@@ -54,6 +60,8 @@ def prepare_snapshot_fields(meal: MealCategory, reference_date=None) -> dict:
 def create_meal_order(customer, meal: MealCategory, customer_note: str = '') -> Order:
     if not meal.is_active:
         raise InactiveMealError('This meal package is not available for ordering.')
+    if meal.total_price is None:
+        raise UnpricedMealError('This meal package has no published price yet. Finalize a cycle plan first.')
 
     period = calculate_order_period(meal.meal_type)
     check_existing_monthly_lock(customer, period.order_month)

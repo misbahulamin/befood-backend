@@ -46,7 +46,6 @@ class MealAPITestCase(APITestCase):
     def _meal_payload(self, **overrides):
         payload = {
             'meal_name': 'Chicken Rice Bowl',
-            'total_price': '180.00',
             'meal_type': 'daily',
             'is_active': 'true',
             'meal_thumbnail': make_test_image(),
@@ -63,16 +62,22 @@ class MealAPITestCase(APITestCase):
         self.assertEqual(response.data['meal_type_display'], 'Daily')
         self.assertTrue(response.data['is_active'])
         self.assertIn('meal_thumbnail', response.data)
+        self.assertIsNone(response.data['total_price'])
+        self.assertEqual(response.data['pricing_status'], 'unpriced')
+        self.assertIsNone(response.data['per_meal_price'])
+        self.assertIsNone(response.data.get('current_cycle_offering'))
 
-    def test_create_meal_fails_if_total_price_not_positive(self):
+    def test_create_meal_ignores_client_total_price(self):
         self._auth()
         response = self.client.post(
             self.list_url,
-            self._meal_payload(total_price='0'),
+            self._meal_payload(total_price='999.00'),
             format='multipart',
         )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('total_price', response.data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        meal = MealCategory.objects.get(pk=response.data['id'])
+        self.assertIsNone(meal.total_price)
+        self.assertEqual(response.data['pricing_status'], 'unpriced')
 
     def test_create_meal_fails_if_meal_type_invalid(self):
         self._auth()
@@ -98,7 +103,7 @@ class MealAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         meal = MealCategory.objects.get(pk=response.data['id'])
         filename = meal.meal_thumbnail.name.split('/')[-1]
-        self.assertRegex(filename, r'^chicken-rice-bowl-\d{8}-\d{6}\.jpg$')
+        self.assertRegex(filename, r'^chicken-rice-bowl-\d{8}-\d{6}(_[A-Za-z0-9]+)?\.jpg$')
 
     def test_list_meals_works(self):
         MealCategory.objects.create(
@@ -115,7 +120,6 @@ class MealAPITestCase(APITestCase):
         self.assertEqual(response.data[0]['per_meal_price'], str(expected_per_meal_price))
 
     def test_per_meal_price_uses_present_month_days(self):
-        days = get_present_month_days()
         meal = MealCategory.objects.create(
             meal_name='Monthly Plan',
             total_price=Decimal('3100.00'),
@@ -124,7 +128,8 @@ class MealAPITestCase(APITestCase):
         )
         response = self.client.get(reverse('meals:meals-detail', kwargs={'pk': meal.pk}))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['per_meal_price'], str((Decimal('3100.00') / days).quantize(Decimal('0.01'))))
+        expected_per_meal_price = calculate_per_meal_price(Decimal('3100.00'))
+        self.assertEqual(response.data['per_meal_price'], str(expected_per_meal_price))
 
     def test_detail_meal_works(self):
         meal = MealCategory.objects.create(
@@ -154,7 +159,9 @@ class MealAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         meal.refresh_from_db()
         self.assertEqual(meal.meal_name, 'Updated Name')
-        self.assertEqual(str(meal.total_price), '250.00')
+        # total_price is not writable via meal APIs; published only via finalize
+        self.assertEqual(str(meal.total_price), '120.00')
+        self.assertEqual(response.data['pricing_status'], 'priced')
 
     def test_filter_by_meal_type_works(self):
         MealCategory.objects.create(
