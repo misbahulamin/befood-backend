@@ -1,6 +1,8 @@
 from django.contrib.auth.models import User
 from django.db import models
 
+from core.models import PublicIdMixin
+
 
 class TimeStampedModel(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
@@ -86,7 +88,7 @@ class CustomerProfile(TimeStampedModel):
         return self.user.email
 
 
-class CustomerAddress(TimeStampedModel):
+class CustomerAddress(PublicIdMixin, TimeStampedModel):
     class AddressType(models.TextChoices):
         PRESENT = 'present', 'Present'
         PERMANENT = 'permanent', 'Permanent'

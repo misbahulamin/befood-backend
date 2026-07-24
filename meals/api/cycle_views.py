@@ -51,6 +51,8 @@ def _django_validation_to_response(exc: DjangoValidationError):
 class IngredientViewSet(viewsets.ModelViewSet):
     queryset = Ingredient.objects.all()
     serializer_class = IngredientSerializer
+    lookup_field = 'public_id'
+    lookup_url_kwarg = 'public_id'
     permission_classes = [IsVerifiedAdmin]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = IngredientFilter
@@ -73,6 +75,8 @@ class IngredientViewSet(viewsets.ModelViewSet):
 class MealCycleViewSet(viewsets.ModelViewSet):
     queryset = MealCycle.objects.all()
     serializer_class = MealCycleSerializer
+    lookup_field = 'public_id'
+    lookup_url_kwarg = 'public_id'
     permission_classes = [IsVerifiedAdmin]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = MealCycleFilter
@@ -97,6 +101,8 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
         'lines__ingredient'
     )
     serializer_class = MealCyclePlanSerializer
+    lookup_field = 'public_id'
+    lookup_url_kwarg = 'public_id'
     permission_classes = [IsVerifiedAdmin]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = MealCyclePlanFilter
@@ -119,7 +125,7 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
         responses={200: OpenApiResponse(description='Plan summary with line and package totals')},
     )
     @action(detail=True, methods=['get'], url_path='summary')
-    def summary(self, request, pk=None):
+    def summary(self, request, public_id=None):
         plan = self.get_object()
         return Response(build_plan_summary(plan))
 
@@ -130,7 +136,7 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
         responses={200: OpenApiResponse(description='Finalized plan summary')},
     )
     @action(detail=True, methods=['post'], url_path='finalize')
-    def finalize(self, request, pk=None):
+    def finalize(self, request, public_id=None):
         plan = self.get_object()
         try:
             plan = finalize_plan(plan)
@@ -145,7 +151,7 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
         responses={200: MealCyclePlanSerializer},
     )
     @action(detail=True, methods=['post'], url_path='reopen')
-    def reopen(self, request, pk=None):
+    def reopen(self, request, public_id=None):
         plan = self.get_object()
         try:
             plan = reopen_plan(plan)
@@ -161,7 +167,7 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
         responses={200: MealCyclePlanLineSerializer(many=True)},
     )
     @action(detail=True, methods=['put'], url_path='lines')
-    def replace_lines(self, request, pk=None):
+    def replace_lines(self, request, public_id=None):
         plan = self.get_object()
         serializer = MealCyclePlanLineBulkSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -186,6 +192,8 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
 class MealCyclePlanLineViewSet(viewsets.ModelViewSet):
     queryset = MealCyclePlanLine.objects.select_related('plan', 'ingredient', 'plan__cycle')
     serializer_class = MealCyclePlanLineSerializer
+    lookup_field = 'public_id'
+    lookup_url_kwarg = 'public_id'
     permission_classes = [IsVerifiedAdmin]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = MealCyclePlanLineFilter

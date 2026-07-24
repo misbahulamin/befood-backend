@@ -61,7 +61,7 @@ class CycleCostingFormulaTests(TestCase):
             product_cost=Decimal('2954.62'),
             other_cost_percent=Decimal('30'),
             profit_percent=Decimal('20'),
-            total_meals=60,
+            expected_servings_count=60,
         )
         self.assertEqual(totals['other_cost'], Decimal('886.39'))
         self.assertEqual(totals['profit'], Decimal('590.92'))
@@ -73,7 +73,7 @@ class CycleCostingFormulaTests(TestCase):
             product_cost=Decimal('2954.62'),
             other_cost_percent=Decimal('30'),
             profit_percent=Decimal('20'),
-            total_meals=62,
+            expected_servings_count=62,
         )
         self.assertEqual(totals['per_meal_rate'], Decimal('71.48'))
 
@@ -117,3 +117,54 @@ class CycleCostingFormulaTests(TestCase):
         self.assertTrue(summary['using_snapshot'])
         self.assertEqual(plan.status, MealCyclePlan.Status.FINALIZED)
         self.assertIsNotNone(plan.snapshot_per_meal_rate)
+        self.assertEqual(summary['expected_servings'], 60)
+        self.assertEqual(summary['main_servings_expected'], 60)
+
+    def test_finalize_monthly_dinner_expects_30_in_april(self):
+        meal = MealCategory.objects.create(
+            meal_name='Dinner Only',
+            total_price=None,
+            meal_type='monthly',
+            meal_period='dinner',
+            meal_thumbnail=make_test_image('dinner.jpg'),
+        )
+        cycle = MealCycle.objects.create(year=2026, month=4)
+        plan = MealCyclePlan.objects.create(
+            cycle=cycle,
+            meal_category=meal,
+            other_cost_percent=Decimal('30'),
+            profit_percent=Decimal('10'),
+        )
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.beef, servings_count=30)
+        finalize_plan(plan)
+        plan.refresh_from_db()
+        summary = build_plan_summary(plan)
+        self.assertEqual(summary['expected_servings'], 30)
+        self.assertEqual(summary['per_meal_rate'], str(plan.snapshot_per_meal_rate))
+
+    def test_finalize_daily_both_expects_2(self):
+        meal = MealCategory.objects.create(
+            meal_name='Daily Both',
+            total_price=None,
+            meal_type='daily',
+            meal_period='both',
+            meal_thumbnail=make_test_image('daily-both.jpg'),
+        )
+        cycle = MealCycle.objects.create(year=2026, month=4)
+        plan = MealCyclePlan.objects.create(
+            cycle=cycle,
+            meal_category=meal,
+            other_cost_percent=Decimal('30'),
+            profit_percent=Decimal('10'),
+        )
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.beef, servings_count=2)
+        finalize_plan(plan)
+        plan.refresh_from_db()
+        summary = build_plan_summary(plan)
+        self.assertEqual(summary['expected_servings'], 2)
+        # per_meal_rate = total_cost / 2
+        product = Decimal(summary['product_cost'])
+        other = Decimal(summary['other_cost'])
+        profit = Decimal(summary['profit'])
+        total = product + other + profit
+        self.assertEqual(Decimal(summary['per_meal_rate']), (total / Decimal('2')).quantize(Decimal('0.01')))

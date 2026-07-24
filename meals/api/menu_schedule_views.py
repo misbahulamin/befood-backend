@@ -70,6 +70,8 @@ class MonthlyMenuScheduleViewSet(viewsets.ModelViewSet):
         'plan__lines__ingredient',
         'slots__items__ingredient',
     )
+    lookup_field = 'public_id'
+    lookup_url_kwarg = 'public_id'
     permission_classes = [IsVerifiedAdmin]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = MonthlyMenuScheduleFilter
@@ -108,7 +110,7 @@ class MonthlyMenuScheduleViewSet(viewsets.ModelViewSet):
         responses={200: MonthlyMenuScheduleSerializer},
     )
     @action(detail=True, methods=['put'], url_path='assignments')
-    def assignments(self, request, pk=None):
+    def assignments(self, request, public_id=None):
         schedule = self.get_object()
         serializer = MenuAssignmentBulkSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -128,7 +130,7 @@ class MonthlyMenuScheduleViewSet(viewsets.ModelViewSet):
         responses={200: OpenApiResponse(description='Per-ingredient quota usage')},
     )
     @action(detail=True, methods=['get'], url_path='quota-summary')
-    def quota_summary(self, request, pk=None):
+    def quota_summary(self, request, public_id=None):
         schedule = self.get_object()
         return Response(
             {
@@ -145,7 +147,7 @@ class MonthlyMenuScheduleViewSet(viewsets.ModelViewSet):
         responses={200: MonthlyMenuScheduleSerializer},
     )
     @action(detail=True, methods=['post'], url_path='publish')
-    def publish(self, request, pk=None):
+    def publish(self, request, public_id=None):
         schedule = self.get_object()
         try:
             schedule = publish_schedule(schedule)
@@ -161,7 +163,7 @@ class MonthlyMenuScheduleViewSet(viewsets.ModelViewSet):
         responses={200: MonthlyMenuScheduleSerializer},
     )
     @action(detail=True, methods=['post'], url_path='unpublish')
-    def unpublish(self, request, pk=None):
+    def unpublish(self, request, public_id=None):
         schedule = self.get_object()
         try:
             schedule = unpublish_schedule(schedule)
@@ -177,7 +179,7 @@ class MonthlyMenuScheduleViewSet(viewsets.ModelViewSet):
         responses={200: OpenApiResponse(description='Suggested assignments for this target')},
     )
     @action(detail=True, methods=['post'], url_path='sync-suggestions')
-    def sync_suggestions(self, request, pk=None):
+    def sync_suggestions(self, request, public_id=None):
         target = self.get_object()
         serializer = MenuSyncRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -188,7 +190,7 @@ class MonthlyMenuScheduleViewSet(viewsets.ModelViewSet):
             ).prefetch_related(
                 'plan__lines__ingredient',
                 'slots__items__ingredient',
-            ).get(pk=serializer.validated_data['source_schedule_id'])
+            ).get(public_id=serializer.validated_data['source_schedule_id'])
         except MonthlyMenuSchedule.DoesNotExist:
             return Response(
                 {'source_schedule_id': ['Source schedule not found.']},
@@ -207,7 +209,7 @@ class MonthlyMenuScheduleViewSet(viewsets.ModelViewSet):
         responses={200: MonthlyMenuScheduleSerializer},
     )
     @action(detail=True, methods=['post'], url_path='apply-sync')
-    def apply_sync(self, request, pk=None):
+    def apply_sync(self, request, public_id=None):
         target = self.get_object()
         serializer = MenuSyncApplySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -221,7 +223,7 @@ class MonthlyMenuScheduleViewSet(viewsets.ModelViewSet):
                 ).prefetch_related(
                     'plan__lines__ingredient',
                     'slots__items__ingredient',
-                ).get(pk=source_id)
+                ).get(public_id=source_id)
             except MonthlyMenuSchedule.DoesNotExist:
                 return Response(
                     {'source_schedule_id': ['Source schedule not found.']},

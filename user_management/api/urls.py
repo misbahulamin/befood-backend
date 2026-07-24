@@ -29,7 +29,7 @@ urlpatterns = [
     path('admin/me/', AdminCurrentUserView.as_view(), name='admin-me'),
     path('customer/profile/', CustomerProfileView.as_view(), name='customer-profile'),
     path(
-        'customer/addresses/<int:pk>/set-default/',
+        'customer/addresses/<uuid:public_id>/set-default/',
         SetDefaultDeliveryAddressView.as_view(),
         name='customer-address-set-default',
     ),

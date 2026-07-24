@@ -14,6 +14,7 @@ class IngredientSerializer(serializers.ModelSerializer):
         model = Ingredient
         fields = (
             'id',
+            'public_id',
             'name',
             'price_per_kg',
             'customers_per_kg',
@@ -26,7 +27,7 @@ class IngredientSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         )
-        read_only_fields = ('id', 'resolved_cost_per_customer', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'public_id', 'resolved_cost_per_customer', 'created_at', 'updated_at')
 
     @extend_schema_field(serializers.CharField(allow_null=True))
     def get_resolved_cost_per_customer(self, obj):
@@ -93,6 +94,7 @@ class MealCycleSerializer(serializers.ModelSerializer):
         model = MealCycle
         fields = (
             'id',
+            'public_id',
             'year',
             'month',
             'cycle_days',
@@ -101,7 +103,7 @@ class MealCycleSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         )
-        read_only_fields = ('id', 'cycle_days', 'total_meals', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'public_id', 'cycle_days', 'total_meals', 'created_at', 'updated_at')
 
     def validate_year(self, value):
         if value < 2000 or value > 2100:
@@ -130,13 +132,13 @@ class MealCycleSerializer(serializers.ModelSerializer):
 class MealCategoryBriefSerializer(serializers.ModelSerializer):
     class Meta:
         model = MealCategory
-        fields = ('id', 'meal_name', 'meal_type', 'is_active')
+        fields = ('id', 'public_id', 'meal_name', 'meal_type', 'meal_period', 'is_active')
 
 
 class MealCycleBriefSerializer(serializers.ModelSerializer):
     class Meta:
         model = MealCycle
-        fields = ('id', 'year', 'month', 'cycle_days', 'total_meals')
+        fields = ('id', 'public_id', 'year', 'month', 'cycle_days', 'total_meals')
 
 
 class MealCyclePlanLineSerializer(serializers.ModelSerializer):
@@ -147,6 +149,7 @@ class MealCyclePlanLineSerializer(serializers.ModelSerializer):
         model = MealCyclePlanLine
         fields = (
             'id',
+            'public_id',
             'plan',
             'ingredient',
             'ingredient_name',
@@ -157,6 +160,7 @@ class MealCyclePlanLineSerializer(serializers.ModelSerializer):
         )
         read_only_fields = (
             'id',
+            'public_id',
             'ingredient_name',
             'product_role',
             'created_at',
@@ -207,6 +211,7 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
         model = MealCyclePlan
         fields = (
             'id',
+            'public_id',
             'cycle',
             'cycle_detail',
             'meal_category',
@@ -227,6 +232,7 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
         )
         read_only_fields = (
             'id',
+            'public_id',
             'cycle_detail',
             'meal_category_detail',
             'status',

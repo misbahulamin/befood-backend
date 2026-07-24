@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from meals.models import Ingredient, MealCyclePlan, MealCyclePlanLine
 from meals.services.meal_offering import publish_meal_price_from_plan
+from meals.services.pricing import expected_servings
 
 
 MONEY_PLACES = Decimal('0.01')
@@ -14,6 +15,16 @@ COST_PLACES = Decimal('0.000001')
 
 def _quantize(value: Decimal, places: Decimal = MONEY_PLACES) -> Decimal:
     return value.quantize(places, rounding=ROUND_HALF_UP)
+
+
+def plan_expected_servings(plan: MealCyclePlan) -> int:
+    meal = plan.meal_category
+    return expected_servings(
+        meal.meal_type,
+        meal.meal_period,
+        plan.cycle.year,
+        plan.cycle.month,
+    )
 
 
 def resolve_cost_per_customer(ingredient: Ingredient) -> Decimal:
@@ -64,14 +75,14 @@ def calculate_package_totals(
     product_cost: Decimal,
     other_cost_percent: Decimal,
     profit_percent: Decimal,
-    total_meals: int,
+    expected_servings_count: int,
 ) -> dict[str, Decimal]:
-    if total_meals <= 0:
-        raise ValidationError('total_meals must be greater than 0.')
+    if expected_servings_count <= 0:
+        raise ValidationError('expected_servings must be greater than 0.')
     other_cost = _quantize(product_cost * (Decimal(other_cost_percent) / Decimal('100')))
     profit = _quantize(product_cost * (Decimal(profit_percent) / Decimal('100')))
     total_cost = _quantize(product_cost + other_cost + profit)
-    per_meal_rate = _quantize(total_cost / Decimal(total_meals))
+    per_meal_rate = _quantize(total_cost / Decimal(expected_servings_count))
     return {
         'product_cost': _quantize(product_cost),
         'other_cost': other_cost,
@@ -85,6 +96,7 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
     use_snapshot = plan.is_finalized if use_snapshot is None else use_snapshot
     lines = list(plan.lines.select_related('ingredient').all())
     line_details = [build_line_detail(line) for line in lines]
+    servings_expected = plan_expected_servings(plan)
 
     if use_snapshot and plan.snapshot_total_cost is not None:
         totals = {
@@ -103,7 +115,7 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
             product_cost=product_cost,
             other_cost_percent=plan.other_cost_percent,
             profit_percent=plan.profit_percent,
-            total_meals=plan.cycle.total_meals,
+            expected_servings_count=servings_expected,
         )
 
     main_servings = sum(
@@ -126,6 +138,7 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
             'id': plan.meal_category_id,
             'meal_name': plan.meal_category.meal_name,
             'meal_type': plan.meal_category.meal_type,
+            'meal_period': plan.meal_category.meal_period,
             'total_price': (
                 str(plan.meal_category.total_price)
                 if plan.meal_category.total_price is not None
@@ -136,7 +149,8 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
         'other_cost_percent': str(plan.other_cost_percent),
         'profit_percent': str(plan.profit_percent),
         'main_servings_total': main_servings,
-        'main_servings_expected': plan.cycle.total_meals,
+        'main_servings_expected': servings_expected,
+        'expected_servings': servings_expected,
         'lines': line_details,
         'product_cost': str(totals['product_cost']),
         'other_cost': str(totals['other_cost']),
@@ -144,7 +158,7 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
         'total_cost': str(totals['total_cost']),
         'per_meal_rate': str(totals['per_meal_rate']),
         'suggested_package_price': str(
-            _quantize(totals['per_meal_rate'] * Decimal(plan.cycle.total_meals))
+            _quantize(totals['per_meal_rate'] * Decimal(servings_expected))
         ),
         'published_meal_total_price': (
             str(plan.meal_category.total_price)
@@ -162,12 +176,12 @@ def validate_main_servings_for_finalize(plan: MealCyclePlan) -> int:
         for line in plan.lines.select_related('ingredient').all()
         if line.ingredient.product_role == Ingredient.ProductRole.MAIN
     )
-    expected = plan.cycle.total_meals
+    expected = plan_expected_servings(plan)
     if main_servings != expected:
         raise ValidationError(
             {
                 'main_servings_total': (
-                    f'Main product servings must equal total meals ({expected}). '
+                    f'Main product servings must equal expected servings ({expected}). '
                     f'Current total is {main_servings}.'
                 )
             }

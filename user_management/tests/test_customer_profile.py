@@ -125,7 +125,7 @@ class CustomerProfileAPITests(APITestCase):
             address_type='present',
             full_address='Second address',
         )
-        set_default_url = reverse('user_management:customer-address-set-default', kwargs={'pk': second.pk})
+        set_default_url = reverse('user_management:customer-address-set-default', kwargs={'public_id': second.public_id})
         response = self.client.post(set_default_url)
         self.assertEqual(response.status_code, 200)
         first.refresh_from_db()
@@ -151,7 +151,7 @@ class CustomerProfileAPITests(APITestCase):
             address_type='present',
             full_address='Other customer address',
         )
-        detail_url = reverse('user_management:customer-address-detail', kwargs={'pk': other_address.pk})
+        detail_url = reverse('user_management:customer-address-detail', kwargs={'public_id': other_address.public_id})
         response = self.client.get(detail_url)
         self.assertEqual(response.status_code, 404)
 
@@ -216,7 +216,7 @@ class CustomerProfileAPITests(APITestCase):
             address_type='present',
             full_address='Other address',
         )
-        set_default_url = reverse('user_management:customer-address-set-default', kwargs={'pk': other_address.pk})
+        set_default_url = reverse('user_management:customer-address-set-default', kwargs={'public_id': other_address.public_id})
         response = self.client.post(set_default_url)
         self.assertEqual(response.status_code, 404)
 

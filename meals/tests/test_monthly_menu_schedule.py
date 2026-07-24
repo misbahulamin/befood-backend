@@ -185,7 +185,7 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         self._auth_admin()
         create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
         self.assertEqual(create.status_code, status.HTTP_201_CREATED)
-        schedule_id = create.data['id']
+        schedule_id = create.data['public_id']
 
         # 11 chicken slots > quota 10
         keys = expected_slot_keys(2026, 4)
@@ -198,7 +198,7 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
             for k in keys[:11]
         ]
         resp = self.client.put(
-            reverse('meals:menu-schedules-assignments', kwargs={'pk': schedule_id}),
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
             {'assignments': overflow},
             format='json',
         )
@@ -213,7 +213,7 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
             }
         ]
         resp2 = self.client.put(
-            reverse('meals:menu-schedules-assignments', kwargs={'pk': schedule_id}),
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
             {'assignments': dup},
             format='json',
         )
@@ -223,10 +223,10 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         plan = self._finalize_plan(self.regular, 2026, 4, chicken_count=10, beef_count=50)
         self._auth_admin()
         create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
-        schedule_id = create.data['id']
+        schedule_id = create.data['public_id']
         # Only one slot filled
         self.client.put(
-            reverse('meals:menu-schedules-assignments', kwargs={'pk': schedule_id}),
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
             {
                 'assignments': [
                     {
@@ -239,7 +239,7 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
             format='json',
         )
         pub = self.client.post(
-            reverse('meals:menu-schedules-publish', kwargs={'pk': schedule_id})
+            reverse('meals:menu-schedules-publish', kwargs={'public_id': schedule_id})
         )
         self.assertEqual(pub.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('incomplete_slots', pub.data)
@@ -250,15 +250,15 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
         self._auth_admin()
         create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
-        schedule_id = create.data['id']
+        schedule_id = create.data['public_id']
         put = self.client.put(
-            reverse('meals:menu-schedules-assignments', kwargs={'pk': schedule_id}),
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
             {'assignments': assignments},
             format='json',
         )
         self.assertEqual(put.status_code, status.HTTP_200_OK)
         pub = self.client.post(
-            reverse('meals:menu-schedules-publish', kwargs={'pk': schedule_id})
+            reverse('meals:menu-schedules-publish', kwargs={'public_id': schedule_id})
         )
         self.assertEqual(pub.status_code, status.HTTP_200_OK)
         self.assertEqual(pub.data['status'], 'published')
@@ -271,25 +271,25 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
         self._auth_admin()
         create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
-        schedule_id = create.data['id']
+        schedule_id = create.data['public_id']
         self.client.put(
-            reverse('meals:menu-schedules-assignments', kwargs={'pk': schedule_id}),
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
             {'assignments': assignments},
             format='json',
         )
-        self.client.post(reverse('meals:menu-schedules-publish', kwargs={'pk': schedule_id}))
-        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'pk': plan.pk}))
+        self.client.post(reverse('meals:menu-schedules-publish', kwargs={'public_id': schedule_id}))
+        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
         self.assertEqual(reopen.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_reopen_deletes_draft_schedule(self):
         plan = self._finalize_plan(self.regular, 2026, 4, chicken_count=10, beef_count=50)
         self._auth_admin()
         create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
-        schedule_id = create.data['id']
-        self.assertTrue(MonthlyMenuSchedule.objects.filter(pk=schedule_id).exists())
-        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'pk': plan.pk}))
+        schedule_id = create.data['public_id']
+        self.assertTrue(MonthlyMenuSchedule.objects.filter(public_id=schedule_id).exists())
+        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
         self.assertEqual(reopen.status_code, status.HTTP_200_OK)
-        self.assertFalse(MonthlyMenuSchedule.objects.filter(pk=schedule_id).exists())
+        self.assertFalse(MonthlyMenuSchedule.objects.filter(public_id=schedule_id).exists())
 
     # --- 6.3 sync ---
 
@@ -313,16 +313,16 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         s_create = self.client.post(
             self.schedules_url, {'plan_id': student_plan.pk}, format='json'
         )
-        regular_id = r_create.data['id']
-        student_id = s_create.data['id']
+        regular_id = r_create.data['public_id']
+        student_id = s_create.data['public_id']
         self.client.put(
-            reverse('meals:menu-schedules-assignments', kwargs={'pk': regular_id}),
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': regular_id}),
             {'assignments': regular_assignments},
             format='json',
         )
 
         suggestion = self.client.post(
-            reverse('meals:menu-schedules-sync-suggestions', kwargs={'pk': student_id}),
+            reverse('meals:menu-schedules-sync-suggestions', kwargs={'public_id': student_id}),
             {'source_schedule_id': regular_id},
             format='json',
         )
@@ -339,7 +339,7 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         )
 
         apply = self.client.post(
-            reverse('meals:menu-schedules-apply-sync', kwargs={'pk': student_id}),
+            reverse('meals:menu-schedules-apply-sync', kwargs={'public_id': student_id}),
             {'source_schedule_id': regular_id},
             format='json',
         )
@@ -364,22 +364,22 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         self._auth_admin()
         r_id = self.client.post(
             self.schedules_url, {'plan_id': regular_plan.pk}, format='json'
-        ).data['id']
+        ).data['public_id']
         s_id = self.client.post(
             self.schedules_url, {'plan_id': student_plan.pk}, format='json'
-        ).data['id']
+        ).data['public_id']
         self.client.put(
-            reverse('meals:menu-schedules-assignments', kwargs={'pk': r_id}),
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': r_id}),
             {'assignments': self._full_main_assignments(regular_plan, r_chicken, r_beef)},
             format='json',
         )
         self.client.put(
-            reverse('meals:menu-schedules-assignments', kwargs={'pk': s_id}),
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': s_id}),
             {'assignments': self._full_main_assignments(student_plan, s_chicken, s_beef)},
             format='json',
         )
         suggestion = self.client.post(
-            reverse('meals:menu-schedules-sync-suggestions', kwargs={'pk': s_id}),
+            reverse('meals:menu-schedules-sync-suggestions', kwargs={'public_id': s_id}),
             {'source_schedule_id': r_id},
             format='json',
         )
@@ -412,13 +412,13 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         self._auth_admin()
         schedule_id = self.client.post(
             self.schedules_url, {'plan_id': plan.pk}, format='json'
-        ).data['id']
+        ).data['public_id']
         self.client.put(
-            reverse('meals:menu-schedules-assignments', kwargs={'pk': schedule_id}),
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
             {'assignments': assignments},
             format='json',
         )
-        self.client.post(reverse('meals:menu-schedules-publish', kwargs={'pk': schedule_id}))
+        self.client.post(reverse('meals:menu-schedules-publish', kwargs={'public_id': schedule_id}))
 
         Order.objects.create(
             customer=self.customer_profile,
@@ -472,8 +472,8 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         self.assertEqual(len(payload_dinner['packages'][0]['periods']), 2)
 
         # No order for student package — only regular appears
-        meal_ids = [p['meal_category_id'] for p in payload_dinner['packages']]
-        self.assertEqual(meal_ids, [self.regular.id])
+        meal_ids = [p['meal_public_id'] for p in payload_dinner['packages']]
+        self.assertEqual(meal_ids, [str(self.regular.public_id)])
 
 
 class MenuSyncServiceTestCase(APITestCase):

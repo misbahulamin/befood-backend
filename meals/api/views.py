@@ -35,16 +35,29 @@ MEAL_TYPE_VALUES = [choice.value for choice in MealCategory.MealType]
         tags=['Meal Management'],
         summary='Retrieve meal detail',
         description=(
-            'Public meal detail includes pricing_status and current_cycle_offering '
+            'Public meal detail is looked up by public_id (UUID), not the integer PK. '
+            'Includes pricing_status and current_cycle_offering '
             '(finalized menu servings, package total, per-meal rate) when available. '
-            'Package price is published by cycle finalize — not set on create.'
+            'Package price is published by cycle finalize — not set on create. '
+            'Offering omits internal plan_id and costing bands (product_cost/profit).'
         ),
+        parameters=[
+            OpenApiParameter(
+                name='public_id',
+                type=str,
+                location=OpenApiParameter.PATH,
+                description='Meal public UUID identifier',
+            ),
+        ],
         responses={200: MealDetailSerializer, 404: OpenApiResponse(description='Meal not found')},
     ),
     create=extend_schema(
         tags=['Meal Management'],
         summary='Create meal',
-        description='Create a meal package without total_price. Price is published when a cycle plan is finalized.',
+        description=(
+            'Create a meal package without total_price. Require meal_type and meal_period '
+            '(lunch | dinner | both). Price is published when a cycle plan is finalized.'
+        ),
         request={'multipart/form-data': MealCreateUpdateSerializer},
         responses={
             201: MealDetailSerializer,
@@ -58,6 +71,7 @@ MEAL_TYPE_VALUES = [choice.value for choice in MealCategory.MealType]
                 value={
                     'meal_name': 'Chicken Rice Bowl',
                     'meal_type': 'daily',
+                    'meal_period': 'lunch',
                     'is_active': True,
                 },
                 request_only=True,
@@ -85,6 +99,8 @@ MEAL_TYPE_VALUES = [choice.value for choice in MealCategory.MealType]
 )
 class MealCategoryViewSet(viewsets.ModelViewSet):
     queryset = MealCategory.objects.all()
+    lookup_field = 'public_id'
+    lookup_url_kwarg = 'public_id'
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = MealCategoryFilter

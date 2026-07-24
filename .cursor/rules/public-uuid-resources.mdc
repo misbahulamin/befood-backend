@@ -1,0 +1,20 @@
+---
+description: New public API resources must use UUID public_id
+globs: "**/models.py,**/api/**/*.py"
+alwaysApply: false
+---
+
+# Public UUID for new API resources
+
+When adding or mounting a **customer/public** (or shared) HTTP resource:
+
+1. Prefer `PublicIdMixin` from `core.models` (or the same `UUIDField` shape).
+2. Keep integer PK for DB relations.
+3. Set `lookup_field = "public_id"` on the ViewSet.
+4. Customer serializers expose `public_id`, not integer `id`.
+5. Nested references use `{resource}_public_id`.
+6. Document the contract in `<app>/docs/frontend/`.
+
+Do **not** ship a new public collection that only exposes sequential integer PKs.
+
+See `docs/public-uuid-convention.md` and OpenSpec `project-wide-public-uuid`.

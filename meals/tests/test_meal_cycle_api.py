@@ -174,7 +174,7 @@ class MealCycleAPITestCase(APITestCase):
     def test_bulk_lines_summary_and_duplicate_rejection(self):
         self._auth_admin()
         _, plan = self._create_april_plan()
-        replace_url = reverse('meals:cycle-plans-replace-lines', kwargs={'pk': plan.pk})
+        replace_url = reverse('meals:cycle-plans-replace-lines', kwargs={'public_id': plan.public_id})
         response = self.client.put(
             replace_url,
             {
@@ -195,7 +195,7 @@ class MealCycleAPITestCase(APITestCase):
         )
         self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
 
-        summary = self.client.get(reverse('meals:cycle-plans-summary', kwargs={'pk': plan.pk}))
+        summary = self.client.get(reverse('meals:cycle-plans-summary', kwargs={'public_id': plan.public_id}))
         self.assertEqual(summary.status_code, status.HTTP_200_OK)
         self.assertEqual(summary.data['status'], 'draft')
         self.assertFalse(summary.data['using_snapshot'])
@@ -204,7 +204,7 @@ class MealCycleAPITestCase(APITestCase):
     def test_finalize_success_and_edit_blocked_then_reopen(self):
         self._auth_admin()
         _, plan = self._create_april_plan()
-        replace_url = reverse('meals:cycle-plans-replace-lines', kwargs={'pk': plan.pk})
+        replace_url = reverse('meals:cycle-plans-replace-lines', kwargs={'public_id': plan.public_id})
         self.client.put(
             replace_url,
             {
@@ -216,7 +216,7 @@ class MealCycleAPITestCase(APITestCase):
             },
             format='json',
         )
-        finalize = self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'pk': plan.pk}))
+        finalize = self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id}))
         self.assertEqual(finalize.status_code, status.HTTP_200_OK)
         self.assertEqual(finalize.data['status'], 'finalized')
         self.assertTrue(finalize.data['using_snapshot'])
@@ -233,7 +233,7 @@ class MealCycleAPITestCase(APITestCase):
         )
         self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
 
-        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'pk': plan.pk}))
+        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
         self.assertEqual(reopen.status_code, status.HTTP_200_OK)
         self.assertEqual(reopen.data['status'], 'draft')
         self.meal.refresh_from_db()
@@ -251,7 +251,7 @@ class MealCycleAPITestCase(APITestCase):
         _, plan = self._create_april_plan()
         original_price = self.meal.total_price
         MealCyclePlanLine.objects.create(plan=plan, ingredient=self.chicken, servings_count=18)
-        response = self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'pk': plan.pk}))
+        response = self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id}))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('main_servings_total', response.data)
         self.meal.refresh_from_db()
@@ -262,13 +262,13 @@ class MealCycleAPITestCase(APITestCase):
         _, plan = self._create_april_plan()
         MealCyclePlanLine.objects.create(plan=plan, ingredient=self.chicken, servings_count=60)
         MealCyclePlanLine.objects.create(plan=plan, ingredient=self.rice, servings_count=60)
-        finalize = self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'pk': plan.pk}))
+        finalize = self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id}))
         original_rate = finalize.data['per_meal_rate']
 
         self.chicken.price_per_kg = Decimal('999.00')
         self.chicken.save(update_fields=['price_per_kg'])
 
-        summary = self.client.get(reverse('meals:cycle-plans-summary', kwargs={'pk': plan.pk}))
+        summary = self.client.get(reverse('meals:cycle-plans-summary', kwargs={'public_id': plan.public_id}))
         self.assertEqual(summary.data['per_meal_rate'], original_rate)
         self.assertTrue(summary.data['using_snapshot'])
 
@@ -277,7 +277,7 @@ class MealCycleAPITestCase(APITestCase):
         _, plan = self._create_april_plan()
         MealCyclePlanLine.objects.create(plan=plan, ingredient=self.chicken, servings_count=60)
         MealCyclePlanLine.objects.create(plan=plan, ingredient=self.rice, servings_count=60)
-        self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'pk': plan.pk}))
+        self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id}))
         self.client.credentials()
 
         list_response = self.client.get(self.meals_url)
@@ -287,12 +287,15 @@ class MealCycleAPITestCase(APITestCase):
             if isinstance(list_response.data, dict) and 'results' in list_response.data
             else list_response.data
         )
-        meal_row = next(item for item in results if item['id'] == self.meal.id)
+        meal_row = next(item for item in results if item['public_id'] == str(self.meal.public_id))
         self.assertEqual(meal_row['pricing_status'], 'priced')
         self.assertNotIn('current_cycle_offering', meal_row)
         self.assertNotIn('price_per_kg', meal_row)
+        self.assertNotIn('id', meal_row)
 
-        detail = self.client.get(reverse('meals:meals-detail', kwargs={'pk': self.meal.pk}))
+        detail = self.client.get(
+            reverse('meals:meals-detail', kwargs={'public_id': self.meal.public_id})
+        )
         self.assertEqual(detail.status_code, status.HTTP_200_OK)
         offering = detail.data['current_cycle_offering']
         self.assertIsNotNone(offering)
@@ -301,6 +304,10 @@ class MealCycleAPITestCase(APITestCase):
         self.assertEqual(offering['total_meals'], 60)
         self.assertIn('menu_items', offering)
         self.assertTrue(any(item['name'] == 'Chicken' for item in offering['menu_items']))
+        self.assertNotIn('plan_id', offering)
+        self.assertNotIn('product_cost', offering)
+        self.assertNotIn('profit', offering)
+        self.assertNotIn('other_cost', offering)
         for item in offering['menu_items']:
             self.assertNotIn('price_per_kg', item)
             self.assertNotIn('customers_per_kg', item)
@@ -314,7 +321,7 @@ class MealCycleAPITestCase(APITestCase):
         )
         response = self.client.get(self.meals_url)
         results = response.data['results'] if isinstance(response.data, dict) and 'results' in response.data else response.data
-        row = next(item for item in results if item['id'] == unpriced.id)
+        row = next(item for item in results if item['public_id'] == str(unpriced.public_id))
         self.assertEqual(row['pricing_status'], 'unpriced')
         self.assertIsNone(row['total_price'])
 

@@ -12,6 +12,7 @@ urlpatterns = [
     path('user_management/', include('user_management.api.urls')),
     path('meals/', include('meals.api.urls')),
     path('orders/', include('orders.api.urls')),
+    path('api/v1/web/orders/', include('orders.api.web_urls')),
 ]
 
 if settings.DEBUG:

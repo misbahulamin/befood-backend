@@ -33,10 +33,18 @@ class MonthlyMenuSlotInline(admin.TabularInline):
 
 @admin.register(MealCategory)
 class MealCategoryAdmin(admin.ModelAdmin):
-    list_display = ('meal_name', 'total_price', 'meal_type', 'is_active', 'created_at')
-    search_fields = ('meal_name',)
-    list_filter = ('meal_type', 'is_active')
-    readonly_fields = ('created_at', 'updated_at')
+    list_display = (
+        'meal_name',
+        'public_id',
+        'total_price',
+        'meal_type',
+        'meal_period',
+        'is_active',
+        'created_at',
+    )
+    search_fields = ('meal_name', 'public_id')
+    list_filter = ('meal_type', 'meal_period', 'is_active')
+    readonly_fields = ('public_id', 'created_at', 'updated_at')
 
 
 @admin.register(Ingredient)

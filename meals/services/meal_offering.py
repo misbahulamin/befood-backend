@@ -32,16 +32,12 @@ def build_public_cycle_offering(plan: MealCyclePlan) -> dict:
         finalized_at = plan.finalized_at.isoformat().replace('+00:00', 'Z')
 
     return {
-        'plan_id': plan.id,
         'year': plan.cycle.year,
         'month': plan.cycle.month,
         'cycle_days': plan.cycle.cycle_days,
         'total_meals': plan.cycle.total_meals,
         'package_total_price': str(plan.snapshot_total_cost) if plan.snapshot_total_cost is not None else None,
         'per_meal_rate': str(plan.snapshot_per_meal_rate) if plan.snapshot_per_meal_rate is not None else None,
-        'product_cost': str(plan.snapshot_product_cost) if plan.snapshot_product_cost is not None else None,
-        'other_cost': str(plan.snapshot_other_cost) if plan.snapshot_other_cost is not None else None,
-        'profit': str(plan.snapshot_profit) if plan.snapshot_profit is not None else None,
         'finalized_at': finalized_at,
         'menu_items': menu_items,
     }
@@ -53,7 +49,13 @@ def resolve_public_per_meal_price(meal: MealCategory, offering_plan: MealCyclePl
         return str(plan.snapshot_per_meal_rate)
     if meal.total_price is None:
         return None
-    return str(calculate_per_meal_price(meal.total_price))
+    return str(
+        calculate_per_meal_price(
+            meal.total_price,
+            meal.meal_type,
+            meal.meal_period,
+        )
+    )
 
 
 def publish_meal_price_from_plan(plan: MealCyclePlan) -> MealCategory:

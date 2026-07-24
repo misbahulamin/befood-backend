@@ -36,6 +36,7 @@ class MonthlyMenuScheduleSerializer(serializers.ModelSerializer):
         model = MonthlyMenuSchedule
         fields = (
             'id',
+            'public_id',
             'plan_id',
             'plan',
             'cycle_id',
@@ -54,6 +55,7 @@ class MonthlyMenuScheduleSerializer(serializers.ModelSerializer):
         )
         read_only_fields = (
             'id',
+            'public_id',
             'plan',
             'status',
             'published_at',
@@ -95,11 +97,11 @@ class MenuAssignmentBulkSerializer(serializers.Serializer):
 
 
 class MenuSyncRequestSerializer(serializers.Serializer):
-    source_schedule_id = serializers.IntegerField(min_value=1)
+    source_schedule_id = serializers.UUIDField()
 
 
 class MenuSyncApplySerializer(serializers.Serializer):
-    source_schedule_id = serializers.IntegerField(min_value=1, required=False)
+    source_schedule_id = serializers.UUIDField(required=False)
     assignments = MenuAssignmentSlotSerializer(many=True, required=False)
 
     def validate(self, attrs):

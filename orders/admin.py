@@ -1,6 +1,15 @@
 from django.contrib import admin
 
-from .models import Cart, CartItem, Order, OrderItem, OrderReview, OrderStatusHistory
+from .models import (
+    Cart,
+    CartItem,
+    MealOffSettings,
+    Order,
+    OrderDelivery,
+    OrderItem,
+    OrderReview,
+    OrderStatusHistory,
+)
 
 
 @admin.register(Cart)
@@ -22,6 +31,7 @@ class OrderAdmin(admin.ModelAdmin):
         'customer',
         'meal_name_snapshot',
         'meal_type_snapshot',
+        'meal_period_snapshot',
         'order_status',
         'order_start_date',
         'order_end_date',
@@ -29,11 +39,18 @@ class OrderAdmin(admin.ModelAdmin):
         'total_price_snapshot',
         'created_at',
     )
-    list_filter = ('order_status', 'meal_type_snapshot', 'order_month', 'created_at')
+    list_filter = (
+        'order_status',
+        'meal_type_snapshot',
+        'meal_period_snapshot',
+        'order_month',
+        'created_at',
+    )
     search_fields = ('customer__user__email', 'meal_name_snapshot', 'order_month')
     readonly_fields = (
         'meal_name_snapshot',
         'meal_type_snapshot',
+        'meal_period_snapshot',
         'total_price_snapshot',
         'per_meal_price_snapshot',
         'order_start_date',
@@ -62,3 +79,28 @@ class OrderStatusHistoryAdmin(admin.ModelAdmin):
 class OrderReviewAdmin(admin.ModelAdmin):
     list_display = ('id', 'order', 'rating', 'created_at')
     search_fields = ('order__id',)
+
+
+@admin.register(OrderDelivery)
+class OrderDeliveryAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'order',
+        'service_date',
+        'meal_period',
+        'status',
+        'skip_source',
+        'marked_by',
+        'marked_at',
+        'created_at',
+    )
+    list_filter = ('status', 'skip_source', 'meal_period', 'service_date', 'created_at')
+    search_fields = ('order__id', 'order__customer__user__email', 'note')
+    readonly_fields = ('created_at', 'updated_at', 'marked_at')
+    date_hierarchy = 'service_date'
+
+
+@admin.register(MealOffSettings)
+class MealOffSettingsAdmin(admin.ModelAdmin):
+    list_display = ('timezone', 'lunch_off_time', 'dinner_off_time', 'updated_at')
+    readonly_fields = ('updated_at',)

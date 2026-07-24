@@ -16,7 +16,7 @@ class CustomerAddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerAddress
         fields = (
-            'id',
+            'public_id',
             'address_type',
             'full_address',
             'city',
@@ -31,7 +31,7 @@ class CustomerAddressSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         )
-        read_only_fields = ('id', 'created_at', 'updated_at')
+        read_only_fields = ('public_id', 'created_at', 'updated_at')
 
 
 class CustomerAddressCreateUpdateSerializer(serializers.ModelSerializer):

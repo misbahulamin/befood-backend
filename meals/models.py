@@ -1,3 +1,4 @@
+import uuid
 from datetime import time
 from decimal import Decimal
 
@@ -7,6 +8,7 @@ from django.db import models
 
 from meals.services.meal_image import meal_thumbnail_upload_path
 from meals.services.pricing import get_month_days, total_meals_for_month
+from core.models import PublicIdMixin
 
 
 class MealCategory(models.Model):
@@ -18,6 +20,17 @@ class MealCategory(models.Model):
         SIX_MONTHS = 'six_months', 'Six Months'
         YEARLY = 'yearly', 'Yearly'
 
+    class MealPeriod(models.TextChoices):
+        LUNCH = 'lunch', 'Lunch'
+        DINNER = 'dinner', 'Dinner'
+        BOTH = 'both', 'Both'
+
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,
+        unique=True,
+        db_index=True,
+    )
     meal_name = models.CharField(max_length=255)
     total_price = models.DecimalField(
         max_digits=10,
@@ -29,6 +42,12 @@ class MealCategory(models.Model):
     )
     meal_thumbnail = models.ImageField(upload_to=meal_thumbnail_upload_path)
     meal_type = models.CharField(max_length=20, choices=MealType.choices)
+    meal_period = models.CharField(
+        max_length=10,
+        choices=MealPeriod.choices,
+        default=MealPeriod.BOTH,
+        help_text='Lunch only, dinner only, or both periods per service day.',
+    )
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -47,7 +66,7 @@ class MealCategory(models.Model):
         return 'priced' if self.total_price is not None else 'unpriced'
 
 
-class Ingredient(models.Model):
+class Ingredient(PublicIdMixin, models.Model):
     class ProductRole(models.TextChoices):
         MAIN = 'main', 'Main'
         SIDE = 'side', 'Side'
@@ -123,7 +142,7 @@ class Ingredient(models.Model):
             raise ValidationError({'pieces_per_kg': 'Pieces per kg must be greater than 0 when provided.'})
 
 
-class MealCycle(models.Model):
+class MealCycle(PublicIdMixin, models.Model):
     year = models.PositiveIntegerField()
     month = models.PositiveSmallIntegerField(
         validators=[MinValueValidator(1), MaxValueValidator(12)],
@@ -149,7 +168,7 @@ class MealCycle(models.Model):
         super().save(*args, **kwargs)
 
 
-class MealCyclePlan(models.Model):
+class MealCyclePlan(PublicIdMixin, models.Model):
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Draft'
         FINALIZED = 'finalized', 'Finalized'
@@ -208,7 +227,7 @@ class MealCyclePlan(models.Model):
         return self.status == self.Status.FINALIZED
 
 
-class MealCyclePlanLine(models.Model):
+class MealCyclePlanLine(PublicIdMixin, models.Model):
     plan = models.ForeignKey(
         MealCyclePlan,
         on_delete=models.CASCADE,
@@ -236,7 +255,7 @@ class MealCyclePlanLine(models.Model):
         return f'{self.plan_id}: {self.ingredient.name} × {self.servings_count}'
 
 
-class MonthlyMenuSchedule(models.Model):
+class MonthlyMenuSchedule(PublicIdMixin, models.Model):
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Draft'
         PUBLISHED = 'published', 'Published'

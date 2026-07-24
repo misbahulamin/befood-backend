@@ -89,6 +89,8 @@ class CustomerAddressViewSet(
     viewsets.GenericViewSet,
 ):
     permission_classes = [HasCustomerProfile, IsCustomerAddressOwner]
+    lookup_field = 'public_id'
+    lookup_url_kwarg = 'public_id'
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
@@ -166,10 +168,10 @@ class SetDefaultDeliveryAddressView(APIView):
         responses={200: CustomerAddressSerializer},
         description='Set a present address as the default delivery address.',
     )
-    def post(self, request, pk):
+    def post(self, request, public_id):
         profile = request.user.customer_profile
         try:
-            address = CustomerAddress.objects.get(pk=pk, customer_profile=profile)
+            address = CustomerAddress.objects.get(public_id=public_id, customer_profile=profile)
         except CustomerAddress.DoesNotExist:
             raise NotFound('Address not found.')
         try:

@@ -216,8 +216,8 @@ def build_sync_suggestion(
     ]
 
     return {
-        'source_schedule_id': source.id,
-        'target_schedule_id': target.id,
+        'source_schedule_id': str(source.public_id),
+        'target_schedule_id': str(target.public_id),
         'assignments': assignments,
         'unfilled_main_slots': unfilled_mains,
         'remaining_quota': remaining_quota,

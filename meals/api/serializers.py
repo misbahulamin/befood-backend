@@ -15,13 +15,14 @@ from meals.services.meal_offering import (
 class MealListSerializer(serializers.ModelSerializer):
     meal_thumbnail = serializers.SerializerMethodField()
     meal_type_display = serializers.CharField(source='get_meal_type_display', read_only=True)
+    meal_period_display = serializers.CharField(source='get_meal_period_display', read_only=True)
     per_meal_price = serializers.SerializerMethodField()
     pricing_status = serializers.CharField(read_only=True)
 
     class Meta:
         model = MealCategory
         fields = (
-            'id',
+            'public_id',
             'meal_name',
             'total_price',
             'per_meal_price',
@@ -29,6 +30,8 @@ class MealListSerializer(serializers.ModelSerializer):
             'meal_thumbnail',
             'meal_type',
             'meal_type_display',
+            'meal_period',
+            'meal_period_display',
             'is_active',
             'created_at',
             'updated_at',
@@ -74,15 +77,27 @@ class MealCreateUpdateSerializer(serializers.ModelSerializer):
             'meal_name',
             'meal_thumbnail',
             'meal_type',
+            'meal_period',
             'description',
             'is_active',
         )
+        extra_kwargs = {
+            'meal_period': {'required': True},
+        }
 
     def validate_meal_type(self, value):
         valid_values = {choice.value for choice in MealCategory.MealType}
         if value not in valid_values:
             raise serializers.ValidationError(
                 f'Invalid meal type. Allowed values: {", ".join(sorted(valid_values))}.'
+            )
+        return value
+
+    def validate_meal_period(self, value):
+        valid_values = {choice.value for choice in MealCategory.MealPeriod}
+        if value not in valid_values:
+            raise serializers.ValidationError(
+                f'Invalid meal period. Allowed values: {", ".join(sorted(valid_values))}.'
             )
         return value
 
@@ -100,6 +115,8 @@ class MealCreateUpdateSerializer(serializers.ModelSerializer):
         thumbnail = attrs.get('meal_thumbnail')
         if self.instance is None and not thumbnail:
             raise serializers.ValidationError({'meal_thumbnail': 'Meal thumbnail is required.'})
+        if self.instance is None and not attrs.get('meal_period'):
+            raise serializers.ValidationError({'meal_period': 'Meal period is required.'})
         return attrs
 
     def create(self, validated_data):

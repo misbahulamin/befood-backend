@@ -3,6 +3,7 @@ from django.db import transaction
 from meals.models import MealCategory
 from meals.services.pricing import calculate_per_meal_price
 from orders.models import Order
+from orders.services.order_delivery import generate_order_deliveries
 from orders.services.order_duration import calculate_order_period
 
 MONTH_LOCK_STATUSES = {
@@ -47,10 +48,16 @@ def check_existing_monthly_lock(customer, order_month: str) -> None:
 def prepare_snapshot_fields(meal: MealCategory, reference_date=None) -> dict:
     if meal.total_price is None:
         raise UnpricedMealError('This meal package has no published price yet. Finalize a cycle plan first.')
-    per_meal_price = calculate_per_meal_price(meal.total_price, reference_date=reference_date)
+    per_meal_price = calculate_per_meal_price(
+        meal.total_price,
+        meal.meal_type,
+        meal.meal_period,
+        reference_date=reference_date,
+    )
     return {
         'meal_name_snapshot': meal.meal_name,
         'meal_type_snapshot': meal.meal_type,
+        'meal_period_snapshot': meal.meal_period,
         'total_price_snapshot': meal.total_price,
         'per_meal_price_snapshot': per_meal_price,
     }
@@ -78,6 +85,7 @@ def create_meal_order(customer, meal: MealCategory, customer_note: str = '') -> 
         customer_note=customer_note or '',
         **snapshot,
     )
+    generate_order_deliveries(order)
     return order
 
 

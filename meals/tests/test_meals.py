@@ -47,6 +47,7 @@ class MealAPITestCase(APITestCase):
         payload = {
             'meal_name': 'Chicken Rice Bowl',
             'meal_type': 'daily',
+            'meal_period': 'lunch',
             'is_active': 'true',
             'meal_thumbnail': make_test_image(),
         }
@@ -60,8 +61,12 @@ class MealAPITestCase(APITestCase):
         self.assertEqual(response.data['meal_name'], 'Chicken Rice Bowl')
         self.assertEqual(response.data['meal_type'], 'daily')
         self.assertEqual(response.data['meal_type_display'], 'Daily')
+        self.assertEqual(response.data['meal_period'], 'lunch')
+        self.assertEqual(response.data['meal_period_display'], 'Lunch')
         self.assertTrue(response.data['is_active'])
         self.assertIn('meal_thumbnail', response.data)
+        self.assertIn('public_id', response.data)
+        self.assertNotIn('id', response.data)
         self.assertIsNone(response.data['total_price'])
         self.assertEqual(response.data['pricing_status'], 'unpriced')
         self.assertIsNone(response.data['per_meal_price'])
@@ -75,9 +80,11 @@ class MealAPITestCase(APITestCase):
             format='multipart',
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        meal = MealCategory.objects.get(pk=response.data['id'])
+        meal = MealCategory.objects.get(public_id=response.data['public_id'])
         self.assertIsNone(meal.total_price)
         self.assertEqual(response.data['pricing_status'], 'unpriced')
+        self.assertNotIn('id', response.data)
+        self.assertIn('public_id', response.data)
 
     def test_create_meal_fails_if_meal_type_invalid(self):
         self._auth()
@@ -88,6 +95,24 @@ class MealAPITestCase(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('meal_type', response.data)
+
+    def test_create_meal_fails_if_meal_period_invalid(self):
+        self._auth()
+        response = self.client.post(
+            self.list_url,
+            self._meal_payload(meal_period='brunch'),
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('meal_period', response.data)
+
+    def test_create_meal_fails_without_meal_period(self):
+        self._auth()
+        payload = self._meal_payload()
+        del payload['meal_period']
+        response = self.client.post(self.list_url, payload, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('meal_period', response.data)
 
     def test_create_meal_fails_without_meal_thumbnail(self):
         self._auth()
@@ -101,7 +126,7 @@ class MealAPITestCase(APITestCase):
         self._auth()
         response = self.client.post(self.list_url, self._meal_payload(), format='multipart')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        meal = MealCategory.objects.get(pk=response.data['id'])
+        meal = MealCategory.objects.get(public_id=response.data['public_id'])
         filename = meal.meal_thumbnail.name.split('/')[-1]
         self.assertRegex(filename, r'^chicken-rice-bowl-\d{8}-\d{6}(_[A-Za-z0-9]+)?\.jpg$')
 
@@ -116,7 +141,13 @@ class MealAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]['meal_name'], 'Beef Bowl')
-        expected_per_meal_price = calculate_per_meal_price(Decimal('200.00'))
+        self.assertIn('public_id', response.data[0])
+        self.assertNotIn('id', response.data[0])
+        expected_per_meal_price = calculate_per_meal_price(
+            Decimal('200.00'),
+            'weekly',
+            'both',
+        )
         self.assertEqual(response.data[0]['per_meal_price'], str(expected_per_meal_price))
 
     def test_per_meal_price_uses_present_month_days(self):
@@ -124,11 +155,18 @@ class MealAPITestCase(APITestCase):
             meal_name='Monthly Plan',
             total_price=Decimal('3100.00'),
             meal_type='monthly',
+            meal_period='both',
             meal_thumbnail=make_test_image('monthly.jpg'),
         )
-        response = self.client.get(reverse('meals:meals-detail', kwargs={'pk': meal.pk}))
+        response = self.client.get(
+            reverse('meals:meals-detail', kwargs={'public_id': meal.public_id})
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        expected_per_meal_price = calculate_per_meal_price(Decimal('3100.00'))
+        expected_per_meal_price = calculate_per_meal_price(
+            Decimal('3100.00'),
+            'monthly',
+            'both',
+        )
         self.assertEqual(response.data['per_meal_price'], str(expected_per_meal_price))
 
     def test_detail_meal_works(self):
@@ -138,10 +176,24 @@ class MealAPITestCase(APITestCase):
             meal_type='monthly',
             meal_thumbnail=make_test_image('fish.jpg'),
         )
-        response = self.client.get(reverse('meals:meals-detail', kwargs={'pk': meal.pk}))
+        response = self.client.get(
+            reverse('meals:meals-detail', kwargs={'public_id': meal.public_id})
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['meal_name'], 'Fish Curry')
         self.assertEqual(response.data['meal_type_display'], 'Monthly')
+        self.assertEqual(str(response.data['public_id']), str(meal.public_id))
+        self.assertNotIn('id', response.data)
+
+    def test_detail_by_integer_pk_returns_not_found(self):
+        meal = MealCategory.objects.create(
+            meal_name='Hidden By Int',
+            total_price=Decimal('150.00'),
+            meal_type='monthly',
+            meal_thumbnail=make_test_image('hidden-int.jpg'),
+        )
+        response = self.client.get(f'/meals/{meal.pk}/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_update_meal_works(self):
         meal = MealCategory.objects.create(
@@ -152,7 +204,7 @@ class MealAPITestCase(APITestCase):
         )
         self._auth()
         response = self.client.patch(
-            reverse('meals:meals-detail', kwargs={'pk': meal.pk}),
+            reverse('meals:meals-detail', kwargs={'public_id': meal.public_id}),
             {'meal_name': 'Updated Name', 'total_price': '250.00'},
             format='multipart',
         )
@@ -206,7 +258,8 @@ class MealAPITestCase(APITestCase):
         manager_response = self.client.get(self.list_url, {'is_active': 'false'})
         self.assertEqual(manager_response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(manager_response.data), 1)
-        self.assertEqual(manager_response.data[0]['id'], inactive.id)
+        self.assertEqual(str(manager_response.data[0]['public_id']), str(inactive.public_id))
+        self.assertNotIn('id', manager_response.data[0])
 
     def test_search_by_meal_name_works(self):
         MealCategory.objects.create(
@@ -255,7 +308,9 @@ class MealAPITestCase(APITestCase):
             meal_thumbnail=make_test_image('delete.jpg'),
         )
         self._auth()
-        response = self.client.delete(reverse('meals:meals-detail', kwargs={'pk': meal.pk}))
+        response = self.client.delete(
+            reverse('meals:meals-detail', kwargs={'public_id': meal.public_id})
+        )
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         meal.refresh_from_db()
         self.assertFalse(meal.is_active)

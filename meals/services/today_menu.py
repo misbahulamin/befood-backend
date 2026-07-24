@@ -112,9 +112,9 @@ def build_today_menu_for_customer(customer_profile, now: datetime | None = None)
 
         packages.append(
             {
-                'meal_category_id': order.meal_id,
+                'meal_public_id': str(order.meal.public_id),
                 'meal_name': order.meal.meal_name,
-                'order_id': order.id,
+                'order_public_id': str(order.public_id),
                 'service_date': today.isoformat(),
                 'periods': periods_payload,
                 'schedule_published': schedule is not None,
