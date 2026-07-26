@@ -21,5 +21,10 @@ CORS_ALLOWED_ORIGINS = [
 #     }
 # }
 
+CSRF_TRUSTED_ORIGINS = [
+    "https://befood-backend.onrender.com",
+]
+
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+
