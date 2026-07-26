@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     'wallet',
     'notifications',
     'promotions',
+    'notices',
 ]
 
 MIDDLEWARE = [
