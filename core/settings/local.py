@@ -7,6 +7,7 @@ INTERNAL_IPS = ['127.0.0.1']
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    "https://befood-backend.onrender.com",
 ]
 
 # Local Postgres database (change values as needed)
@@ -26,5 +27,5 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+# CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
