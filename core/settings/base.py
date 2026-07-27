@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     'notices',
     'announcements',
     'assets',
+    'faqs',
 ]
 
 MIDDLEWARE = [
