@@ -8,6 +8,5 @@ staticfiles/
 .venv/
 .idea/
 .vscode/
-docs/
 credentials/
 

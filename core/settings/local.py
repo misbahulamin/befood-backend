@@ -60,6 +60,19 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 
+# Default corsheaders list + wallet funding / multi-client headers.
+# Without these, browsers complete OPTIONS then block POST (axios "Network Error").
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'authorization',
+    'content-type',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'idempotency-key',
+    'x-client-type',
+]
+
 
 # CSRF settings
 CSRF_TRUSTED_ORIGINS = [

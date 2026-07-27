@@ -96,3 +96,10 @@ DEFAULT_FROM_EMAIL = 'Befood <misbahul@mypanaceatech.com>'
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 EMAIL_TIMEOUT = 30
 FRONTEND_URL = 'http://localhost:5173'
+
+# Customer wallet: manual recharge/withdraw path (replace with gateway-only when ready).
+WALLET_MANUAL_FUNDING_ENABLED = config(
+    'WALLET_MANUAL_FUNDING_ENABLED',
+    default=True,
+    cast=bool,
+)

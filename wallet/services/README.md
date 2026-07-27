@@ -1,1 +1,1 @@
-Placeholder service layer for future integrations.
+# Wallet ledger service package.
