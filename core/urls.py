@@ -18,6 +18,7 @@ urlpatterns = [
     path('assets/', include('assets.api.urls')),
     path('wallet/', include('wallet.api.urls')),
     path('faqs/', include('faqs.api.urls')),
+    path('blogs/', include('blogs.api.urls')),
 ]
 
 if settings.DEBUG:
