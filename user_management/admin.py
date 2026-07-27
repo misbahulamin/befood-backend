@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import Group, User
 from django.utils import timezone
 
-from .models import AdminProfile, CustomerAddress, CustomerProfile
+from .models import AdminProfile, CustomerAddress, CustomerDeliveryPlace, CustomerProfile, MealDeliveryDayOverride, MealDeliveryPreference
 
 
 admin.site.unregister(User)
@@ -68,3 +68,43 @@ class CustomerAddressAdmin(admin.ModelAdmin):
         'area',
         'landmark',
     )
+
+
+@admin.register(CustomerDeliveryPlace)
+class CustomerDeliveryPlaceAdmin(admin.ModelAdmin):
+    list_display = (
+        'customer_profile',
+        'label',
+        'city',
+        'area',
+        'is_active',
+        'created_at',
+    )
+    list_filter = ('is_active', 'city')
+    search_fields = (
+        'customer_profile__user__email',
+        'label',
+        'full_address',
+        'area',
+    )
+
+
+@admin.register(MealDeliveryPreference)
+class MealDeliveryPreferenceAdmin(admin.ModelAdmin):
+    list_display = ('customer_profile', 'lunch_place', 'dinner_place', 'updated_at')
+    search_fields = ('customer_profile__user__email',)
+    autocomplete_fields = ('customer_profile', 'lunch_place', 'dinner_place')
+
+
+@admin.register(MealDeliveryDayOverride)
+class MealDeliveryDayOverrideAdmin(admin.ModelAdmin):
+    list_display = (
+        'customer_profile',
+        'meal_period',
+        'weekday',
+        'place',
+        'updated_at',
+    )
+    list_filter = ('meal_period', 'weekday')
+    search_fields = ('customer_profile__user__email', 'place__label')
+    autocomplete_fields = ('customer_profile', 'place')

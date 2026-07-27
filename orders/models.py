@@ -144,6 +144,25 @@ class OrderDelivery(PublicIdMixin, models.Model):
     )
     marked_at = models.DateTimeField(null=True, blank=True)
     note = models.TextField(blank=True)
+
+    delivery_place = models.ForeignKey(
+        'user_management.CustomerDeliveryPlace',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='order_deliveries',
+    )
+    delivery_label_snapshot = models.CharField(max_length=100, blank=True)
+    delivery_full_address_snapshot = models.TextField(blank=True)
+    delivery_area_snapshot = models.CharField(max_length=100, blank=True)
+    delivery_city_snapshot = models.CharField(max_length=100, blank=True)
+    delivery_latitude_snapshot = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    delivery_longitude_snapshot = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -22,6 +22,16 @@ class IsCustomerAddressOwner(BasePermission):
         return obj.customer_profile_id == profile.id
 
 
+class IsCustomerDeliveryPlaceOwner(BasePermission):
+    message = 'You do not have permission to access this delivery place.'
+
+    def has_object_permission(self, request, view, obj):
+        profile = getattr(request.user, 'customer_profile', None)
+        if profile is None:
+            return False
+        return obj.customer_profile_id == profile.id
+
+
 class IsVerifiedAdmin(IsAuthenticated):
     message = 'Verified admin access required.'
 

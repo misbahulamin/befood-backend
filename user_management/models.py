@@ -115,6 +115,103 @@ class CustomerAddress(PublicIdMixin, TimeStampedModel):
         return f'{self.customer_profile.user.email} - {self.address_type}'
 
 
+class CustomerDeliveryPlace(PublicIdMixin, TimeStampedModel):
+    """Labeled delivery destination (Home, Office, …), separate from present/permanent."""
+
+    customer_profile = models.ForeignKey(
+        CustomerProfile,
+        on_delete=models.CASCADE,
+        related_name='delivery_places',
+    )
+    label = models.CharField(max_length=100)
+    full_address = models.TextField()
+    city = models.CharField(max_length=100, default='Dhaka', blank=True)
+    area = models.CharField(max_length=100, blank=True)
+    building_name = models.CharField(max_length=255, blank=True)
+    floor = models.CharField(max_length=50, blank=True)
+    flat_number = models.CharField(max_length=50, blank=True)
+    landmark = models.CharField(max_length=255, blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name_plural = 'Customer delivery places'
+
+    def __str__(self):
+        return f'{self.customer_profile.user.email} - {self.label}'
+
+
+class MealDeliveryPreference(TimeStampedModel):
+    """Usual lunch/dinner delivery places for a customer (at most one each)."""
+
+    customer_profile = models.OneToOneField(
+        CustomerProfile,
+        on_delete=models.CASCADE,
+        related_name='meal_delivery_preference',
+    )
+    lunch_place = models.ForeignKey(
+        CustomerDeliveryPlace,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='lunch_preference_set',
+    )
+    dinner_place = models.ForeignKey(
+        CustomerDeliveryPlace,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='dinner_preference_set',
+    )
+
+    def __str__(self):
+        return f'Delivery prefs for {self.customer_profile.user.email}'
+
+
+class MealDeliveryDayOverride(TimeStampedModel):
+    """Weekday override: on this weekday, use a different place for lunch or dinner."""
+
+    class MealPeriod(models.TextChoices):
+        LUNCH = 'lunch', 'Lunch'
+        DINNER = 'dinner', 'Dinner'
+
+    customer_profile = models.ForeignKey(
+        CustomerProfile,
+        on_delete=models.CASCADE,
+        related_name='meal_delivery_day_overrides',
+    )
+    meal_period = models.CharField(max_length=10, choices=MealPeriod.choices)
+    weekday = models.PositiveSmallIntegerField(
+        help_text='ISO weekday: Monday=0 … Sunday=6.',
+    )
+    place = models.ForeignKey(
+        CustomerDeliveryPlace,
+        on_delete=models.CASCADE,
+        related_name='day_overrides',
+    )
+
+    class Meta:
+        ordering = ['weekday', 'meal_period']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['customer_profile', 'meal_period', 'weekday'],
+                name='unique_meal_delivery_day_override',
+            ),
+            models.CheckConstraint(
+                check=models.Q(weekday__gte=0) & models.Q(weekday__lte=6),
+                name='meal_delivery_day_override_weekday_range',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'{self.customer_profile.user.email} '
+            f'{self.meal_period} weekday={self.weekday} → {self.place.label}'
+        )
+
+
 class RiderProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='rider_profile')
     vehicle_type = models.CharField(max_length=100, blank=True)

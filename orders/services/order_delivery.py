@@ -8,6 +8,7 @@ from django.utils import timezone
 from meals.models import MealCategory
 from meals.services.pricing import expected_servings, periods_for_meal_period, periods_per_day
 from orders.models import Order, OrderDelivery
+from orders.services.delivery_address import resolve_and_apply_snapshot
 from orders.services.order_status import OrderStatusError, change_order_status
 
 TERMINAL_DELIVERY_STATUSES = {
@@ -85,16 +86,19 @@ def generate_order_deliveries(order: Order) -> list[OrderDelivery]:
         (d.service_date, d.meal_period)
         for d in order.deliveries.all()
     }
-    to_create = [
-        OrderDelivery(
+    customer = order.customer
+    to_create = []
+    for service_date, meal_period in specs:
+        if (service_date, meal_period) in existing:
+            continue
+        delivery = OrderDelivery(
             order=order,
             service_date=service_date,
             meal_period=meal_period,
             status=OrderDelivery.DeliveryStatus.SCHEDULED,
         )
-        for service_date, meal_period in specs
-        if (service_date, meal_period) not in existing
-    ]
+        resolve_and_apply_snapshot(delivery, customer)
+        to_create.append(delivery)
     if to_create:
         OrderDelivery.objects.bulk_create(to_create)
     return list(order.deliveries.order_by('service_date', 'meal_period', 'id'))

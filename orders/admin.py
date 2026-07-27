@@ -90,14 +90,33 @@ class OrderDeliveryAdmin(admin.ModelAdmin):
         'meal_period',
         'status',
         'skip_source',
+        'delivery_label_snapshot',
+        'delivery_area_snapshot',
         'marked_by',
         'marked_at',
         'created_at',
     )
     list_filter = ('status', 'skip_source', 'meal_period', 'service_date', 'created_at')
-    search_fields = ('order__id', 'order__customer__user__email', 'note')
-    readonly_fields = ('created_at', 'updated_at', 'marked_at')
+    search_fields = (
+        'order__id',
+        'order__customer__user__email',
+        'note',
+        'delivery_full_address_snapshot',
+        'delivery_label_snapshot',
+    )
+    readonly_fields = (
+        'created_at',
+        'updated_at',
+        'marked_at',
+        'delivery_label_snapshot',
+        'delivery_full_address_snapshot',
+        'delivery_area_snapshot',
+        'delivery_city_snapshot',
+        'delivery_latitude_snapshot',
+        'delivery_longitude_snapshot',
+    )
     date_hierarchy = 'service_date'
+    autocomplete_fields = ('delivery_place',)
 
 
 @admin.register(MealOffSettings)

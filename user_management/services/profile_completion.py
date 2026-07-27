@@ -22,6 +22,14 @@ def _is_field_completed(profile, field_name):
     if field_name == 'gender':
         return bool(profile.gender)
     if field_name == 'delivery_address':
+        from user_management.models import MealDeliveryPreference
+
+        pref = MealDeliveryPreference.objects.filter(customer_profile=profile).first()
+        if pref and (pref.lunch_place_id or pref.dinner_place_id):
+            return True
+        if profile.delivery_places.filter(is_active=True).exists():
+            return True
+        # Transition fallback: legacy present default delivery address.
         return profile.addresses.filter(
             address_type=CustomerAddress.AddressType.PRESENT,
             is_default_delivery=True,
