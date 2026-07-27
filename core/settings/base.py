@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     'promotions',
     'notices',
     'announcements',
+    'assets',
 ]
 
 MIDDLEWARE = [
