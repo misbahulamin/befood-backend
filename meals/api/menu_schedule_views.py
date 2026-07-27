@@ -1,5 +1,5 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
-from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
@@ -19,6 +19,7 @@ from meals.services.menu_schedule import (
     unpublish_schedule,
 )
 from meals.services.menu_sync import apply_sync_suggestion, sync_suggestion_response
+from meals.services.package_menu import build_package_menu_for_customer
 from meals.services.today_menu import (
     build_today_menu_for_customer,
     get_reveal_settings,
@@ -300,3 +301,66 @@ class CustomerTodayMenuView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
         return Response(build_today_menu_for_customer(profile))
+
+
+class CustomerPackageMenuView(APIView):
+    permission_classes = [IsVerifiedCustomer]
+
+    @extend_schema(
+        tags=['Customer Package Menu'],
+        summary="Get the full monthly menu for the customer's meal package(s)",
+        description=(
+            'Returns all published lunch/dinner slots for the target month for each '
+            'of the caller\'s non-cancelled orders. Does not apply today-menu reveal-time gating. '
+            'Omit year and month to use the current local month; provide both together to select a month.'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='year',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Calendar year (required together with month).',
+            ),
+            OpenApiParameter(
+                name='month',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Calendar month 1–12 (required together with year).',
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                description='Year/month and packages with full day slots or empty unpublished state'
+            ),
+            400: OpenApiResponse(description='Invalid year/month query'),
+            401: OpenApiResponse(description='Authentication required'),
+            403: OpenApiResponse(description='Verified customer profile required'),
+        },
+    )
+    def get(self, request):
+        profile = getattr(request.user, 'customer_profile', None)
+        if profile is None and not (request.user.is_superuser or request.user.is_staff):
+            return Response(
+                {
+                    'year': None,
+                    'month': None,
+                    'packages': [],
+                    'detail': 'No customer profile on this account.',
+                }
+            )
+        if profile is None:
+            return Response(
+                {'detail': 'Customer profile required.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            payload = build_package_menu_for_customer(
+                profile,
+                year=request.query_params.get('year'),
+                month=request.query_params.get('month'),
+            )
+        except DjangoValidationError as exc:
+            return _django_validation_to_response(exc)
+        return Response(payload)
