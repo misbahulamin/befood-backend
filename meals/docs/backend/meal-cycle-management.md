@@ -73,26 +73,29 @@ Formula: `total_meals = calendar_days(year, month) × 2`
 
 All money math uses `Decimal` (not float).
 
-### Product cost per customer
+### Unit cost components
 
-**Kg-based product** (has `price_per_kg` + `customers_per_kg`):
+**Kg-derived (resolved):**
 
 ```text
-cost_per_customer = price_per_kg ÷ customers_per_kg
+resolved_cost_per_customer = price_per_kg ÷ customers_per_kg   # null if no kg pair
 ```
 
 Example: Beef `650 ÷ 12 = 54.166667`
 
-**Flat-cost product** (Vegetables, Dhal, Moshla…):
+**Flat cooking / piece cost:**
 
 ```text
-cost_per_customer = stored cost_per_customer
+cost_per_customer = stored flat cost_per_customer   # null if unset
 ```
+
+Both may be present on the same ingredient. They are **additive**, not alternatives.
 
 ### Line and package totals
 
 ```text
-line_product_cost = cost_per_customer × servings_count
+line_product_cost = (resolved_cost_per_customer + cost_per_customer) × servings_count
+                    # missing side treated as 0 in the sum
 product_cost      = sum(line_product_cost)
 other_cost        = product_cost × (other_cost_percent / 100)   # default 30%
 profit            = product_cost × (profit_percent / 100)       # default 10%
@@ -100,6 +103,12 @@ operational_cost  = allocated share of kitchen operational_cost_total
 total_cost        = product_cost + other_cost + operational_cost + profit
 per_meal_rate     = total_cost ÷ plan_expected_servings
 ```
+
+Examples:
+
+- Kg only: `(54.166667 + 0) × 2`
+- Flat only: `(0 + 6.00) × 60`
+- Both: `(54.166667 + 2.00) × 10`
 
 Kitchen `operational_cost_total` comes from the standalone `operational_costs` app (not meals-owned models). Allocation by plan expected servings stays in meals. See [`operational-costs.md`](./operational-costs.md) and [`../../../operational_costs/docs/backend/overview.md`](../../../operational_costs/docs/backend/overview.md).
 
@@ -141,17 +150,18 @@ Permission class: `IsVerifiedAdmin`
 | `name` | yes | Unique product name |
 | `price_per_kg` | no* | Purchase price per kg |
 | `customers_per_kg` | with price | Customers served by 1 kg |
-| `cost_per_customer` | no* | Optional flat per-serving cooking cost (one customer or one piece) when no kg pair |
+| `cost_per_customer` | no* | Optional flat per-serving cooking cost (one customer or one piece); **added** to kg-resolved cost when both exist |
 | `pieces_per_kg` | no | Optional piece count |
 | `is_active` | no | Default `true`; inactive cannot be added to new draft lines |
 | `is_customer_visible` | no | Default `true`; when `false`, omit from customer/public menus (still costed) |
-| `resolved_cost_per_customer` | read-only | Effective cost used in math; `null` when catalog has no pricing |
+| `resolved_cost_per_customer` | read-only | Kg-only unit cost (`price_per_kg / customers_per_kg`); `null` when no kg pair (does **not** fall back to flat) |
 
 Pricing rule (catalog):
 
-- Provide **both** kg fields, **or** optional flat `cost_per_customer`, **or neither** (unpriced catalog row).
+- Provide **both** kg fields, **and/or** optional flat `cost_per_customer`, **or neither** (unpriced catalog row).
 - Incomplete kg pair (only one of the two) is rejected.
-- Meal-cycle plan lines / summary / finalize **require** a resolvable cost — fill pricing before attaching an ingredient to a plan.
+- Meal-cycle plan lines / summary / finalize **require** at least one pricing source (kg pair and/or flat).
+- Line math: `(resolved_cost_per_customer + cost_per_customer) × servings_count` (missing side = 0). See also [`../frontend/additive-ingredient-line-cost.md`](../frontend/additive-ingredient-line-cost.md).
 
 **Breaking:** `product_role` is **not** on the ingredient. Set it on each plan line.
 

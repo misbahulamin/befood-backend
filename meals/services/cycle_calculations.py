@@ -65,25 +65,46 @@ def assert_plan_ingredients_have_resolvable_cost(plan: MealCyclePlan) -> None:
     )
 
 
-def resolve_cost_per_customer(ingredient: Ingredient) -> Decimal:
-    if ingredient.has_kg_pricing:
-        return _quantize(
-            Decimal(ingredient.price_per_kg) / Decimal(ingredient.customers_per_kg),
-            COST_PLACES,
-        )
+def resolved_kg_cost_per_customer(ingredient: Ingredient) -> Decimal | None:
+    """Kg-only unit cost (`price_per_kg / customers_per_kg`), or None when no kg pair."""
+    if not ingredient.has_kg_pricing:
+        return None
+    return _quantize(
+        Decimal(ingredient.price_per_kg) / Decimal(ingredient.customers_per_kg),
+        COST_PLACES,
+    )
+
+
+def flat_cost_contribution(ingredient: Ingredient) -> Decimal:
+    """Flat cooking/piece cost contribution; null stored cost counts as 0 in the sum."""
     if ingredient.cost_per_customer is None:
-        raise ValidationError(
-            {
-                'ingredient': (
-                    f'Ingredient "{ingredient.name}" has no usable cost_per_customer.'
-                )
-            }
-        )
+        return Decimal('0')
     return Decimal(ingredient.cost_per_customer)
 
 
-def calculate_line_product_cost(cost_per_customer: Decimal, servings_count: int) -> Decimal:
-    return _quantize(Decimal(cost_per_customer) * Decimal(servings_count), MONEY_PLACES)
+def combined_unit_cost_per_customer(ingredient: Ingredient) -> Decimal:
+    """Additive unit cost: (resolved_kg or 0) + (flat or 0)."""
+    kg = resolved_kg_cost_per_customer(ingredient) or Decimal('0')
+    return _quantize(kg + flat_cost_contribution(ingredient), COST_PLACES)
+
+
+def resolve_cost_per_customer(ingredient: Ingredient) -> Decimal:
+    """Kg-only resolved unit cost. Prefer resolved_kg_cost_per_customer for nullable reads."""
+    kg = resolved_kg_cost_per_customer(ingredient)
+    if kg is None:
+        raise ValidationError(
+            {
+                'ingredient': (
+                    f'Ingredient "{ingredient.name}" has no kilogram pricing. '
+                    'Provide price_per_kg and customers_per_kg for resolved_cost_per_customer.'
+                )
+            }
+        )
+    return kg
+
+
+def calculate_line_product_cost(unit_cost: Decimal, servings_count: int) -> Decimal:
+    return _quantize(Decimal(unit_cost) * Decimal(servings_count), MONEY_PLACES)
 
 
 def calculate_estimated_kg(servings_count: int, customers_per_kg: Decimal | None) -> Decimal | None:
@@ -94,8 +115,10 @@ def calculate_estimated_kg(servings_count: int, customers_per_kg: Decimal | None
 
 def build_line_detail(line: MealCyclePlanLine) -> dict:
     ingredient = line.ingredient
-    cost_per_customer = resolve_cost_per_customer(ingredient)
-    line_product_cost = calculate_line_product_cost(cost_per_customer, line.servings_count)
+    resolved = resolved_kg_cost_per_customer(ingredient)
+    flat = ingredient.cost_per_customer
+    combined = combined_unit_cost_per_customer(ingredient)
+    line_product_cost = calculate_line_product_cost(combined, line.servings_count)
     estimated_kg = calculate_estimated_kg(line.servings_count, ingredient.customers_per_kg)
     return {
         'id': line.id,
@@ -103,7 +126,10 @@ def build_line_detail(line: MealCyclePlanLine) -> dict:
         'ingredient_name': ingredient.name,
         'product_role': line.product_role,
         'servings_count': line.servings_count,
-        'cost_per_customer': str(_quantize(cost_per_customer, COST_PLACES)),
+        'resolved_cost_per_customer': str(resolved) if resolved is not None else None,
+        'cost_per_customer': (
+            str(_quantize(Decimal(flat), COST_PLACES)) if flat is not None else None
+        ),
         'line_product_cost': str(line_product_cost),
         'estimated_kg': str(estimated_kg) if estimated_kg is not None else None,
         'price_per_kg': str(ingredient.price_per_kg) if ingredient.price_per_kg is not None else None,

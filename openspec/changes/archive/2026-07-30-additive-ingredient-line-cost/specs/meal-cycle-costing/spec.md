@@ -1,8 +1,4 @@
-## Purpose
-
-Excel-compatible meal cycle costing: additive line costs from `(resolved_kg + flat) × servings`, package rollups with overhead and profit, optional estimated kg, and finalized cost snapshots.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Line product cost from cost per customer and servings
 
@@ -65,35 +61,3 @@ Default `other_cost_percent` MUST be `30` unless overridden on the plan. `profit
 
 - **WHEN** a plan has multiple lines each with computed `line_product_cost` under the additive formula
 - **THEN** `product_cost` equals the sum of those `line_product_cost` values
-
-### Requirement: Optional estimated kilograms from servings
-
-When an ingredient has `customers_per_kg`, the system MAY expose `estimated_kg` as `servings_count / customers_per_kg` on line details for purchasing insight. This MUST NOT replace servings as the primary planning input.
-
-#### Scenario: Estimated kg for rice
-
-- **WHEN** Rice has `customers_per_kg` `7` and servings `60`
-- **THEN** line details include `estimated_kg` approximately `8.57`
-
-### Requirement: Snapshot totals on finalize
-
-When a plan is finalized, the system MUST store snapshot values for `product_cost`, `other_cost`, `profit`, `total_cost`, and `per_meal_rate` so later ingredient price edits do not silently change finalized figures until the plan is reopened and recalculated.
-
-#### Scenario: Price change after finalize
-
-- **WHEN** a plan is finalized and an admin later changes Chicken’s `price_per_kg`
-- **THEN** the finalized plan’s snapshot totals remain unchanged until reopen + recalculation
-
-### Requirement: Costing fails when ingredient cost is unresolved
-
-The system SHALL NOT treat a missing ingredient cost as zero. When building a plan summary or finalizing a plan, if any line’s ingredient has no resolvable per-serving cost (neither complete kg pricing nor flat `cost_per_customer`), the system MUST return a validation error identifying the ingredient.
-
-#### Scenario: Summary rejected for unpriced line ingredient
-
-- **WHEN** a verified admin requests summary for a plan that includes an ingredient with no resolvable cost
-- **THEN** the system returns a validation error and does not return fabricated zero costs for that line
-
-#### Scenario: Finalize rejected for unpriced line ingredient
-
-- **WHEN** a verified admin finalizes a plan that includes an ingredient with no resolvable cost
-- **THEN** the system rejects finalize with a validation error and does not lock snapshot totals

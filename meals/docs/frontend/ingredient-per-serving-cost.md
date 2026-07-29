@@ -4,15 +4,17 @@
 
 `cost_per_customer` on ingredient create/update is **optional**. Admins may save a catalog row with only a name (and visibility/notes), then fill cost later.
 
-Meaning of `cost_per_customer`: total cooking cost for **one customer serving or one piece**, depending how the product is used. When kg pricing (`price_per_kg` + `customers_per_kg`) is complete, the API resolves cost from the kg pair and ignores the stored flat value for math.
+Meaning of `cost_per_customer`: total cooking cost for **one customer serving or one piece**, depending how the product is used. It is **additive** with kg-derived cost — not an override. When both kg pricing and flat cost are set, line math uses both.
+
+See the full additive formula guide: [`additive-ingredient-line-cost.md`](./additive-ingredient-line-cost.md).
 
 ## Ingredient form
 
 | Field | Required | UI guidance |
 | --- | --- | --- |
 | `name` | yes | Text |
-| `price_per_kg` + `customers_per_kg` | no (both or neither) | Kg pricing pair |
-| `cost_per_customer` | no | Optional money input — “Cost per customer / piece”. Allow empty. |
+| `price_per_kg` + `customers_per_kg` | no (both or neither) | Kg pricing pair → drives `resolved_cost_per_customer` |
+| `cost_per_customer` | no | Optional money input — “Cooking cost per customer / piece”. Allow empty. **Added** to kg unit when both set. |
 | `pieces_per_kg` | no | Optional |
 | `is_active` / `is_customer_visible` / `notes` | no | Unchanged |
 | `product_role` | — | Not on this form (plan line only) |
@@ -38,13 +40,22 @@ Response: `resolved_cost_per_customer` is `null`. Show “Cost unknown” (or hi
 }
 ```
 
+Response: `resolved_cost_per_customer` is `null` (flat-only). Ready for plan attach via flat cost.
+
 ## Plan lines / summary
 
-- Adding an unpriced ingredient to a plan line (single or bulk replace) → `400` with `ingredient` message. Show toast / field error and link admin to edit the ingredient.
+- Adding an unpriced ingredient (neither kg nor flat) to a plan line → `400` with `ingredient` message. Show toast / field error and link admin to edit the ingredient.
 - `GET .../summary/` and `POST .../finalize/` also return `400` if any line ingredient later loses resolvable cost.
-- Prefer filtering the ingredient picker to rows with `resolved_cost_per_customer != null`, or warn before attach.
+- Prefer filtering the ingredient picker with:
+
+```text
+has_cost = resolved_cost_per_customer != null || cost_per_customer != null
+```
+
+Do **not** require `resolved_cost_per_customer != null` alone (that blocks flat-only spices).
 
 ## Related
 
-- Backend: [`../backend/meal-cycle-management.md`](../backend/meal-cycle-management.md) (§6 Ingredient, §9.2b)
+- Additive costing: [`additive-ingredient-line-cost.md`](./additive-ingredient-line-cost.md)
+- Backend: [`../backend/meal-cycle-management.md`](../backend/meal-cycle-management.md) (§6 Ingredient, §4 Money formulas)
 - Role/visibility form notes: [`plan-level-ingredient-role-visibility.md`](./plan-level-ingredient-role-visibility.md)

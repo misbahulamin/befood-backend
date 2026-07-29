@@ -6,7 +6,7 @@ from rest_framework import serializers
 from meals.models import Ingredient, MealCategory, MealCycle, MealCyclePlan, MealCyclePlanLine
 from meals.services.cycle_calculations import (
     ingredient_has_resolvable_cost,
-    resolve_cost_per_customer,
+    resolved_kg_cost_per_customer,
 )
 
 
@@ -35,14 +35,16 @@ class IngredientSerializer(serializers.ModelSerializer):
     @extend_schema_field(
         serializers.CharField(
             allow_null=True,
-            help_text='Effective per-serving cost; null when the ingredient has no resolvable pricing.',
+            help_text=(
+                'Kg-derived unit cost (price_per_kg / customers_per_kg). '
+                'Null when no complete kg pair. Does not include flat cost_per_customer; '
+                'line costing adds both: (resolved + flat) × servings_count.'
+            ),
         )
     )
     def get_resolved_cost_per_customer(self, obj):
-        try:
-            return str(resolve_cost_per_customer(obj))
-        except Exception:
-            return None
+        kg = resolved_kg_cost_per_customer(obj)
+        return str(kg) if kg is not None else None
 
     def validate_name(self, value):
         return value.strip()

@@ -45,9 +45,10 @@ def _django_validation_to_response(exc: DjangoValidationError):
         summary='Create ingredient',
         description=(
             'Catalog pricing is optional: provide both price_per_kg and customers_per_kg, '
-            'or optional flat cost_per_customer (per customer/piece), or neither. '
-            'resolved_cost_per_customer is null when unpriced. '
-            'Plan lines require a resolvable cost before attach.'
+            'optional flat cost_per_customer (per customer/piece cooking cost), both together, '
+            'or neither. resolved_cost_per_customer is kg-only (null without a kg pair). '
+            'Plan line costing uses (resolved_cost_per_customer + cost_per_customer) × servings_count. '
+            'Plan lines require at least one pricing source before attach.'
         ),
     ),
     partial_update=extend_schema(tags=['Admin Meal Cycle'], summary='Update ingredient'),

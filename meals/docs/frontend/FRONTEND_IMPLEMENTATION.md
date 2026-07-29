@@ -68,7 +68,7 @@ MealCyclePlan lines → aggregate servings by role and type
 |-------|---------|
 | `product_role` | Serving role for role-based constraints |
 | `ingredient_type` | Taxonomy for type-based constraints (nullable legacy) |
-| pricing fields | Optional: kg pair (`price_per_kg`/`customers_per_kg`), flat `cost_per_customer`, or neither. `resolved_cost_per_customer` may be `null`. Required before plan-line attach. |
+| pricing fields | Optional: kg pair (`price_per_kg`/`customers_per_kg`), flat `cost_per_customer`, **both**, or neither. `resolved_cost_per_customer` is kg-only (`null` without kg). Line cost = `(resolved + flat) × servings`. At least one source required before plan-line attach. See [`additive-ingredient-line-cost.md`](./additive-ingredient-line-cost.md). |
 
 ### PackageServingProfile
 

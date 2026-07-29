@@ -130,8 +130,25 @@ class MealCycleAPITestCase(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['cost_per_customer'], '3.000000')
+        self.assertIsNone(response.data['resolved_cost_per_customer'])
         self.assertFalse(response.data['is_customer_visible'])
         self.assertNotIn('product_role', response.data)
+
+    def test_admin_can_create_ingredient_with_kg_and_flat_cost(self):
+        self._auth_admin()
+        response = self.client.post(
+            self.ingredients_url,
+            {
+                'name': 'Chicken Both Costs',
+                'price_per_kg': '650.00',
+                'customers_per_kg': '12.00',
+                'cost_per_customer': '2.00',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['resolved_cost_per_customer'], '54.166667')
+        self.assertEqual(response.data['cost_per_customer'], '2.000000')
 
     def test_incomplete_kg_pair_rejected(self):
         self._auth_admin()
@@ -584,3 +601,42 @@ class MealCycleAPITestCase(APITestCase):
         names = [item['name'] for item in detail.data['current_cycle_offering']['menu_items']]
         self.assertIn('Chicken', names)
         self.assertNotIn('Masala Cost', names)
+
+    def test_summary_product_cost_uses_additive_line_formula(self):
+        self._auth_admin()
+        both = Ingredient.objects.create(
+            name='Additive Chicken',
+            price_per_kg=Decimal('650.00'),
+            customers_per_kg=Decimal('12.00'),
+            cost_per_customer=Decimal('2.00'),
+        )
+        _, plan = self._create_april_plan()
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=both,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=10,
+        )
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=self.vegetables,
+            product_role=MealCyclePlanLine.ProductRole.STAPLE,
+            servings_count=60,
+        )
+        summary = self.client.get(
+            reverse('meals:cycle-plans-summary', kwargs={'public_id': plan.public_id})
+        )
+        self.assertEqual(summary.status_code, status.HTTP_200_OK)
+        lines_by_id = {item['ingredient_id']: item for item in summary.data['lines']}
+        both_line = lines_by_id[both.id]
+        veg_line = lines_by_id[self.vegetables.id]
+        self.assertEqual(both_line['resolved_cost_per_customer'], '54.166667')
+        self.assertEqual(both_line['cost_per_customer'], '2.000000')
+        self.assertEqual(both_line['line_product_cost'], '561.67')
+        self.assertIsNone(veg_line['resolved_cost_per_customer'])
+        self.assertEqual(veg_line['cost_per_customer'], '6.000000')
+        self.assertEqual(veg_line['line_product_cost'], '360.00')
+        expected_product = Decimal(both_line['line_product_cost']) + Decimal(
+            veg_line['line_product_cost']
+        )
+        self.assertEqual(Decimal(summary.data['product_cost']), expected_product)
