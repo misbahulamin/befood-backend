@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import transaction
 
 from meals.models import MealCategory
@@ -5,6 +7,7 @@ from meals.services.pricing import calculate_per_meal_price
 from orders.models import Order
 from orders.services.order_delivery import generate_order_deliveries
 from orders.services.order_duration import calculate_order_period
+from orders.services.order_wallet_settings import get_order_wallet_settings
 
 MONTH_LOCK_STATUSES = {
     Order.OrderStatus.PENDING,
@@ -16,6 +19,10 @@ MONTH_LOCK_STATUSES = {
 MONTH_LOCK_ERROR = (
     'You already have a meal package for this month. '
     'You cannot change meal type within the same month.'
+)
+
+FROZEN_WALLET_ORDER_ERROR = (
+    'Your wallet is frozen. You cannot place an order until it is unfrozen.'
 )
 
 
@@ -35,6 +42,14 @@ class UnpricedMealError(OrderServiceError):
     pass
 
 
+class InsufficientWalletBalanceError(OrderServiceError):
+    pass
+
+
+class FrozenWalletOrderError(OrderServiceError):
+    pass
+
+
 def check_existing_monthly_lock(customer, order_month: str) -> None:
     has_existing = Order.objects.filter(
         customer=customer,
@@ -43,6 +58,30 @@ def check_existing_monthly_lock(customer, order_month: str) -> None:
     ).exists()
     if has_existing:
         raise MonthLockError(MONTH_LOCK_ERROR)
+
+
+def check_wallet_min_balance(customer) -> None:
+    """Require wallet balance >= configured minimum. Does not debit the wallet."""
+    from wallet.models import Wallet
+
+    settings_obj = get_order_wallet_settings()
+    minimum = settings_obj.min_wallet_balance_to_order
+    wallet = Wallet.objects.filter(customer=customer).first()
+    if wallet is None:
+        balance = Decimal('0.00')
+        wallet_status = None
+    else:
+        balance = wallet.balance
+        wallet_status = wallet.status
+
+    if wallet_status == Wallet.Status.FROZEN:
+        raise FrozenWalletOrderError(FROZEN_WALLET_ORDER_ERROR)
+
+    if balance < minimum:
+        raise InsufficientWalletBalanceError(
+            f'Insufficient wallet balance to place an order. '
+            f'Minimum required is {minimum}, current balance is {balance}.'
+        )
 
 
 def prepare_snapshot_fields(meal: MealCategory, reference_date=None) -> dict:
@@ -72,6 +111,7 @@ def create_meal_order(customer, meal: MealCategory, customer_note: str = '') -> 
 
     period = calculate_order_period(meal.meal_type)
     check_existing_monthly_lock(customer, period.order_month)
+    check_wallet_min_balance(customer)
 
     snapshot = prepare_snapshot_fields(meal, reference_date=period.start_date)
     order = Order.objects.create(

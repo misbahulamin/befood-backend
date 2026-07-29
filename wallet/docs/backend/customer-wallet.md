@@ -6,11 +6,13 @@ The `wallet` app owns customer balances and an append-only ledger. Customer APIs
 
 | Endpoint | Auth | Notes |
 |----------|------|-------|
-| `GET /wallet/` | `IsVerifiedCustomer` | Lazy `get_or_create` wallet |
+| `GET /wallet/` | `IsVerifiedCustomer` | Lazy `get_or_create` wallet; includes read-only `min_wallet_balance_to_order` from `OrderWalletSettings` |
 | `GET /wallet/transactions/` | same | Newest first, paginated |
 | `GET /wallet/transactions/{public_id}/` | same | Ownership-scoped |
 | `POST /wallet/recharge/` | same | Manual completed credit |
 | `POST /wallet/withdraw/` | same | Manual completed debit |
+
+Order create eligibility (month lock + wallet minimum) is enforced in `orders.services.order_service.create_meal_order` and does **not** debit the wallet. See `orders/docs/backend/order-eligibility-wallet-min-balance.md`.
 
 ---
 

@@ -1,11 +1,15 @@
 from rest_framework import serializers
 
+from decimal import Decimal, InvalidOperation
+
 from meals.models import MealCategory
-from orders.models import MealOffSettings, Order, OrderDelivery
+from orders.models import MealOffSettings, Order, OrderDelivery, OrderWalletSettings
 from orders.services.meal_off import can_meal_off, meal_off_deadline
 from orders.services.order_delivery import get_order_progress
 from orders.services.order_service import (
+    FrozenWalletOrderError,
     InactiveMealError,
+    InsufficientWalletBalanceError,
     MonthLockError,
     UnpricedMealError,
     create_meal_order,
@@ -50,6 +54,8 @@ class OrderCreateSerializer(serializers.Serializer):
                 customer_note=validated_data.get('customer_note', ''),
             )
         except MonthLockError as exc:
+            raise serializers.ValidationError({'non_field_errors': [str(exc)]})
+        except (InsufficientWalletBalanceError, FrozenWalletOrderError) as exc:
             raise serializers.ValidationError({'non_field_errors': [str(exc)]})
         except InactiveMealError as exc:
             raise serializers.ValidationError({'meal_public_id': [str(exc)]})
@@ -139,6 +145,27 @@ class MealOffSettingsSerializer(serializers.ModelSerializer):
         except ZoneInfoNotFoundError as exc:
             raise serializers.ValidationError(f'Unknown timezone: {value}') from exc
         return value
+
+
+class OrderWalletSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderWalletSettings
+        fields = (
+            'min_wallet_balance_to_order',
+            'updated_at',
+        )
+        read_only_fields = ('updated_at',)
+
+    def validate_min_wallet_balance_to_order(self, value):
+        try:
+            amount = value if isinstance(value, Decimal) else Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise serializers.ValidationError('Amount must be a valid decimal number.') from exc
+        if amount < 0:
+            raise serializers.ValidationError('Amount must be greater than or equal to zero.')
+        if amount.as_tuple().exponent < -2:
+            raise serializers.ValidationError('Amount must have at most 2 decimal places.')
+        return amount.quantize(Decimal('0.01'))
 
 
 class OrderListSerializer(OrderProgressMixin, serializers.ModelSerializer):

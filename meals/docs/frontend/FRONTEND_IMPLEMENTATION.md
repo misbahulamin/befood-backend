@@ -127,7 +127,8 @@ MealCyclePlan lines → aggregate servings by role and type
 ### C. Cycle plan → finalize
 
 1. `POST /meals/cycles/` → year/month.
-2. `POST /meals/cycle-plans/` with `cycle` + `meal_category` (meal `public_id`).
+2. `POST /meals/cycle-plans/` with `cycle` (integer PK) + `meal_public_id` (meal UUID).
+
 3. `PUT /meals/cycle-plans/{id}/lines/` with ingredient servings.
 4. `GET .../summary/` — render progress bars from `constraint_progress`.
 5. `POST .../finalize/` — succeeds only when every constraint is satisfied; publishes package `total_price`.

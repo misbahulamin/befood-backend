@@ -2,11 +2,14 @@ from decimal import Decimal, InvalidOperation
 
 from rest_framework import serializers
 
+from orders.services.order_wallet_settings import get_order_wallet_settings
 from wallet.models import Wallet, WalletTransaction
 from wallet.services.ledger import MAX_FUNDING_AMOUNT, MIN_FUNDING_AMOUNT
 
 
 class WalletSerializer(serializers.ModelSerializer):
+    min_wallet_balance_to_order = serializers.SerializerMethodField()
+
     class Meta:
         model = Wallet
         fields = (
@@ -14,10 +17,15 @@ class WalletSerializer(serializers.ModelSerializer):
             'balance',
             'currency',
             'status',
+            'min_wallet_balance_to_order',
             'created_at',
             'updated_at',
         )
         read_only_fields = fields
+
+    def get_min_wallet_balance_to_order(self, obj):
+        amount = get_order_wallet_settings().min_wallet_balance_to_order.quantize(Decimal('0.01'))
+        return f'{amount:.2f}'
 
 
 class WalletTransactionSerializer(serializers.ModelSerializer):

@@ -106,6 +106,7 @@ class WalletAPITests(APITestCase):
         self.assertEqual(response.data['balance'], '0.00')
         self.assertEqual(response.data['currency'], 'BDT')
         self.assertEqual(response.data['status'], 'active')
+        self.assertEqual(response.data['min_wallet_balance_to_order'], '500.00')
         self.assertIn('public_id', response.data)
         self.assertNotIn('id', response.data)
 

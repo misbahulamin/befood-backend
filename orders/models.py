@@ -1,6 +1,8 @@
 from datetime import time
+from decimal import Decimal
 
 from django.conf import settings
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import Q
 
@@ -216,5 +218,37 @@ class MealOffSettings(models.Model):
 
     @classmethod
     def load(cls) -> 'MealOffSettings':
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
+class OrderWalletSettings(models.Model):
+    """Singleton: minimum wallet balance required before placing a meal package order."""
+
+    min_wallet_balance_to_order = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('500.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Minimum wallet balance (BDT) required to place a meal package order.',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Order wallet settings'
+        verbose_name_plural = 'Order wallet settings'
+
+    def __str__(self):
+        return f'Order wallet min balance={self.min_wallet_balance_to_order}'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls) -> 'OrderWalletSettings':
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj

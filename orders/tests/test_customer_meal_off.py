@@ -145,6 +145,12 @@ class CustomerMealOffAPITestCase(APITestCase):
         )
         MealOffSettings.load()
 
+        from orders.models import OrderWalletSettings
+
+        wallet_settings = OrderWalletSettings.load()
+        wallet_settings.min_wallet_balance_to_order = Decimal('0.00')
+        wallet_settings.save()
+
     def _auth(self, token):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
 

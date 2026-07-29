@@ -99,6 +99,13 @@ class OrderAPITestCase(APITestCase):
         self.my_orders_url = reverse('orders:order-my-orders')
         self.current_package_url = reverse('orders:order-current-package')
 
+        # Existing order flows are not about wallet eligibility; disable the floor.
+        from orders.models import OrderWalletSettings
+
+        settings_obj = OrderWalletSettings.load()
+        settings_obj.min_wallet_balance_to_order = Decimal('0.00')
+        settings_obj.save()
+
     def _auth(self, token=None):
         token = token or self.customer_token
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')

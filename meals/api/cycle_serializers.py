@@ -206,6 +206,7 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
     cycle_detail = MealCycleBriefSerializer(source='cycle', read_only=True)
     meal_category_detail = MealCategoryBriefSerializer(source='meal_category', read_only=True)
     lines = MealCyclePlanLineSerializer(many=True, read_only=True)
+    meal_public_id = serializers.UUIDField(write_only=True, required=False)
 
     class Meta:
         model = MealCyclePlan
@@ -216,6 +217,7 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
             'cycle_detail',
             'meal_category',
             'meal_category_detail',
+            'meal_public_id',
             'other_cost_percent',
             'profit_percent',
             'status',
@@ -234,6 +236,7 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
             'id',
             'public_id',
             'cycle_detail',
+            'meal_category',
             'meal_category_detail',
             'status',
             'snapshot_product_cost',
@@ -247,6 +250,21 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
             'updated_at',
         )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance is None:
+            self.fields['meal_public_id'].required = True
+
+    def validate_meal_public_id(self, value):
+        try:
+            meal = MealCategory.objects.get(public_id=value)
+        except MealCategory.DoesNotExist:
+            raise serializers.ValidationError('Meal not found.')
+        if not meal.is_active:
+            raise serializers.ValidationError('This meal package is not available.')
+        self.context['resolved_meal_category'] = meal
+        return value
+
     def validate_other_cost_percent(self, value):
         if value is None or value < 0 or value > 100:
             raise serializers.ValidationError('other_cost_percent must be between 0 and 100.')
@@ -258,8 +276,16 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        attrs.pop('meal_public_id', None)
+        if self.instance is None:
+            meal_category = self.context.get('resolved_meal_category')
+            if meal_category is None:
+                raise serializers.ValidationError({'meal_public_id': 'This field is required.'})
+            attrs['meal_category'] = meal_category
+
         cycle = attrs.get('cycle') or getattr(self.instance, 'cycle', None)
         meal_category = attrs.get('meal_category') or getattr(self.instance, 'meal_category', None)
+
         if self.instance is not None and self.instance.is_finalized:
             editable = set(attrs.keys()) - {'notes'}
             # Allow notes-only patch on finalized; block margin/identity changes
@@ -273,7 +299,8 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
             if self.instance is not None:
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():
+                error_key = 'meal_public_id' if self.instance is None else 'meal_category'
                 raise serializers.ValidationError(
-                    {'meal_category': 'A plan already exists for this meal package in the selected cycle.'}
+                    {error_key: 'A plan already exists for this meal package in the selected cycle.'}
                 )
         return attrs

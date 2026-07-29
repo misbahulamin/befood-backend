@@ -9,6 +9,7 @@ from .models import (
     OrderItem,
     OrderReview,
     OrderStatusHistory,
+    OrderWalletSettings,
 )
 
 
@@ -122,4 +123,10 @@ class OrderDeliveryAdmin(admin.ModelAdmin):
 @admin.register(MealOffSettings)
 class MealOffSettingsAdmin(admin.ModelAdmin):
     list_display = ('timezone', 'lunch_off_time', 'dinner_off_time', 'updated_at')
+    readonly_fields = ('updated_at',)
+
+
+@admin.register(OrderWalletSettings)
+class OrderWalletSettingsAdmin(admin.ModelAdmin):
+    list_display = ('min_wallet_balance_to_order', 'updated_at')
     readonly_fields = ('updated_at',)

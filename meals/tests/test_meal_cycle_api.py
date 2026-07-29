@@ -171,6 +171,75 @@ class MealCycleAPITestCase(APITestCase):
 
     # --- Plans / lines / summary / finalize ---
 
+    def test_create_plan_with_meal_public_id(self):
+        self._auth_admin()
+        cycle = MealCycle.objects.create(year=2026, month=4)
+        response = self.client.post(
+            self.plans_url,
+            {
+                'cycle': cycle.id,
+                'meal_public_id': str(self.meal.public_id),
+                'other_cost_percent': '30.00',
+                'profit_percent': '20.00',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['meal_category'], self.meal.id)
+        self.assertEqual(response.data['cycle'], cycle.id)
+        self.assertNotIn('meal_public_id', response.data)
+
+    def test_create_plan_unknown_meal_public_id_rejected(self):
+        self._auth_admin()
+        cycle = MealCycle.objects.create(year=2026, month=4)
+        response = self.client.post(
+            self.plans_url,
+            {
+                'cycle': cycle.id,
+                'meal_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('meal_public_id', response.data)
+
+    def test_create_plan_without_meal_public_id_rejected(self):
+        self._auth_admin()
+        cycle = MealCycle.objects.create(year=2026, month=4)
+        response = self.client.post(
+            self.plans_url,
+            {
+                'cycle': cycle.id,
+                'meal_category': self.meal.id,
+                'other_cost_percent': '30.00',
+                'profit_percent': '20.00',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('meal_public_id', response.data)
+        self.assertFalse(MealCyclePlan.objects.filter(cycle=cycle).exists())
+
+    def test_create_plan_inactive_meal_public_id_rejected(self):
+        self._auth_admin()
+        cycle = MealCycle.objects.create(year=2026, month=4)
+        inactive = MealCategory.objects.create(
+            meal_name='Inactive Package',
+            meal_type='monthly',
+            meal_thumbnail=make_test_image('inactive.jpg'),
+            is_active=False,
+        )
+        response = self.client.post(
+            self.plans_url,
+            {
+                'cycle': cycle.id,
+                'meal_public_id': str(inactive.public_id),
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('meal_public_id', response.data)
+
     def test_bulk_lines_summary_and_duplicate_rejection(self):
         self._auth_admin()
         _, plan = self._create_april_plan()

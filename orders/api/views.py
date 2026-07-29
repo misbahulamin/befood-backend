@@ -21,6 +21,10 @@ from orders.services.meal_off import (
 from orders.services.order_delivery import DeliveryError, mark_delivery
 from orders.services.order_service import get_current_package
 from orders.services.order_status import OrderStatusError, change_order_status
+from orders.services.order_wallet_settings import (
+    get_order_wallet_settings,
+    update_order_wallet_settings,
+)
 from user_management.api.permissions import IsVerifiedAdmin
 from user_management.services.admin_access import is_verified_admin
 
@@ -35,6 +39,7 @@ from .serializers import (
     OrderDetailSerializer,
     OrderDeliverySerializer,
     OrderListSerializer,
+    OrderWalletSettingsSerializer,
     TodayBoardDeliverySerializer,
 )
 
@@ -198,19 +203,40 @@ class AdminDeliveryActionsMixin:
     create=extend_schema(
         tags=['Order Management'],
         summary='Create meal order',
+        description=(
+            'Creates a meal package order for the authenticated verified customer. '
+            'Eligibility gates (in order): meal active/priced, same-month package lock, '
+            'wallet balance >= admin-configured minimum. Wallet is NOT debited on create.'
+        ),
         request=OrderCreateSerializer,
         responses={
             201: OrderDetailSerializer,
-            400: OpenApiResponse(description='Validation error or month lock error'),
+            400: OpenApiResponse(
+                description='Validation error, month lock, insufficient wallet, or frozen wallet'
+            ),
             401: OpenApiResponse(description='Authentication required'),
             403: OpenApiResponse(description='Verified customer required'),
         },
         examples=[
             OpenApiExample(
                 'Create order',
-                value={'meal_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'customer_note': 'Please deliver after 1 PM'},
+                value={
+                    'meal_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                    'customer_note': 'Please deliver after 1 PM',
+                },
                 request_only=True,
-            )
+            ),
+            OpenApiExample(
+                'Insufficient wallet balance',
+                value={
+                    'non_field_errors': [
+                        'Insufficient wallet balance to place an order. '
+                        'Minimum required is 500.00, current balance is 100.00.'
+                    ]
+                },
+                response_only=True,
+                status_codes=['400'],
+            ),
         ],
     ),
     retrieve=extend_schema(
@@ -488,6 +514,70 @@ class MealOffSettingsView(APIView):
             dinner_off_time=serializer.validated_data.get('dinner_off_time'),
         )
         return Response(MealOffSettingsSerializer(updated).data)
+
+
+class OrderWalletSettingsView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=['Admin Order Management'],
+        summary='Get order wallet minimum balance settings',
+        description=(
+            'Returns the minimum wallet balance (BDT) a verified customer must have '
+            'before placing a meal package order. Eligibility check only — order create '
+            'does not debit the wallet.'
+        ),
+        responses={
+            200: OrderWalletSettingsSerializer,
+            403: OpenApiResponse(description='Admin required'),
+        },
+        examples=[
+            OpenApiExample(
+                'Default settings',
+                value={'min_wallet_balance_to_order': '500.00', 'updated_at': '2026-07-29T10:00:00Z'},
+                response_only=True,
+            ),
+        ],
+    )
+    def get(self, request):
+        settings_obj = get_order_wallet_settings()
+        return Response(OrderWalletSettingsSerializer(settings_obj).data)
+
+    @extend_schema(
+        tags=['Admin Order Management'],
+        summary='Update order wallet minimum balance settings',
+        description=(
+            'Partially update the minimum wallet balance required to place an order. '
+            'Amount must be >= 0 with at most 2 decimal places.'
+        ),
+        request=OrderWalletSettingsSerializer,
+        responses={
+            200: OrderWalletSettingsSerializer,
+            400: OpenApiResponse(description='Validation error (negative or too many decimals)'),
+            403: OpenApiResponse(description='Admin required'),
+        },
+        examples=[
+            OpenApiExample(
+                'Raise minimum to 600',
+                value={'min_wallet_balance_to_order': '600.00'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Negative rejected',
+                value={'min_wallet_balance_to_order': ['Amount must be greater than or equal to zero.']},
+                response_only=True,
+                status_codes=['400'],
+            ),
+        ],
+    )
+    def patch(self, request):
+        settings_obj = get_order_wallet_settings()
+        serializer = OrderWalletSettingsSerializer(settings_obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updated = update_order_wallet_settings(
+            min_wallet_balance_to_order=serializer.validated_data.get('min_wallet_balance_to_order'),
+        )
+        return Response(OrderWalletSettingsSerializer(updated).data)
 
 
 @extend_schema_view(

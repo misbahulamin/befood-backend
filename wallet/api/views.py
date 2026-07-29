@@ -60,6 +60,8 @@ class WalletDetailView(APIView):
         description=(
             'Returns the authenticated verified customer\'s wallet. '
             'Creates an active BDT wallet with balance 0.00 on first access. '
+            'Includes min_wallet_balance_to_order (admin-configured floor required '
+            'before placing a meal package order; eligibility only, not a debit). '
             'Clients must use public_id, never the integer primary key.'
         ),
         responses={
@@ -67,6 +69,21 @@ class WalletDetailView(APIView):
             401: OpenApiResponse(description='Unauthenticated'),
             403: OpenApiResponse(description='Not a verified customer'),
         },
+        examples=[
+            OpenApiExample(
+                'Wallet with order eligibility floor',
+                value={
+                    'public_id': 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+                    'balance': '0.00',
+                    'currency': 'BDT',
+                    'status': 'active',
+                    'min_wallet_balance_to_order': '500.00',
+                    'created_at': '2026-07-27T10:00:00Z',
+                    'updated_at': '2026-07-27T10:00:00Z',
+                },
+                response_only=True,
+            ),
+        ],
     )
     def get(self, request):
         profile = _customer_profile(request)

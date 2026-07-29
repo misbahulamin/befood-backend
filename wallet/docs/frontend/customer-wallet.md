@@ -77,10 +77,13 @@ Authorization: Token ...
   "balance": "0.00",
   "currency": "BDT",
   "status": "active",
+  "min_wallet_balance_to_order": "500.00",
   "created_at": "2026-07-27T10:00:00.000000+06:00",
   "updated_at": "2026-07-27T10:00:00.000000+06:00"
 }
 ```
+
+`min_wallet_balance_to_order` is the admin-configured floor required before placing a meal package order (eligibility only — order create does not debit the wallet). See [`orders/docs/frontend/order-eligibility-wallet-min-balance.md`](../../orders/docs/frontend/order-eligibility-wallet-min-balance.md).
 
 ### POST recharge
 

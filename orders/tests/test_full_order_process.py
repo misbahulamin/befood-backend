@@ -99,6 +99,12 @@ class FullOrderProcessTestCase(APITestCase):
         self.create_url = reverse('orders:order-list')
         self.admin_list_url = reverse('web_orders:admin-order-list')
 
+        from orders.models import OrderWalletSettings
+
+        settings_obj = OrderWalletSettings.load()
+        settings_obj.min_wallet_balance_to_order = Decimal('0.00')
+        settings_obj.save()
+
     def _auth(self, token):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
 

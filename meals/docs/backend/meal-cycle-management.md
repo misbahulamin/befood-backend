@@ -158,7 +158,7 @@ Pricing rule: provide **both** kg fields, **or** flat `cost_per_customer`.
 | Field | Meaning |
 | --- | --- |
 | `cycle` | FK to MealCycle |
-| `meal_category` | Meal package |
+| `meal_category` | Meal package (read FK); create with write-only `meal_public_id` UUID |
 | `other_cost_percent` | Default `30.00` |
 | `profit_percent` | Default `10.00` (override per package, e.g. `20`) |
 | `status` | `draft` or `finalized` |
@@ -207,7 +207,7 @@ sequenceDiagram
     Admin->>API: POST /meals/ingredients/ (catalog)
     Admin->>API: POST /meals/cycles/ {year, month}
     API-->>Admin: cycle_days + total_meals
-    Admin->>API: POST /meals/cycle-plans/ {cycle, meal_category, margins}
+    Admin->>API: POST /meals/cycle-plans/ {cycle, meal_public_id, margins}
     Admin->>API: PUT /meals/cycle-plans/{id}/lines/ (servings matrix)
     Admin->>API: GET /meals/cycle-plans/{id}/summary/
     API-->>Admin: costs + per_meal_rate
@@ -298,11 +298,14 @@ January returns `cycle_days: 31`, `total_meals: 62`.
 ```json
 {
   "cycle": 1,
-  "meal_category": 1,
+  "meal_public_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   "other_cost_percent": "30.00",
   "profit_percent": "20.00"
 }
 ```
+
+Write identity for the meal package is UUID `meal_public_id` (not integer `meal_category`). Responses still include integer `meal_category` plus `meal_category_detail`.
+
 
 ### 9.5 Bulk replace servings (matrix)
 
