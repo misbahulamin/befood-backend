@@ -41,7 +41,9 @@ MealCycle (2026-07 → 31 days → 62 meals)
 | --- | --- |
 | Quota | From cycle plan line `servings_count` — hard cap on schedule assignments |
 | Slot | One calendar date + `lunch` or `dinner` |
-| Main | At most one `product_role=main` per slot; publish requires every slot filled |
+| Main | At most one plan-line `product_role=main` per slot; publish requires every slot filled |
+| Role source | Slot validation/publish resolve `product_role` from linked `MealCyclePlanLine`, not the ingredient catalog |
+| Customer hide | `is_customer_visible=false` ingredients stay on admin schedule; omitted from today-menu / package-menu |
 | Sync | Suggest copying another package’s calendar without exceeding this package’s quotas |
 | Reveal | Clock times when today’s lunch/dinner become visible to customers |
 

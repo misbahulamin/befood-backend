@@ -56,7 +56,7 @@ class IngredientViewSet(viewsets.ModelViewSet):
     permission_classes = [IsVerifiedAdmin]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = IngredientFilter
-    ordering_fields = ['name', 'price_per_kg', 'created_at', 'product_role']
+    ordering_fields = ['name', 'price_per_kg', 'created_at', 'is_customer_visible']
     ordering = ['name']
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 

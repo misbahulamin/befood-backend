@@ -76,8 +76,8 @@ def published_schedule_for_meal(meal_id: int, year: int, month: int):
             plan__cycle__month=month,
             status=MonthlyMenuSchedule.Status.PUBLISHED,
         )
-        .prefetch_related('slots__items__ingredient')
-        .select_related('plan__meal_category')
+        .prefetch_related('slots__items__ingredient', 'plan__lines')
+        .select_related('plan__meal_category', 'plan')
         .first()
     )
 
@@ -99,7 +99,11 @@ def build_package_menu_for_customer(
     packages = []
     for order in orders:
         schedule = published_schedule_for_meal(order.meal_id, target_year, target_month)
-        days = serialize_schedule_assignments(schedule) if schedule is not None else []
+        days = (
+            serialize_schedule_assignments(schedule, customer_visible_only=True)
+            if schedule is not None
+            else []
+        )
         packages.append(
             {
                 'meal_public_id': str(order.meal.public_id),

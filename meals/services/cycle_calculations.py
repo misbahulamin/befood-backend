@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from meals.models import Ingredient, MealCyclePlan, MealCyclePlanLine
 from meals.services.meal_offering import publish_meal_price_from_plan
+from meals.services.plan_roles import MAIN_ROLE
 from meals.services.pricing import expected_servings
 
 
@@ -59,7 +60,7 @@ def build_line_detail(line: MealCyclePlanLine) -> dict:
         'id': line.id,
         'ingredient_id': ingredient.id,
         'ingredient_name': ingredient.name,
-        'product_role': ingredient.product_role,
+        'product_role': line.product_role,
         'servings_count': line.servings_count,
         'cost_per_customer': str(_quantize(cost_per_customer, COST_PLACES)),
         'line_product_cost': str(line_product_cost),
@@ -121,7 +122,7 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
     main_servings = sum(
         line.servings_count
         for line in lines
-        if line.ingredient.product_role == Ingredient.ProductRole.MAIN
+        if line.product_role == MAIN_ROLE
     )
 
     return {
@@ -173,8 +174,8 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
 def validate_main_servings_for_finalize(plan: MealCyclePlan) -> int:
     main_servings = sum(
         line.servings_count
-        for line in plan.lines.select_related('ingredient').all()
-        if line.ingredient.product_role == Ingredient.ProductRole.MAIN
+        for line in plan.lines.all()
+        if line.product_role == MAIN_ROLE
     )
     expected = plan_expected_servings(plan)
     if main_servings != expected:
@@ -285,6 +286,7 @@ def replace_plan_lines(plan: MealCyclePlan, line_payloads: list[dict]) -> list[M
             MealCyclePlanLine.objects.create(
                 plan=plan,
                 ingredient=ingredient,
+                product_role=item['product_role'],
                 servings_count=item['servings_count'],
             )
         )

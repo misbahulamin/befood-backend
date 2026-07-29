@@ -64,18 +64,15 @@ class MealCycleAPITestCase(APITestCase):
             name='Chicken',
             price_per_kg=Decimal('130.00'),
             customers_per_kg=Decimal('10.00'),
-            product_role=Ingredient.ProductRole.MAIN,
         )
         self.rice = Ingredient.objects.create(
             name='Rice',
             price_per_kg=Decimal('70.00'),
             customers_per_kg=Decimal('7.00'),
-            product_role=Ingredient.ProductRole.STAPLE,
         )
         self.vegetables = Ingredient.objects.create(
             name='Vegetables',
             cost_per_customer=Decimal('6.00'),
-            product_role=Ingredient.ProductRole.STAPLE,
         )
 
         self.ingredients_url = reverse('meals:ingredients-list')
@@ -111,12 +108,14 @@ class MealCycleAPITestCase(APITestCase):
                 'price_per_kg': '650.00',
                 'customers_per_kg': '12.00',
                 'pieces_per_kg': 70,
-                'product_role': 'main',
+                'is_customer_visible': True,
             },
             format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['resolved_cost_per_customer'], '54.166667')
+        self.assertTrue(response.data['is_customer_visible'])
+        self.assertNotIn('product_role', response.data)
 
     def test_admin_can_create_flat_cost_ingredient(self):
         self._auth_admin()
@@ -125,12 +124,14 @@ class MealCycleAPITestCase(APITestCase):
             {
                 'name': 'Dhal+Cucumber',
                 'cost_per_customer': '3.00',
-                'product_role': 'staple',
+                'is_customer_visible': False,
             },
             format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['cost_per_customer'], '3.000000')
+        self.assertFalse(response.data['is_customer_visible'])
+        self.assertNotIn('product_role', response.data)
 
     def test_incomplete_pricing_rejected(self):
         self._auth_admin()
@@ -248,8 +249,8 @@ class MealCycleAPITestCase(APITestCase):
             replace_url,
             {
                 'lines': [
-                    {'ingredient': self.chicken.id, 'servings_count': 18},
-                    {'ingredient': self.rice.id, 'servings_count': 60},
+                    {'ingredient': self.chicken.id, 'servings_count': 18, 'product_role': 'main'},
+                    {'ingredient': self.rice.id, 'servings_count': 60, 'product_role': 'staple'},
                 ]
             },
             format='json',
@@ -259,7 +260,7 @@ class MealCycleAPITestCase(APITestCase):
 
         duplicate = self.client.post(
             self.lines_url,
-            {'plan': plan.id, 'ingredient': self.chicken.id, 'servings_count': 1},
+            {'plan': plan.id, 'ingredient': self.chicken.id, 'servings_count': 1, 'product_role': 'main'},
             format='json',
         )
         self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
@@ -278,9 +279,9 @@ class MealCycleAPITestCase(APITestCase):
             replace_url,
             {
                 'lines': [
-                    {'ingredient': self.chicken.id, 'servings_count': 60},
-                    {'ingredient': self.rice.id, 'servings_count': 60},
-                    {'ingredient': self.vegetables.id, 'servings_count': 60},
+                    {'ingredient': self.chicken.id, 'servings_count': 60, 'product_role': 'main'},
+                    {'ingredient': self.rice.id, 'servings_count': 60, 'product_role': 'staple'},
+                    {'ingredient': self.vegetables.id, 'servings_count': 60, 'product_role': 'side'},
                 ]
             },
             format='json',
@@ -297,7 +298,7 @@ class MealCycleAPITestCase(APITestCase):
 
         blocked = self.client.put(
             replace_url,
-            {'lines': [{'ingredient': self.chicken.id, 'servings_count': 50}]},
+            {'lines': [{'ingredient': self.chicken.id, 'servings_count': 50, 'product_role': 'main'}]},
             format='json',
         )
         self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
@@ -310,7 +311,7 @@ class MealCycleAPITestCase(APITestCase):
 
         allowed = self.client.put(
             replace_url,
-            {'lines': [{'ingredient': self.chicken.id, 'servings_count': 60}]},
+            {'lines': [{'ingredient': self.chicken.id, 'servings_count': 60, 'product_role': 'main'}]},
             format='json',
         )
         self.assertEqual(allowed.status_code, status.HTTP_200_OK)
@@ -319,7 +320,7 @@ class MealCycleAPITestCase(APITestCase):
         self._auth_admin()
         _, plan = self._create_april_plan()
         original_price = self.meal.total_price
-        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.chicken, servings_count=18)
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.chicken, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=18)
         response = self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id}))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('main_servings_total', response.data)
@@ -329,8 +330,8 @@ class MealCycleAPITestCase(APITestCase):
     def test_finalized_snapshot_ignores_price_change(self):
         self._auth_admin()
         _, plan = self._create_april_plan()
-        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.chicken, servings_count=60)
-        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.rice, servings_count=60)
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.chicken, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=60)
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.rice, product_role=MealCyclePlanLine.ProductRole.STAPLE, servings_count=60)
         finalize = self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id}))
         original_rate = finalize.data['per_meal_rate']
 
@@ -344,8 +345,8 @@ class MealCycleAPITestCase(APITestCase):
     def test_public_meal_list_and_detail_offering(self):
         self._auth_admin()
         _, plan = self._create_april_plan()
-        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.chicken, servings_count=60)
-        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.rice, servings_count=60)
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.chicken, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=60)
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.rice, product_role=MealCyclePlanLine.ProductRole.STAPLE, servings_count=60)
         self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id}))
         self.client.credentials()
 
@@ -398,3 +399,90 @@ class MealCycleAPITestCase(APITestCase):
         self._auth_admin()
         response = self.client.get('/meals/recipes/')
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_bulk_lines_require_product_role(self):
+        self._auth_admin()
+        _, plan = self._create_april_plan()
+        replace_url = reverse('meals:cycle-plans-replace-lines', kwargs={'public_id': plan.public_id})
+        response = self.client.put(
+            replace_url,
+            {'lines': [{'ingredient': self.chicken.id, 'servings_count': 60}]},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_same_ingredient_different_roles_across_packages(self):
+        self._auth_admin()
+        cycle = MealCycle.objects.create(year=2026, month=4)
+        package_a = self.meal
+        package_d = MealCategory.objects.create(
+            meal_name='Package D',
+            total_price=None,
+            meal_type='monthly',
+            meal_thumbnail=make_test_image('pkg-d.jpg'),
+        )
+        plan_a = MealCyclePlan.objects.create(cycle=cycle, meal_category=package_a)
+        plan_d = MealCyclePlan.objects.create(cycle=cycle, meal_category=package_d)
+        MealCyclePlanLine.objects.create(
+            plan=plan_a,
+            ingredient=self.vegetables,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=60,
+        )
+        MealCyclePlanLine.objects.create(
+            plan=plan_d,
+            ingredient=self.vegetables,
+            product_role=MealCyclePlanLine.ProductRole.SIDE,
+            servings_count=60,
+        )
+        MealCyclePlanLine.objects.create(
+            plan=plan_d,
+            ingredient=self.chicken,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=60,
+        )
+        finalize_a = self.client.post(
+            reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan_a.public_id})
+        )
+        finalize_d = self.client.post(
+            reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan_d.public_id})
+        )
+        self.assertEqual(finalize_a.status_code, status.HTTP_200_OK)
+        self.assertEqual(finalize_d.status_code, status.HTTP_200_OK)
+        roles_a = {line['ingredient_id']: line['product_role'] for line in finalize_a.data['lines']}
+        roles_d = {line['ingredient_id']: line['product_role'] for line in finalize_d.data['lines']}
+        self.assertEqual(roles_a[self.vegetables.id], 'main')
+        self.assertEqual(roles_d[self.vegetables.id], 'side')
+
+    def test_hidden_ingredient_costs_but_omitted_from_public_menu(self):
+        self._auth_admin()
+        masala = Ingredient.objects.create(
+            name='Masala Cost',
+            cost_per_customer=Decimal('2.00'),
+            is_customer_visible=False,
+        )
+        _, plan = self._create_april_plan()
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=self.chicken,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=60,
+        )
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=masala,
+            product_role=MealCyclePlanLine.ProductRole.SEASONING,
+            servings_count=60,
+        )
+        finalize = self.client.post(
+            reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id})
+        )
+        self.assertEqual(finalize.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(finalize.data['lines']), 2)
+        self.client.credentials()
+        detail = self.client.get(
+            reverse('meals:meals-detail', kwargs={'public_id': self.meal.public_id})
+        )
+        names = [item['name'] for item in detail.data['current_cycle_offering']['menu_items']]
+        self.assertIn('Chicken', names)
+        self.assertNotIn('Masala Cost', names)

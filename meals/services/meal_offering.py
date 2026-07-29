@@ -22,10 +22,11 @@ def build_public_cycle_offering(plan: MealCyclePlan) -> dict:
     menu_items = [
         {
             'name': line.ingredient.name,
-            'product_role': line.ingredient.product_role,
+            'product_role': line.product_role,
             'servings_count': line.servings_count,
         }
         for line in plan.lines.all()
+        if line.ingredient.is_customer_visible
     ]
     finalized_at = None
     if plan.finalized_at:

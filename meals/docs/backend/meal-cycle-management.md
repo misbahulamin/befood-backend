@@ -27,7 +27,7 @@ This feature lets **verified admins** plan and cost monthly meal packages the sa
 ## 2. Mental model
 
 ```
-Ingredient (product catalog)
+Ingredient (product catalog: pricing + visibility)
         │
         ▼
 MealCycle (2026-04 → 30 days → 60 meals)
@@ -36,7 +36,7 @@ MealCycle (2026-04 → 30 days → 60 meals)
 MealCyclePlan (one meal package inside that month)
         │
         ▼
-MealCyclePlanLine (product + servings_count)
+MealCyclePlanLine (product + servings_count + product_role)
         │
         ▼
 Summary / Finalize → meal details + money totals
@@ -45,10 +45,12 @@ Summary / Finalize → meal details + money totals
 
 | Concept | Meaning |
 | --- | --- |
-| Ingredient | Food product (Beef, Chicken, Rice, Vegetables…) |
+| Ingredient | Food product (Beef, Chicken, Rice, Vegetables…) — no global serving role |
+| `is_customer_visible` | When `false`, still costs on plans but omitted from customer/public menus |
 | MealCycle | One calendar month’s cycle |
 | `total_meals` | `days_in_month × 2` |
 | MealCyclePlan | Costing plan for one meal package in that cycle |
+| `product_role` | Per plan-line role: `main` / `side` / `staple` / `seasoning` / `other` |
 | `servings_count` | How many times that product is served in the cycle |
 | Finalize | Lock plan snapshots **and** set meal `total_price = snapshot_total_cost` |
 | Reopen | Unlock plan for edits; **keeps** last published meal price until next finalize |
@@ -109,9 +111,11 @@ estimated_kg = servings_count ÷ customers_per_kg   # only if customers_per_kg e
 
 ### Finalize rule
 
-Sum of `servings_count` for ingredients with `product_role = main` **must equal** `cycle.total_meals`.
+Sum of `servings_count` for **plan lines** with `product_role = main` **must equal** the plan’s expected servings (package meal-period aware; for monthly `both` this is typically `cycle.total_meals`).
 
-Example (April): main proteins must total **60**.
+Example (April, monthly both): main plan-line servings must total **60**.
+
+The same ingredient may be `main` on Package A and `side` on Package D in the same month — role is plan-scoped.
 
 ---
 
@@ -139,11 +143,13 @@ Permission class: `IsVerifiedAdmin`
 | `customers_per_kg` | with price | Customers served by 1 kg |
 | `cost_per_customer` | other mode | Flat cost when no kg pair |
 | `pieces_per_kg` | no | Optional piece count |
-| `product_role` | no | `main` / `side` / `staple` / `seasoning` / `other` (default `other`) |
-| `is_active` | no | Default `true` |
+| `is_active` | no | Default `true`; inactive cannot be added to new draft lines |
+| `is_customer_visible` | no | Default `true`; when `false`, omit from customer/public menus (still costed) |
 | `resolved_cost_per_customer` | read-only | Effective cost used in math |
 
 Pricing rule: provide **both** kg fields, **or** flat `cost_per_customer`.
+
+**Breaking:** `product_role` is **not** on the ingredient. Set it on each plan line.
 
 ### MealCycle
 
@@ -170,6 +176,7 @@ Pricing rule: provide **both** kg fields, **or** flat `cost_per_customer`.
 | --- | --- |
 | `plan` | Parent plan |
 | `ingredient` | Product |
+| `product_role` | Required: `main` / `side` / `staple` / `seasoning` / `other` |
 | `servings_count` | Times served (≥ 0) |
 
 Unique: one ingredient once per plan.
@@ -240,7 +247,7 @@ sequenceDiagram
   "price_per_kg": "650.00",
   "customers_per_kg": "12.00",
   "pieces_per_kg": 70,
-  "product_role": "main"
+  "is_customer_visible": true
 }
 ```
 
@@ -253,21 +260,22 @@ Success `201` (important fields):
   "price_per_kg": "650.00",
   "customers_per_kg": "12.00",
   "resolved_cost_per_customer": "54.166667",
-  "product_role": "main",
-  "is_active": true
+  "is_active": true,
+  "is_customer_visible": true
 }
 ```
 
-### 9.2 Create flat-cost ingredient
+### 9.2 Create flat-cost / costing-only ingredient
 
 ```json
 {
-  "name": "Vegetables",
-  "cost_per_customer": "6.00",
-  "product_role": "staple"
+  "name": "Masala Cost",
+  "cost_per_customer": "2.00",
+  "is_customer_visible": false
 }
 ```
 
+Customer menus omit this item; plan costing still includes it when added as a plan line.
 ### 9.3 Create April cycle
 
 `POST /meals/cycles/`
@@ -314,18 +322,20 @@ Write identity for the meal package is UUID `meal_public_id` (not integer `meal_
 ```json
 {
   "lines": [
-    { "ingredient": 1, "servings_count": 2 },
-    { "ingredient": 3, "servings_count": 18 },
-    { "ingredient": 10, "servings_count": 60 }
+    { "ingredient": 1, "servings_count": 2, "product_role": "main" },
+    { "ingredient": 3, "servings_count": 18, "product_role": "main" },
+    { "ingredient": 10, "servings_count": 60, "product_role": "staple" }
   ]
 }
 ```
+
+Each line **requires** `product_role`. Missing role → `400`.
 
 ### 9.6 Summary (draft = live prices)
 
 `GET /meals/cycle-plans/1/summary/`
 
-Returns `status`, cycle info, lines with `cost_per_customer` / `line_product_cost`, plus `product_cost`, `other_cost`, `operational_cost`, `operational_cost_total`, `operational_cost_lines`, `profit`, `total_cost`, `per_meal_rate`, and `suggested_package_price`.
+Returns `status`, cycle info, lines with `product_role` / `cost_per_customer` / `line_product_cost`, plus `product_cost`, `other_cost`, `operational_cost`, `operational_cost_total`, `operational_cost_lines`, `profit`, `total_cost`, `per_meal_rate`, and `suggested_package_price`.
 
 `suggested_package_price` is informational only — finalize does **not** auto-write `MealCategory.total_price`.
 
@@ -348,7 +358,7 @@ Returns the plan with `"status": "draft"` and cleared snapshots.
 
 | Endpoint | Filters / ordering |
 | --- | --- |
-| `/meals/ingredients/` | `is_active`, `product_role`, `search`, `ordering` |
+| `/meals/ingredients/` | `is_active`, `is_customer_visible`, `search`, `ordering` |
 | `/meals/cycles/` | `year`, `month`, `ordering` |
 | `/meals/cycle-plans/` | `cycle`, `meal_category`, `status`, `year`, `month` |
 | `/meals/cycle-plan-lines/` | `plan`, `ingredient` |
@@ -439,7 +449,7 @@ Adds `current_cycle_offering` from the **latest finalized** plan for that meal:
 | `year`, `month`, `cycle_days`, `total_meals` | Package scope |
 | `package_total_price`, `per_meal_rate` | What customer pays |
 | `product_cost`, `other_cost`, `profit` | High-level cost bands (from snapshots) |
-| `menu_items[]` | `name`, `product_role`, `servings_count` |
+| `menu_items[]` | `name`, `product_role` (from plan line), `servings_count` — omits `is_customer_visible=false` |
 | `finalized_at` | When this offering was published |
 
 **Not public:** ingredient `price_per_kg`, draft plans, admin notes.
@@ -474,11 +484,24 @@ Manual checklist (Swagger `/api/docs/`):
 
 ---
 
-## 16. Related
+## 16. Migration note (plan-level role + customer visibility)
+
+Migration `meals.0012_plan_level_ingredient_role_visibility`:
+
+1. Adds `Ingredient.is_customer_visible` (default `true`).
+2. Adds `MealCyclePlanLine.product_role`.
+3. **Backfill:** copies each ingredient’s former catalog `product_role` onto existing plan lines.
+4. Removes `Ingredient.product_role`.
+
+After deploy, admins must send `product_role` on every plan-line create/bulk replace. Set `is_customer_visible=false` on costing-only items (e.g. Masala Cost) so they stay in finalize math but disappear from customer/public menus.
+
+---
+
+## 17. Related
 
 - Next step after finalize: **[Monthly meal menu schedule](./monthly-meal-menu-schedule.md)** (day + lunch/dinner calendar, sync, today menu)
-- Active change: `openspec/changes/monthly-meal-menu-schedule/`
-- Active change: `openspec/changes/public-meal-pricing-from-cycle/`
+- Feature note: **[Plan-level ingredient role & visibility](./plan-level-ingredient-role-visibility.md)**
+- OpenSpec change: `openspec/changes/plan-level-ingredient-role-visibility/`
 - Archived cycle change: `openspec/changes/archive/2026-07-22-month-based-meal-cycle/`
 - Main specs: `openspec/specs/ingredient-catalog`, `meal-cycle-planning`, `meal-cycle-costing`
 - Older ingredients/recipes note (superseded): [`docs/meal-ingredients-recipes-api.md`](../../../docs/meal-ingredients-recipes-api.md)

@@ -87,19 +87,16 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
             name='Chicken',
             price_per_kg=Decimal('130.00'),
             customers_per_kg=Decimal('10.00'),
-            product_role=Ingredient.ProductRole.MAIN,
         )
         self.beef = Ingredient.objects.create(
             name='Beef',
             price_per_kg=Decimal('650.00'),
             customers_per_kg=Decimal('12.00'),
-            product_role=Ingredient.ProductRole.MAIN,
         )
         self.rice = Ingredient.objects.create(
             name='Rice',
             price_per_kg=Decimal('70.00'),
             customers_per_kg=Decimal('7.00'),
-            product_role=Ingredient.ProductRole.STAPLE,
         )
 
         self.schedules_url = reverse('meals:menu-schedules-list')
@@ -119,13 +116,13 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         if rice_count is None:
             rice_count = total
         MealCyclePlanLine.objects.create(
-            plan=plan, ingredient=self.chicken, servings_count=chicken_count
+            plan=plan, ingredient=self.chicken, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=chicken_count
         )
         MealCyclePlanLine.objects.create(
-            plan=plan, ingredient=self.beef, servings_count=beef_count
+            plan=plan, ingredient=self.beef, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=beef_count
         )
         MealCyclePlanLine.objects.create(
-            plan=plan, ingredient=self.rice, servings_count=rice_count
+            plan=plan, ingredient=self.rice, product_role=MealCyclePlanLine.ProductRole.STAPLE, servings_count=rice_count
         )
         assert chicken_count + beef_count == total
         return finalize_plan(plan)
@@ -493,12 +490,10 @@ class MenuSyncServiceTestCase(APITestCase):
         self.chicken = Ingredient.objects.create(
             name='ChickenSync',
             cost_per_customer=Decimal('10.00'),
-            product_role=Ingredient.ProductRole.MAIN,
         )
         self.beef = Ingredient.objects.create(
             name='BeefSync',
             cost_per_customer=Decimal('12.00'),
-            product_role=Ingredient.ProductRole.MAIN,
         )
 
     def test_service_unequal_quota_mirror(self):
@@ -513,10 +508,10 @@ class MenuSyncServiceTestCase(APITestCase):
             meal_category=self.student,
             status=MealCyclePlan.Status.FINALIZED,
         )
-        MealCyclePlanLine.objects.create(plan=r_plan, ingredient=self.chicken, servings_count=12)
-        MealCyclePlanLine.objects.create(plan=r_plan, ingredient=self.beef, servings_count=48)
-        MealCyclePlanLine.objects.create(plan=s_plan, ingredient=self.chicken, servings_count=10)
-        MealCyclePlanLine.objects.create(plan=s_plan, ingredient=self.beef, servings_count=50)
+        MealCyclePlanLine.objects.create(plan=r_plan, ingredient=self.chicken, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=12)
+        MealCyclePlanLine.objects.create(plan=r_plan, ingredient=self.beef, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=48)
+        MealCyclePlanLine.objects.create(plan=s_plan, ingredient=self.chicken, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=10)
+        MealCyclePlanLine.objects.create(plan=s_plan, ingredient=self.beef, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=50)
 
         r_sched = MonthlyMenuSchedule.objects.create(plan=r_plan)
         s_sched = MonthlyMenuSchedule.objects.create(plan=s_plan)

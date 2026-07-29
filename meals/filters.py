@@ -22,12 +22,12 @@ class MealCategoryFilter(django_filters.FilterSet):
 
 class IngredientFilter(django_filters.FilterSet):
     is_active = django_filters.BooleanFilter()
-    product_role = django_filters.ChoiceFilter(choices=Ingredient.ProductRole.choices)
+    is_customer_visible = django_filters.BooleanFilter()
     search = django_filters.CharFilter(field_name='name', lookup_expr='icontains')
 
     class Meta:
         model = Ingredient
-        fields = ['is_active', 'product_role', 'search']
+        fields = ['is_active', 'is_customer_visible', 'search']
 
 
 class MealCycleFilter(django_filters.FilterSet):
@@ -54,10 +54,11 @@ class MealCyclePlanFilter(django_filters.FilterSet):
 class MealCyclePlanLineFilter(django_filters.FilterSet):
     plan = django_filters.NumberFilter(field_name='plan_id')
     ingredient = django_filters.NumberFilter(field_name='ingredient_id')
+    product_role = django_filters.ChoiceFilter(choices=MealCyclePlanLine.ProductRole.choices)
 
     class Meta:
         model = MealCyclePlanLine
-        fields = ['plan', 'ingredient']
+        fields = ['plan', 'ingredient', 'product_role']
 
 
 class MonthlyMenuScheduleFilter(django_filters.FilterSet):

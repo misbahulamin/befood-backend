@@ -2,6 +2,11 @@
 
 Cross-link: OpenSpec change [`dynamic-serving-matrix`](../../../openspec/changes/dynamic-serving-matrix/).
 
+> **Current catalog contract (supersedes role-on-ingredient notes below):**  
+> `product_role` lives on **`MealCyclePlanLine`**, not on `Ingredient`.  
+> Ingredients use `is_active` + `is_customer_visible` instead.  
+> See [`plan-level-ingredient-role-visibility.md`](./plan-level-ingredient-role-visibility.md).
+
 **Public meal list/detail APIs are unchanged** (additive admin-only fields and stricter finalize/schedule validation). Customer-facing meal payloads do not include serving-matrix data.
 
 ## 1. Quick summary

@@ -21,8 +21,8 @@ class IngredientSerializer(serializers.ModelSerializer):
             'cost_per_customer',
             'resolved_cost_per_customer',
             'pieces_per_kg',
-            'product_role',
             'is_active',
+            'is_customer_visible',
             'notes',
             'created_at',
             'updated_at',
@@ -143,7 +143,6 @@ class MealCycleBriefSerializer(serializers.ModelSerializer):
 
 class MealCyclePlanLineSerializer(serializers.ModelSerializer):
     ingredient_name = serializers.CharField(source='ingredient.name', read_only=True)
-    product_role = serializers.CharField(source='ingredient.product_role', read_only=True)
 
     class Meta:
         model = MealCyclePlanLine
@@ -162,7 +161,6 @@ class MealCyclePlanLineSerializer(serializers.ModelSerializer):
             'id',
             'public_id',
             'ingredient_name',
-            'product_role',
             'created_at',
             'updated_at',
         )
@@ -170,6 +168,14 @@ class MealCyclePlanLineSerializer(serializers.ModelSerializer):
     def validate_servings_count(self, value):
         if value is None or value < 0:
             raise serializers.ValidationError('Servings count must be 0 or greater.')
+        return value
+
+    def validate_product_role(self, value):
+        valid = {choice for choice, _ in MealCyclePlanLine.ProductRole.choices}
+        if value not in valid:
+            raise serializers.ValidationError(
+                f'Invalid product_role. Choose from: {", ".join(sorted(valid))}.'
+            )
         return value
 
     def validate(self, attrs):
@@ -196,6 +202,7 @@ class MealCyclePlanLineSerializer(serializers.ModelSerializer):
 class MealCyclePlanLineBulkItemSerializer(serializers.Serializer):
     ingredient = serializers.PrimaryKeyRelatedField(queryset=Ingredient.objects.all())
     servings_count = serializers.IntegerField(min_value=0)
+    product_role = serializers.ChoiceField(choices=MealCyclePlanLine.ProductRole.choices)
 
 
 class MealCyclePlanLineBulkSerializer(serializers.Serializer):

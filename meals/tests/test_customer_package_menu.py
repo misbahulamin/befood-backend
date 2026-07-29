@@ -82,19 +82,16 @@ class CustomerPackageMenuAPITestCase(APITestCase):
             name='Chicken',
             price_per_kg=Decimal('130.00'),
             customers_per_kg=Decimal('10.00'),
-            product_role=Ingredient.ProductRole.MAIN,
         )
         self.beef = Ingredient.objects.create(
             name='Beef',
             price_per_kg=Decimal('650.00'),
             customers_per_kg=Decimal('12.00'),
-            product_role=Ingredient.ProductRole.MAIN,
         )
         self.rice = Ingredient.objects.create(
             name='Rice',
             price_per_kg=Decimal('70.00'),
             customers_per_kg=Decimal('7.00'),
-            product_role=Ingredient.ProductRole.STAPLE,
         )
 
         self.url = reverse('meals:my-package-menu')
@@ -108,13 +105,13 @@ class CustomerPackageMenuAPITestCase(APITestCase):
         plan = MealCyclePlan.objects.create(cycle=cycle, meal_category=self.meal)
         total = cycle.total_meals
         MealCyclePlanLine.objects.create(
-            plan=plan, ingredient=self.chicken, servings_count=chicken_count
+            plan=plan, ingredient=self.chicken, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=chicken_count
         )
         MealCyclePlanLine.objects.create(
-            plan=plan, ingredient=self.beef, servings_count=beef_count
+            plan=plan, ingredient=self.beef, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=beef_count
         )
         MealCyclePlanLine.objects.create(
-            plan=plan, ingredient=self.rice, servings_count=total
+            plan=plan, ingredient=self.rice, product_role=MealCyclePlanLine.ProductRole.STAPLE, servings_count=total
         )
         assert chicken_count + beef_count == total
         return finalize_plan(plan)
@@ -263,3 +260,79 @@ class CustomerPackageMenuAPITestCase(APITestCase):
         full = self.client.get(self.url, {'year': 2026, 'month': 7})
         self.assertEqual(full.status_code, status.HTTP_200_OK)
         self.assertGreater(len(full.data['packages'][0]['days']), 2)
+
+    def test_customer_menus_omit_non_visible_ingredients(self):
+        masala = Ingredient.objects.create(
+            name='Masala Cost',
+            cost_per_customer=Decimal('2.00'),
+            is_customer_visible=False,
+        )
+        cycle, _ = MealCycle.objects.get_or_create(year=2026, month=7)
+        plan = MealCyclePlan.objects.create(cycle=cycle, meal_category=self.meal)
+        total = cycle.total_meals
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=self.chicken,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=20,
+        )
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=self.beef,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=42,
+        )
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=self.rice,
+            product_role=MealCyclePlanLine.ProductRole.STAPLE,
+            servings_count=total,
+        )
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=masala,
+            product_role=MealCyclePlanLine.ProductRole.SEASONING,
+            servings_count=total,
+        )
+        finalize_plan(plan)
+
+        keys = expected_slot_keys(2026, 7)
+        chicken_keys, beef_keys = keys[:20], keys[20:]
+        assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
+        for entry in assignments:
+            entry['ingredient_ids'].append(masala.id)
+        schedule = MonthlyMenuSchedule.objects.create(plan=plan)
+        replace_schedule_assignments(schedule, assignments)
+        publish_schedule(schedule)
+        self._create_order(2026, 7)
+
+        self._auth_customer()
+        response = self.client.get(self.url, {'year': 2026, 'month': 7})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        all_names = {
+            ing['name']
+            for day in response.data['packages'][0]['days']
+            for ing in day['ingredients']
+        }
+        self.assertIn('Chicken', all_names)
+        self.assertIn('Rice', all_names)
+        self.assertNotIn('Masala Cost', all_names)
+
+        from meals.services.menu_schedule import serialize_schedule_assignments
+
+        admin_names = {
+            ing['name']
+            for day in serialize_schedule_assignments(schedule)
+            for ing in day['ingredients']
+        }
+        self.assertIn('Masala Cost', admin_names)
+
+        tz = ZoneInfo('Asia/Dhaka')
+        after_dinner = datetime(2026, 7, 22, 17, 0, tzinfo=tz)
+        today_payload = build_today_menu_for_customer(self.customer_profile, now=after_dinner)
+        today_names = {
+            ing['name']
+            for period in today_payload['packages'][0]['periods']
+            for ing in period['ingredients']
+        }
+        self.assertNotIn('Masala Cost', today_names)

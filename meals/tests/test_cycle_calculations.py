@@ -40,12 +40,10 @@ class CycleCostingFormulaTests(TestCase):
             name='Beef',
             price_per_kg=Decimal('650.00'),
             customers_per_kg=Decimal('12.00'),
-            product_role=Ingredient.ProductRole.MAIN,
         )
         self.veg = Ingredient.objects.create(
             name='Vegetables',
             cost_per_customer=Decimal('6.00'),
-            product_role=Ingredient.ProductRole.STAPLE,
         )
 
     def test_kg_cost_per_customer(self):
@@ -91,7 +89,7 @@ class CycleCostingFormulaTests(TestCase):
             other_cost_percent=Decimal('30'),
             profit_percent=Decimal('20'),
         )
-        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.beef, servings_count=2)
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.beef, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=2)
         with self.assertRaises(ValidationError):
             finalize_plan(plan)
 
@@ -109,8 +107,8 @@ class CycleCostingFormulaTests(TestCase):
             other_cost_percent=Decimal('30'),
             profit_percent=Decimal('10'),
         )
-        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.beef, servings_count=60)
-        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.veg, servings_count=60)
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.beef, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=60)
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.veg, product_role=MealCyclePlanLine.ProductRole.STAPLE, servings_count=60)
         finalize_plan(plan)
         plan.refresh_from_db()
         summary = build_plan_summary(plan)
@@ -135,7 +133,7 @@ class CycleCostingFormulaTests(TestCase):
             other_cost_percent=Decimal('30'),
             profit_percent=Decimal('10'),
         )
-        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.beef, servings_count=30)
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.beef, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=30)
         finalize_plan(plan)
         plan.refresh_from_db()
         summary = build_plan_summary(plan)
@@ -157,7 +155,7 @@ class CycleCostingFormulaTests(TestCase):
             other_cost_percent=Decimal('30'),
             profit_percent=Decimal('10'),
         )
-        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.beef, servings_count=2)
+        MealCyclePlanLine.objects.create(plan=plan, ingredient=self.beef, product_role=MealCyclePlanLine.ProductRole.MAIN, servings_count=2)
         finalize_plan(plan)
         plan.refresh_from_db()
         summary = build_plan_summary(plan)

@@ -7,7 +7,7 @@ from math import ceil, floor
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from meals.models import Ingredient, MonthlyMenuSchedule, MonthlyMenuSlot
+from meals.models import MonthlyMenuSchedule, MonthlyMenuSlot
 from meals.services.menu_schedule import (
     MEAL_PERIODS,
     build_quota_summary,
@@ -15,14 +15,19 @@ from meals.services.menu_schedule import (
     replace_schedule_assignments,
     serialize_schedule_assignments,
 )
+from meals.services.plan_roles import MAIN_ROLE
 
 
 def _slot_main_map(schedule: MonthlyMenuSchedule) -> dict[tuple[date, str], int | None]:
+    roles = {
+        line.ingredient_id: line.product_role
+        for line in schedule.plan.lines.all()
+    }
     result: dict[tuple[date, str], int | None] = {}
     for slot in schedule.slots.prefetch_related('items__ingredient').all():
         main_id = None
         for item in slot.items.all():
-            if item.ingredient.product_role == Ingredient.ProductRole.MAIN:
+            if roles.get(item.ingredient_id) == MAIN_ROLE:
                 main_id = item.ingredient_id
                 break
         result[(slot.service_date, slot.meal_period)] = main_id
@@ -43,7 +48,7 @@ def _plan_quotas(schedule: MonthlyMenuSchedule) -> dict[int, dict]:
     for line in schedule.plan.lines.select_related('ingredient').all():
         quotas[line.ingredient_id] = {
             'servings_count': line.servings_count,
-            'product_role': line.ingredient.product_role,
+            'product_role': line.product_role,
             'name': line.ingredient.name,
         }
     return quotas
@@ -128,7 +133,7 @@ def build_sync_suggestion(
     main_ids = [
         iid
         for iid, data in target_quotas.items()
-        if data['product_role'] == Ingredient.ProductRole.MAIN and remaining[iid] > 0
+        if data['product_role'] == MAIN_ROLE and remaining[iid] > 0
     ]
     # Precompute target lunch/dinner goals for each remaining main
     goals = {}
@@ -142,7 +147,7 @@ def build_sync_suggestion(
         }
 
     empty_main_slots = [key for key in keys if not any(
-        iid in target_quotas and target_quotas[iid]['product_role'] == Ingredient.ProductRole.MAIN
+        iid in target_quotas and target_quotas[iid]['product_role'] == MAIN_ROLE
         for iid in proposed[key]
     )]
 
@@ -170,7 +175,7 @@ def build_sync_suggestion(
         for iid in source_items.get(key, []):
             if iid not in target_quotas:
                 continue
-            if target_quotas[iid]['product_role'] == Ingredient.ProductRole.MAIN:
+            if target_quotas[iid]['product_role'] == MAIN_ROLE:
                 continue
             if remaining.get(iid, 0) <= 0:
                 continue
@@ -198,7 +203,7 @@ def build_sync_suggestion(
         for service_date, meal_period in keys
         if not any(
             iid in target_quotas
-            and target_quotas[iid]['product_role'] == Ingredient.ProductRole.MAIN
+            and target_quotas[iid]['product_role'] == MAIN_ROLE
             for iid in proposed[(service_date, meal_period)]
         )
     ]

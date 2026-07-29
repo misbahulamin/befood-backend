@@ -16,6 +16,7 @@ from meals.models import (
     MonthlyMenuSlot,
     MonthlyMenuSlotItem,
 )
+from meals.services.plan_roles import MAIN_ROLE, plan_ingredient_role_map
 
 
 MEAL_PERIODS = (
@@ -38,16 +39,10 @@ def _plan_quota_map(plan: MealCyclePlan) -> dict[int, int]:
     return {line.ingredient_id: line.servings_count for line in plan.lines.all()}
 
 
-def _ingredient_role_map(ingredient_ids: set[int]) -> dict[int, str]:
-    return {
-        row.id: row.product_role
-        for row in Ingredient.objects.filter(id__in=ingredient_ids).only('id', 'product_role')
-    }
-
-
 def build_quota_summary(schedule: MonthlyMenuSchedule) -> list[dict]:
     plan = schedule.plan
     quotas = _plan_quota_map(plan)
+    roles = plan_ingredient_role_map(plan)
     usage_total: dict[int, int] = defaultdict(int)
     usage_lunch: dict[int, int] = defaultdict(int)
     usage_dinner: dict[int, int] = defaultdict(int)
@@ -68,9 +63,7 @@ def build_quota_summary(schedule: MonthlyMenuSchedule) -> list[dict]:
     ingredient_ids = set(quotas.keys()) | set(usage_total.keys())
     ingredients = {
         ing.id: ing
-        for ing in Ingredient.objects.filter(id__in=ingredient_ids).only(
-            'id', 'name', 'product_role'
-        )
+        for ing in Ingredient.objects.filter(id__in=ingredient_ids).only('id', 'name')
     }
 
     summary = []
@@ -82,7 +75,7 @@ def build_quota_summary(schedule: MonthlyMenuSchedule) -> list[dict]:
             {
                 'ingredient_id': iid,
                 'ingredient_name': ing.name if ing else None,
-                'product_role': ing.product_role if ing else None,
+                'product_role': roles.get(iid),
                 'planned': planned,
                 'used': used,
                 'remaining': max(planned - used, 0),
@@ -94,7 +87,12 @@ def build_quota_summary(schedule: MonthlyMenuSchedule) -> list[dict]:
     return summary
 
 
-def serialize_schedule_assignments(schedule: MonthlyMenuSchedule) -> list[dict]:
+def serialize_schedule_assignments(
+    schedule: MonthlyMenuSchedule,
+    *,
+    customer_visible_only: bool = False,
+) -> list[dict]:
+    roles = plan_ingredient_role_map(schedule.plan)
     slots = (
         schedule.slots.prefetch_related('items__ingredient')
         .order_by('service_date', 'meal_period')
@@ -102,18 +100,22 @@ def serialize_schedule_assignments(schedule: MonthlyMenuSchedule) -> list[dict]:
     )
     result = []
     for slot in slots:
+        ingredients = []
+        for item in slot.items.all():
+            if customer_visible_only and not item.ingredient.is_customer_visible:
+                continue
+            ingredients.append(
+                {
+                    'id': item.ingredient_id,
+                    'name': item.ingredient.name,
+                    'product_role': roles.get(item.ingredient_id),
+                }
+            )
         result.append(
             {
                 'service_date': slot.service_date.isoformat(),
                 'meal_period': slot.meal_period,
-                'ingredients': [
-                    {
-                        'id': item.ingredient_id,
-                        'name': item.ingredient.name,
-                        'product_role': item.ingredient.product_role,
-                    }
-                    for item in slot.items.all()
-                ],
+                'ingredients': ingredients,
             }
         )
     return result
@@ -187,11 +189,11 @@ def _validate_assignment_matrix(
             }
         )
 
-    roles = _ingredient_role_map(all_ids)
+    roles = plan_ingredient_role_map(plan)
     usage: dict[int, int] = defaultdict(int)
 
     for (service_date, meal_period), ingredient_ids in normalized.items():
-        mains = [iid for iid in ingredient_ids if roles.get(iid) == Ingredient.ProductRole.MAIN]
+        mains = [iid for iid in ingredient_ids if roles.get(iid) == MAIN_ROLE]
         if len(mains) > 1:
             raise ValidationError(
                 {
@@ -283,6 +285,7 @@ def replace_schedule_assignments(
 def find_incomplete_main_slots(schedule: MonthlyMenuSchedule) -> list[dict]:
     cycle = schedule.plan.cycle
     expected = expected_slot_keys(cycle.year, cycle.month)
+    roles = plan_ingredient_role_map(schedule.plan)
     slots = {
         (slot.service_date, slot.meal_period): slot
         for slot in schedule.slots.prefetch_related('items__ingredient').all()
@@ -302,7 +305,7 @@ def find_incomplete_main_slots(schedule: MonthlyMenuSchedule) -> list[dict]:
         mains = [
             item
             for item in slot.items.all()
-            if item.ingredient.product_role == Ingredient.ProductRole.MAIN
+            if roles.get(item.ingredient_id) == MAIN_ROLE
         ]
         if len(mains) == 0:
             incomplete.append(

@@ -125,7 +125,8 @@ Authorization: Token <token>
 | `meal_period` | `lunch` or `dinner` |
 | `ingredients[].id` | Ingredient integer id (same shape as today-menu) |
 | `ingredients[].name` | Display name |
-| `ingredients[].product_role` | e.g. `main`, `staple`, … |
+| `ingredients[].product_role` | From the package’s cycle plan line (`main`, `side`, `staple`, …) — not from the ingredient catalog |
+| `ingredients[]` filter | Ingredients with `is_customer_visible=false` are omitted |
 
 `days` are ordered by `service_date`, then `meal_period` (string order: `dinner` before `lunch`).
 

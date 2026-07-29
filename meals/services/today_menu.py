@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from django.utils import timezone
 
 from meals.models import MenuRevealSettings, MonthlyMenuSchedule, MonthlyMenuSlot
+from meals.services.plan_roles import plan_ingredient_role_map
 from orders.models import Order
 
 
@@ -79,13 +80,14 @@ def build_today_menu_for_customer(customer_profile, now: datetime | None = None)
                 plan__cycle__month=today.month,
                 status=MonthlyMenuSchedule.Status.PUBLISHED,
             )
-            .prefetch_related('slots__items__ingredient')
-            .select_related('plan__meal_category')
+            .prefetch_related('slots__items__ingredient', 'plan__lines')
+            .select_related('plan__meal_category', 'plan')
             .first()
         )
 
         periods_payload = []
         if schedule and visible_periods:
+            roles = plan_ingredient_role_map(schedule.plan)
             slot_map = {
                 (slot.service_date, slot.meal_period): slot
                 for slot in schedule.slots.all()
@@ -99,9 +101,10 @@ def build_today_menu_for_customer(customer_profile, now: datetime | None = None)
                         {
                             'id': item.ingredient_id,
                             'name': item.ingredient.name,
-                            'product_role': item.ingredient.product_role,
+                            'product_role': roles.get(item.ingredient_id),
                         }
                         for item in slot.items.all()
+                        if item.ingredient.is_customer_visible
                     ]
                 periods_payload.append(
                     {

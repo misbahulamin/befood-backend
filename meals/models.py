@@ -67,13 +67,6 @@ class MealCategory(models.Model):
 
 
 class Ingredient(PublicIdMixin, models.Model):
-    class ProductRole(models.TextChoices):
-        MAIN = 'main', 'Main'
-        SIDE = 'side', 'Side'
-        STAPLE = 'staple', 'Staple'
-        SEASONING = 'seasoning', 'Seasoning'
-        OTHER = 'other', 'Other'
-
     name = models.CharField(max_length=255, unique=True)
     price_per_kg = models.DecimalField(
         max_digits=10,
@@ -98,12 +91,11 @@ class Ingredient(PublicIdMixin, models.Model):
         help_text='Required for flat-cost items. Ignored when kg pricing is complete.',
     )
     pieces_per_kg = models.PositiveIntegerField(null=True, blank=True)
-    product_role = models.CharField(
-        max_length=20,
-        choices=ProductRole.choices,
-        default=ProductRole.OTHER,
-    )
     is_active = models.BooleanField(default=True)
+    is_customer_visible = models.BooleanField(
+        default=True,
+        help_text='When false, ingredient is used for costing/admin schedules but omitted from customer menus.',
+    )
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -228,6 +220,13 @@ class MealCyclePlan(PublicIdMixin, models.Model):
 
 
 class MealCyclePlanLine(PublicIdMixin, models.Model):
+    class ProductRole(models.TextChoices):
+        MAIN = 'main', 'Main'
+        SIDE = 'side', 'Side'
+        STAPLE = 'staple', 'Staple'
+        SEASONING = 'seasoning', 'Seasoning'
+        OTHER = 'other', 'Other'
+
     plan = models.ForeignKey(
         MealCyclePlan,
         on_delete=models.CASCADE,
@@ -237,6 +236,11 @@ class MealCyclePlanLine(PublicIdMixin, models.Model):
         Ingredient,
         on_delete=models.PROTECT,
         related_name='cycle_plan_lines',
+    )
+    product_role = models.CharField(
+        max_length=20,
+        choices=ProductRole.choices,
+        help_text='Serving role for this ingredient within this meal package cycle plan.',
     )
     servings_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)

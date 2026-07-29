@@ -51,16 +51,16 @@ class MealCategoryAdmin(admin.ModelAdmin):
 class IngredientAdmin(admin.ModelAdmin):
     list_display = (
         'name',
-        'product_role',
         'price_per_kg',
         'customers_per_kg',
         'cost_per_customer',
         'pieces_per_kg',
         'is_active',
+        'is_customer_visible',
         'created_at',
     )
     search_fields = ('name',)
-    list_filter = ('is_active', 'product_role')
+    list_filter = ('is_active', 'is_customer_visible')
     readonly_fields = ('created_at', 'updated_at')
 
 
@@ -101,8 +101,8 @@ class MealCyclePlanAdmin(admin.ModelAdmin):
 
 @admin.register(MealCyclePlanLine)
 class MealCyclePlanLineAdmin(admin.ModelAdmin):
-    list_display = ('plan', 'ingredient', 'servings_count', 'updated_at')
-    list_filter = ('plan__status', 'ingredient__product_role')
+    list_display = ('plan', 'ingredient', 'product_role', 'servings_count', 'updated_at')
+    list_filter = ('plan__status', 'product_role')
     search_fields = ('ingredient__name', 'plan__meal_category__meal_name')
     autocomplete_fields = ('plan', 'ingredient')
     readonly_fields = ('created_at', 'updated_at')
