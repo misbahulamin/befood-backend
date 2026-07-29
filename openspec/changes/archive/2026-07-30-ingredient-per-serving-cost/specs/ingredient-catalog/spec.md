@@ -1,8 +1,4 @@
-## Purpose
-
-Product catalog for meal-cycle costing: ingredients with optional kilogram-based or flat per-customer pricing and optional customer visibility. Serving `product_role` is assigned on meal-cycle plan lines, not on the catalog.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Admin can manage product catalog for costing
 

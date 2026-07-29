@@ -28,6 +28,43 @@ def plan_expected_servings(plan: MealCyclePlan) -> int:
     )
 
 
+def ingredient_has_resolvable_cost(ingredient: Ingredient) -> bool:
+    return ingredient.has_kg_pricing or ingredient.cost_per_customer is not None
+
+
+def require_resolvable_ingredient_cost(ingredient: Ingredient) -> None:
+    if ingredient_has_resolvable_cost(ingredient):
+        return
+    raise ValidationError(
+        {
+            'ingredient': (
+                f'Ingredient "{ingredient.name}" has no resolvable cost. '
+                'Provide kg pricing (price_per_kg and customers_per_kg) '
+                'or a flat cost_per_customer before using it on a plan.'
+            )
+        }
+    )
+
+
+def assert_plan_ingredients_have_resolvable_cost(plan: MealCyclePlan) -> None:
+    missing = [
+        line.ingredient.name
+        for line in plan.lines.select_related('ingredient').all()
+        if not ingredient_has_resolvable_cost(line.ingredient)
+    ]
+    if not missing:
+        return
+    names = ', '.join(missing)
+    raise ValidationError(
+        {
+            'ingredient': (
+                f'These ingredients have no resolvable cost: {names}. '
+                'Provide kg pricing or cost_per_customer.'
+            )
+        }
+    )
+
+
 def resolve_cost_per_customer(ingredient: Ingredient) -> Decimal:
     if ingredient.has_kg_pricing:
         return _quantize(
@@ -36,7 +73,11 @@ def resolve_cost_per_customer(ingredient: Ingredient) -> Decimal:
         )
     if ingredient.cost_per_customer is None:
         raise ValidationError(
-            f'Ingredient "{ingredient.name}" has no usable cost_per_customer.'
+            {
+                'ingredient': (
+                    f'Ingredient "{ingredient.name}" has no usable cost_per_customer.'
+                )
+            }
         )
     return Decimal(ingredient.cost_per_customer)
 
@@ -95,6 +136,7 @@ def calculate_package_totals(
 
 def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None) -> dict:
     use_snapshot = plan.is_finalized if use_snapshot is None else use_snapshot
+    assert_plan_ingredients_have_resolvable_cost(plan)
     lines = list(plan.lines.select_related('ingredient').all())
     line_details = [build_line_detail(line) for line in lines]
     servings_expected = plan_expected_servings(plan)
@@ -282,6 +324,7 @@ def replace_plan_lines(plan: MealCyclePlan, line_payloads: list[dict]) -> list[M
         ingredient = item['ingredient']
         if not getattr(ingredient, 'is_active', True):
             raise ValidationError({'ingredient': f'Ingredient "{ingredient}" must be active.'})
+        require_resolvable_ingredient_cost(ingredient)
         created.append(
             MealCyclePlanLine.objects.create(
                 plan=plan,

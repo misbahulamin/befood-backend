@@ -53,6 +53,37 @@ class CycleCostingFormulaTests(TestCase):
     def test_flat_cost_per_customer(self):
         self.assertEqual(resolve_cost_per_customer(self.veg), Decimal('6.000000'))
 
+    def test_resolve_cost_rejects_unpriced_ingredient(self):
+        unpriced = Ingredient.objects.create(name='Unpriced')
+        with self.assertRaises(ValidationError) as ctx:
+            resolve_cost_per_customer(unpriced)
+        self.assertIn('ingredient', ctx.exception.message_dict)
+
+    def test_summary_rejects_unpriced_line_ingredient(self):
+        unpriced = Ingredient.objects.create(name='Unpriced Line')
+        meal = MealCategory.objects.create(
+            meal_name='Unpriced Plan',
+            total_price=None,
+            meal_type='monthly',
+            meal_thumbnail=make_test_image('unpriced-plan.jpg'),
+        )
+        cycle = MealCycle.objects.create(year=2026, month=4)
+        plan = MealCyclePlan.objects.create(
+            cycle=cycle,
+            meal_category=meal,
+            other_cost_percent=Decimal('30'),
+            profit_percent=Decimal('10'),
+        )
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=unpriced,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=60,
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            build_plan_summary(plan)
+        self.assertIn('ingredient', ctx.exception.message_dict)
+
     def test_package_totals_april_style(self):
         # product_cost 2954.62, other 30%, profit 20%, / 60 meals
         totals = calculate_package_totals(

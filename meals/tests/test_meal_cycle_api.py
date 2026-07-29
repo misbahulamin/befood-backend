@@ -133,7 +133,7 @@ class MealCycleAPITestCase(APITestCase):
         self.assertFalse(response.data['is_customer_visible'])
         self.assertNotIn('product_role', response.data)
 
-    def test_incomplete_pricing_rejected(self):
+    def test_incomplete_kg_pair_rejected(self):
         self._auth_admin()
         response = self.client.post(
             self.ingredients_url,
@@ -141,6 +141,19 @@ class MealCycleAPITestCase(APITestCase):
             format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_admin_can_create_ingredient_without_pricing(self):
+        self._auth_admin()
+        response = self.client.post(
+            self.ingredients_url,
+            {'name': 'Unpriced Spice', 'is_customer_visible': False},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIsNone(response.data['cost_per_customer'])
+        self.assertIsNone(response.data['price_per_kg'])
+        self.assertIsNone(response.data['customers_per_kg'])
+        self.assertIsNone(response.data['resolved_cost_per_customer'])
 
     def test_customer_cannot_access_ingredient_api(self):
         self._auth_customer()
@@ -240,6 +253,91 @@ class MealCycleAPITestCase(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('meal_public_id', response.data)
+
+    def test_plan_line_rejects_unpriced_ingredient(self):
+        self._auth_admin()
+        unpriced = Ingredient.objects.create(name='Unpriced Herb')
+        _, plan = self._create_april_plan()
+        response = self.client.post(
+            self.lines_url,
+            {
+                'plan': plan.id,
+                'ingredient': unpriced.id,
+                'product_role': 'main',
+                'servings_count': 10,
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('ingredient', response.data)
+
+    def test_plan_line_accepts_kg_and_flat_priced_ingredients(self):
+        self._auth_admin()
+        _, plan = self._create_april_plan()
+        kg_line = self.client.post(
+            self.lines_url,
+            {
+                'plan': plan.id,
+                'ingredient': self.chicken.id,
+                'product_role': 'main',
+                'servings_count': 30,
+            },
+            format='json',
+        )
+        flat_line = self.client.post(
+            self.lines_url,
+            {
+                'plan': plan.id,
+                'ingredient': self.vegetables.id,
+                'product_role': 'side',
+                'servings_count': 30,
+            },
+            format='json',
+        )
+        self.assertEqual(kg_line.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(flat_line.status_code, status.HTTP_201_CREATED)
+
+    def test_bulk_replace_rejects_unpriced_ingredient(self):
+        self._auth_admin()
+        unpriced = Ingredient.objects.create(name='Unpriced Oil')
+        _, plan = self._create_april_plan()
+        replace_url = reverse('meals:cycle-plans-replace-lines', kwargs={'public_id': plan.public_id})
+        response = self.client.put(
+            replace_url,
+            {
+                'lines': [
+                    {
+                        'ingredient': unpriced.id,
+                        'product_role': 'main',
+                        'servings_count': 60,
+                    }
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('ingredient', response.data)
+
+    def test_summary_and_finalize_reject_unpriced_line_ingredient(self):
+        self._auth_admin()
+        unpriced = Ingredient.objects.create(name='Ghost Cost')
+        _, plan = self._create_april_plan()
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=unpriced,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=60,
+        )
+        summary = self.client.get(
+            reverse('meals:cycle-plans-summary', kwargs={'public_id': plan.public_id})
+        )
+        finalize = self.client.post(
+            reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id})
+        )
+        self.assertEqual(summary.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('ingredient', summary.data)
+        self.assertEqual(finalize.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('ingredient', finalize.data)
 
     def test_bulk_lines_summary_and_duplicate_rejection(self):
         self._auth_admin()

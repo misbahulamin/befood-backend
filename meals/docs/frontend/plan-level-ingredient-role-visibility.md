@@ -11,12 +11,13 @@
 
 | Field | Required | UI |
 | --- | --- | --- |
-| name, pricing | yes | Unchanged |
+| name | yes | Text |
+| pricing (`price_per_kg`/`customers_per_kg` or `cost_per_customer`) | no | Optional; both kg fields or neither. Flat cost = per customer/piece. Empty allowed. |
 | `is_active` | no | Toggle |
 | `is_customer_visible` | no | Toggle (default on). Label e.g. “Show on customer menu” |
 | `product_role` | — | **Removed** from this form |
 
-Example create:
+Example create (with optional cost):
 
 ```json
 {
@@ -25,6 +26,17 @@ Example create:
   "is_customer_visible": false
 }
 ```
+
+Example create (no pricing yet):
+
+```json
+{
+  "name": "Unpriced Spice",
+  "is_customer_visible": false
+}
+```
+
+Plan lines reject unpriced ingredients (`400` on `ingredient`). See [`ingredient-per-serving-cost.md`](./ingredient-per-serving-cost.md).
 
 ## Plan lines matrix
 

@@ -40,7 +40,16 @@ def _django_validation_to_response(exc: DjangoValidationError):
 @extend_schema_view(
     list=extend_schema(tags=['Admin Meal Cycle'], summary='List ingredients'),
     retrieve=extend_schema(tags=['Admin Meal Cycle'], summary='Retrieve ingredient detail'),
-    create=extend_schema(tags=['Admin Meal Cycle'], summary='Create ingredient'),
+    create=extend_schema(
+        tags=['Admin Meal Cycle'],
+        summary='Create ingredient',
+        description=(
+            'Catalog pricing is optional: provide both price_per_kg and customers_per_kg, '
+            'or optional flat cost_per_customer (per customer/piece), or neither. '
+            'resolved_cost_per_customer is null when unpriced. '
+            'Plan lines require a resolvable cost before attach.'
+        ),
+    ),
     partial_update=extend_schema(tags=['Admin Meal Cycle'], summary='Update ingredient'),
     destroy=extend_schema(
         tags=['Admin Meal Cycle'],
@@ -127,7 +136,10 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='summary')
     def summary(self, request, public_id=None):
         plan = self.get_object()
-        return Response(build_plan_summary(plan))
+        try:
+            return Response(build_plan_summary(plan))
+        except DjangoValidationError as exc:
+            return _django_validation_to_response(exc)
 
     @extend_schema(
         tags=['Admin Meal Cycle'],

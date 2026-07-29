@@ -88,7 +88,11 @@ class Ingredient(PublicIdMixin, models.Model):
         null=True,
         blank=True,
         validators=[MinValueValidator(Decimal('0.000001'))],
-        help_text='Required for flat-cost items. Ignored when kg pricing is complete.',
+        help_text=(
+            'Optional per-serving cooking cost for one customer or one piece. '
+            'Leave empty when unknown. Ignored when kg pricing is complete. '
+            'Required before the ingredient is used on a meal-cycle plan.'
+        ),
     )
     pieces_per_kg = models.PositiveIntegerField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
@@ -119,15 +123,6 @@ class Ingredient(PublicIdMixin, models.Model):
                 {
                     'price_per_kg': 'Provide both price_per_kg and customers_per_kg, or neither.',
                     'customers_per_kg': 'Provide both price_per_kg and customers_per_kg, or neither.',
-                }
-            )
-        if not self.has_kg_pricing and self.cost_per_customer is None:
-            raise ValidationError(
-                {
-                    'cost_per_customer': (
-                        'Provide kg pricing (price_per_kg and customers_per_kg) '
-                        'or a flat cost_per_customer.'
-                    )
                 }
             )
         if self.pieces_per_kg is not None and self.pieces_per_kg <= 0:

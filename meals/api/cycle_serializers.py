@@ -4,7 +4,10 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from meals.models import Ingredient, MealCategory, MealCycle, MealCyclePlan, MealCyclePlanLine
-from meals.services.cycle_calculations import resolve_cost_per_customer
+from meals.services.cycle_calculations import (
+    ingredient_has_resolvable_cost,
+    resolve_cost_per_customer,
+)
 
 
 class IngredientSerializer(serializers.ModelSerializer):
@@ -29,7 +32,12 @@ class IngredientSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'public_id', 'resolved_cost_per_customer', 'created_at', 'updated_at')
 
-    @extend_schema_field(serializers.CharField(allow_null=True))
+    @extend_schema_field(
+        serializers.CharField(
+            allow_null=True,
+            help_text='Effective per-serving cost; null when the ingredient has no resolvable pricing.',
+        )
+    )
     def get_resolved_cost_per_customer(self, obj):
         try:
             return str(resolve_cost_per_customer(obj))
@@ -72,15 +80,6 @@ class IngredientSerializer(serializers.ModelSerializer):
         if has_customers and customers <= Decimal('0'):
             raise serializers.ValidationError(
                 {'customers_per_kg': 'Customers per kg must be greater than 0.'}
-            )
-        if not (has_price and has_customers) and flat_cost is None:
-            raise serializers.ValidationError(
-                {
-                    'cost_per_customer': (
-                        'Provide kg pricing (price_per_kg and customers_per_kg) '
-                        'or a flat cost_per_customer.'
-                    )
-                }
             )
         if flat_cost is not None and flat_cost <= Decimal('0'):
             raise serializers.ValidationError(
@@ -188,6 +187,16 @@ class MealCyclePlanLineSerializer(serializers.ModelSerializer):
             )
         if ingredient is not None and not ingredient.is_active and self.instance is None:
             raise serializers.ValidationError({'ingredient': 'Ingredient must be active.'})
+        if ingredient is not None and not ingredient_has_resolvable_cost(ingredient):
+            raise serializers.ValidationError(
+                {
+                    'ingredient': (
+                        f'Ingredient "{ingredient.name}" has no resolvable cost. '
+                        'Provide kg pricing (price_per_kg and customers_per_kg) '
+                        'or a flat cost_per_customer before using it on a plan.'
+                    )
+                }
+            )
         if plan and ingredient:
             qs = MealCyclePlanLine.objects.filter(plan=plan, ingredient=ingredient)
             if self.instance is not None:

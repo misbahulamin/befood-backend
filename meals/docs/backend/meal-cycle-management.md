@@ -139,15 +139,19 @@ Permission class: `IsVerifiedAdmin`
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `name` | yes | Unique product name |
-| `price_per_kg` | one mode | Purchase price per kg |
+| `price_per_kg` | no* | Purchase price per kg |
 | `customers_per_kg` | with price | Customers served by 1 kg |
-| `cost_per_customer` | other mode | Flat cost when no kg pair |
+| `cost_per_customer` | no* | Optional flat per-serving cooking cost (one customer or one piece) when no kg pair |
 | `pieces_per_kg` | no | Optional piece count |
 | `is_active` | no | Default `true`; inactive cannot be added to new draft lines |
 | `is_customer_visible` | no | Default `true`; when `false`, omit from customer/public menus (still costed) |
-| `resolved_cost_per_customer` | read-only | Effective cost used in math |
+| `resolved_cost_per_customer` | read-only | Effective cost used in math; `null` when catalog has no pricing |
 
-Pricing rule: provide **both** kg fields, **or** flat `cost_per_customer`.
+Pricing rule (catalog):
+
+- Provide **both** kg fields, **or** optional flat `cost_per_customer`, **or neither** (unpriced catalog row).
+- Incomplete kg pair (only one of the two) is rejected.
+- Meal-cycle plan lines / summary / finalize **require** a resolvable cost — fill pricing before attaching an ingredient to a plan.
 
 **Breaking:** `product_role` is **not** on the ingredient. Set it on each plan line.
 
@@ -276,6 +280,19 @@ Success `201` (important fields):
 ```
 
 Customer menus omit this item; plan costing still includes it when added as a plan line.
+
+### 9.2b Create ingredient without pricing
+
+```json
+{
+  "name": "Unpriced Spice",
+  "is_customer_visible": false
+}
+```
+
+Success `201`: `cost_per_customer`, kg fields, and `resolved_cost_per_customer` are `null`.  
+Do **not** add this ingredient to a plan line until pricing is set — line create/replace and summary/finalize return `400` with `ingredient` errors.
+
 ### 9.3 Create April cycle
 
 `POST /meals/cycles/`
