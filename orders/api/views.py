@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from meals.models import MealCategory
 from orders.api.permissions import IsOrderOwnerOrAdmin, IsVerifiedCustomer
 from orders.filters import OrderFilter
 from orders.models import Order, OrderDelivery
@@ -25,6 +26,7 @@ from orders.services.order_wallet_settings import (
     get_order_wallet_settings,
     update_order_wallet_settings,
 )
+from orders.services.orderable_months import build_orderable_months_for_meal
 from user_management.api.permissions import IsVerifiedAdmin
 from user_management.services.admin_access import is_verified_admin
 
@@ -40,6 +42,7 @@ from .serializers import (
     OrderDeliverySerializer,
     OrderListSerializer,
     OrderWalletSettingsSerializer,
+    OrderableMonthsQuerySerializer,
     TodayBoardDeliverySerializer,
 )
 
@@ -205,26 +208,52 @@ class AdminDeliveryActionsMixin:
         summary='Create meal order',
         description=(
             'Creates a meal package order for the authenticated verified customer. '
-            'Eligibility gates (in order): meal active/priced, same-month package lock, '
+            'Optional year/month selects the meal month (current through +12 months; '
+            'default = current local month). Eligibility gates (in order): meal active/priced, '
+            'month in window, published monthly menu for that meal+month, same-month package lock, '
             'wallet balance >= admin-configured minimum. Wallet is NOT debited on create.'
         ),
         request=OrderCreateSerializer,
         responses={
             201: OrderDetailSerializer,
             400: OpenApiResponse(
-                description='Validation error, month lock, insufficient wallet, or frozen wallet'
+                description=(
+                    'Validation error, invalid month, menu not published, month lock, '
+                    'insufficient wallet, or frozen wallet'
+                )
             ),
             401: OpenApiResponse(description='Authentication required'),
             403: OpenApiResponse(description='Verified customer required'),
         },
         examples=[
             OpenApiExample(
-                'Create order',
+                'Create order (current month)',
                 value={
                     'meal_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
                     'customer_note': 'Please deliver after 1 PM',
                 },
                 request_only=True,
+            ),
+            OpenApiExample(
+                'Create order for a future month',
+                value={
+                    'meal_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                    'year': 2026,
+                    'month': 8,
+                    'customer_note': '',
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Menu not published',
+                value={
+                    'non_field_errors': [
+                        "This month's menu has not been published yet. "
+                        'Once the menu is published, you will be able to place your order.'
+                    ]
+                },
+                response_only=True,
+                status_codes=['400'],
             ),
             OpenApiExample(
                 'Insufficient wallet balance',
@@ -285,7 +314,7 @@ class MealOrderViewSet(
         return OrderListSerializer
 
     def get_permissions(self):
-        if self.action == 'create':
+        if self.action in {'create', 'orderable_months'}:
             return [IsVerifiedCustomer()]
         if self.action in {'today_board', 'mark_delivery'}:
             return [IsVerifiedAdmin()]
@@ -310,6 +339,75 @@ class MealOrderViewSet(
         order = serializer.save()
         output = OrderDetailSerializer(order, context={'request': request})
         return Response(output.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        tags=['Order Management'],
+        summary='List orderable meal months for a package',
+        description=(
+            'Returns the current local month through the next 12 months (13 entries) '
+            'with publish and existing-order flags for the given meal package. '
+            'Use for the Order Now month picker (default = entry with is_current true).'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='meal_public_id',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='Meal package public UUID',
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(description='Meal identity and months list'),
+            400: OpenApiResponse(description='Missing meal_public_id'),
+            401: OpenApiResponse(description='Authentication required'),
+            403: OpenApiResponse(description='Verified customer required'),
+            404: OpenApiResponse(description='Meal not found'),
+        },
+        examples=[
+            OpenApiExample(
+                'Orderable months',
+                value={
+                    'meal_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                    'meal_name': 'Regular Monthly',
+                    'months': [
+                        {
+                            'year': 2026,
+                            'month': 7,
+                            'order_month': '2026-07',
+                            'label': 'July 2026',
+                            'is_current': True,
+                            'is_published': True,
+                            'has_order': False,
+                        },
+                        {
+                            'year': 2026,
+                            'month': 8,
+                            'order_month': '2026-08',
+                            'label': 'August 2026',
+                            'is_current': False,
+                            'is_published': False,
+                            'has_order': False,
+                        },
+                    ],
+                },
+                response_only=True,
+            ),
+        ],
+    )
+    @action(detail=False, methods=['get'], url_path='orderable-months')
+    def orderable_months(self, request):
+        query = OrderableMonthsQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        meal_public_id = query.validated_data['meal_public_id']
+        try:
+            meal = MealCategory.objects.get(public_id=meal_public_id)
+        except MealCategory.DoesNotExist:
+            return Response({'detail': 'Meal not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        profile = request.user.customer_profile
+        payload = build_orderable_months_for_meal(profile, meal)
+        return Response(payload)
 
     @extend_schema(
         tags=['Order Management'],

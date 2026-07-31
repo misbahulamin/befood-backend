@@ -10,6 +10,8 @@ from orders.services.order_service import (
     FrozenWalletOrderError,
     InactiveMealError,
     InsufficientWalletBalanceError,
+    InvalidMealMonthError,
+    MenuNotPublishedError,
     MonthLockError,
     UnpricedMealError,
     create_meal_order,
@@ -19,6 +21,8 @@ from orders.services.order_service import (
 class OrderCreateSerializer(serializers.Serializer):
     meal_public_id = serializers.UUIDField()
     customer_note = serializers.CharField(required=False, allow_blank=True, default='')
+    year = serializers.IntegerField(required=False, allow_null=True)
+    month = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=12)
 
     def validate_meal_public_id(self, value):
         try:
@@ -41,6 +45,18 @@ class OrderCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError('Customer profile is required to place an order.')
         if not profile.is_email_verified:
             raise serializers.ValidationError('Email verification is required before placing an order.')
+
+        year = attrs.get('year')
+        month = attrs.get('month')
+        year_provided = year is not None
+        month_provided = month is not None
+        if year_provided != month_provided:
+            raise serializers.ValidationError(
+                {
+                    'year': ['Both year and month are required together.'],
+                    'month': ['Both year and month are required together.'],
+                }
+            )
         return attrs
 
     def create(self, validated_data):
@@ -52,15 +68,25 @@ class OrderCreateSerializer(serializers.Serializer):
                 customer=customer,
                 meal=meal,
                 customer_note=validated_data.get('customer_note', ''),
+                year=validated_data.get('year'),
+                month=validated_data.get('month'),
             )
         except MonthLockError as exc:
             raise serializers.ValidationError({'non_field_errors': [str(exc)]})
+        except MenuNotPublishedError as exc:
+            raise serializers.ValidationError({'non_field_errors': [str(exc)]})
+        except InvalidMealMonthError as exc:
+            raise serializers.ValidationError({'month': [str(exc)]})
         except (InsufficientWalletBalanceError, FrozenWalletOrderError) as exc:
             raise serializers.ValidationError({'non_field_errors': [str(exc)]})
         except InactiveMealError as exc:
             raise serializers.ValidationError({'meal_public_id': [str(exc)]})
         except UnpricedMealError as exc:
             raise serializers.ValidationError({'meal_public_id': [str(exc)]})
+
+
+class OrderableMonthsQuerySerializer(serializers.Serializer):
+    meal_public_id = serializers.UUIDField()
 
 
 class OrderProgressMixin:

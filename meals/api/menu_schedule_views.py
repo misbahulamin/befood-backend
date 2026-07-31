@@ -19,7 +19,10 @@ from meals.services.menu_schedule import (
     unpublish_schedule,
 )
 from meals.services.menu_sync import apply_sync_suggestion, sync_suggestion_response
-from meals.services.package_menu import build_package_menu_for_customer
+from meals.services.package_menu import (
+    build_order_menu_preview_for_meal,
+    build_package_menu_for_customer,
+)
 from meals.services.today_menu import (
     build_today_menu_for_customer,
     get_reveal_settings,
@@ -358,6 +361,76 @@ class CustomerPackageMenuView(APIView):
         try:
             payload = build_package_menu_for_customer(
                 profile,
+                year=request.query_params.get('year'),
+                month=request.query_params.get('month'),
+            )
+        except DjangoValidationError as exc:
+            return _django_validation_to_response(exc)
+        return Response(payload)
+
+
+class CustomerOrderMenuPreviewView(APIView):
+    """Pre-order published menu preview by meal_public_id (no existing order required)."""
+
+    permission_classes = [IsVerifiedCustomer]
+
+    @extend_schema(
+        tags=['Customer Package Menu'],
+        summary='Preview published monthly menu before ordering',
+        description=(
+            'Returns the published lunch/dinner menu for a meal package and calendar month '
+            'without requiring an existing order. Use during Order Now after month selection. '
+            'If the menu is not published, responds 200 with schedule_published=false and empty days. '
+            'Ownership-scoped post-order calendar remains GET /meals/my-package-menu/.'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='meal_public_id',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='Meal package public UUID',
+            ),
+            OpenApiParameter(
+                name='year',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Calendar year (required together with month; default = current month)',
+            ),
+            OpenApiParameter(
+                name='month',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Calendar month 1-12 (required together with year)',
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(description='Preview payload with schedule_published flag'),
+            400: OpenApiResponse(description='Invalid year/month or missing meal_public_id'),
+            401: OpenApiResponse(description='Authentication required'),
+            403: OpenApiResponse(description='Verified customer required'),
+            404: OpenApiResponse(description='Meal not found'),
+        },
+    )
+    def get(self, request):
+        meal_public_id = request.query_params.get('meal_public_id')
+        if not meal_public_id:
+            return Response(
+                {'meal_public_id': ['This query parameter is required.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from meals.models import MealCategory
+
+        try:
+            meal = MealCategory.objects.get(public_id=meal_public_id)
+        except (MealCategory.DoesNotExist, ValueError):
+            return Response({'detail': 'Meal not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            payload = build_order_menu_preview_for_meal(
+                meal,
                 year=request.query_params.get('year'),
                 month=request.query_params.get('month'),
             )

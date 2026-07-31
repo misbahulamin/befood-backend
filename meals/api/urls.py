@@ -8,6 +8,7 @@ from .cycle_views import (
     MealCycleViewSet,
 )
 from .menu_schedule_views import (
+    CustomerOrderMenuPreviewView,
     CustomerPackageMenuView,
     CustomerTodayMenuView,
     MenuRevealSettingsView,
@@ -29,5 +30,6 @@ urlpatterns = [
     path('menu-reveal-settings/', MenuRevealSettingsView.as_view(), name='menu-reveal-settings'),
     path('today-menu/', CustomerTodayMenuView.as_view(), name='today-menu'),
     path('my-package-menu/', CustomerPackageMenuView.as_view(), name='my-package-menu'),
+    path('order-menu-preview/', CustomerOrderMenuPreviewView.as_view(), name='order-menu-preview'),
     path('', include(router.urls)),
 ]

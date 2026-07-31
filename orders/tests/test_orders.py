@@ -29,6 +29,13 @@ def make_test_image(name='meal.jpg', size=(100, 100), color='red'):
 @override_settings(MEDIA_ROOT='test_media', EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class OrderAPITestCase(APITestCase):
     def setUp(self):
+        self._publish_patcher = patch(
+            'orders.services.order_service.published_schedule_for_meal',
+            return_value=object(),
+        )
+        self._publish_patcher.start()
+        self.addCleanup(self._publish_patcher.stop)
+
         self.customer_group, _ = Group.objects.get_or_create(name='CUSTOMER')
         self.customer_user = User.objects.create_user(
             username='customer1',

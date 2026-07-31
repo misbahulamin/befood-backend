@@ -1,10 +1,18 @@
 from decimal import Decimal
 
 from django.db import transaction
+from django.utils import timezone
 
 from meals.models import MealCategory
+from meals.services.package_menu import published_schedule_for_meal
 from meals.services.pricing import calculate_per_meal_price
 from orders.models import Order
+from orders.services.meal_month import (
+    MENU_NOT_PUBLISHED_MESSAGE,
+    MealMonthValidationError,
+    assert_meal_month_in_window,
+    resolve_optional_year_month,
+)
 from orders.services.order_delivery import generate_order_deliveries
 from orders.services.order_duration import calculate_order_period
 from orders.services.order_wallet_settings import get_order_wallet_settings
@@ -50,6 +58,14 @@ class FrozenWalletOrderError(OrderServiceError):
     pass
 
 
+class MenuNotPublishedError(OrderServiceError):
+    pass
+
+
+class InvalidMealMonthError(OrderServiceError):
+    pass
+
+
 def check_existing_monthly_lock(customer, order_month: str) -> None:
     has_existing = Order.objects.filter(
         customer=customer,
@@ -84,6 +100,11 @@ def check_wallet_min_balance(customer) -> None:
         )
 
 
+def check_menu_published_for_meal_month(meal: MealCategory, year: int, month: int) -> None:
+    if published_schedule_for_meal(meal.id, year, month) is None:
+        raise MenuNotPublishedError(MENU_NOT_PUBLISHED_MESSAGE)
+
+
 def prepare_snapshot_fields(meal: MealCategory, reference_date=None) -> dict:
     if meal.total_price is None:
         raise UnpricedMealError('This meal package has no published price yet. Finalize a cycle plan first.')
@@ -102,14 +123,51 @@ def prepare_snapshot_fields(meal: MealCategory, reference_date=None) -> dict:
     }
 
 
+def resolve_order_target_month(
+    year: int | str | None = None,
+    month: int | str | None = None,
+    *,
+    today=None,
+) -> tuple[int, int]:
+    """Return validated target (year, month), defaulting to current local month."""
+    today = today or timezone.localdate()
+    try:
+        resolved = resolve_optional_year_month(year, month)
+    except MealMonthValidationError as exc:
+        raise InvalidMealMonthError(exc.message) from exc
+
+    if resolved is None:
+        return today.year, today.month
+
+    target_year, target_month = resolved
+    try:
+        assert_meal_month_in_window(target_year, target_month, today=today)
+    except MealMonthValidationError as exc:
+        raise InvalidMealMonthError(exc.message) from exc
+    return target_year, target_month
+
+
 @transaction.atomic
-def create_meal_order(customer, meal: MealCategory, customer_note: str = '') -> Order:
+def create_meal_order(
+    customer,
+    meal: MealCategory,
+    customer_note: str = '',
+    *,
+    year: int | str | None = None,
+    month: int | str | None = None,
+) -> Order:
     if not meal.is_active:
         raise InactiveMealError('This meal package is not available for ordering.')
     if meal.total_price is None:
         raise UnpricedMealError('This meal package has no published price yet. Finalize a cycle plan first.')
 
-    period = calculate_order_period(meal.meal_type)
+    target_year, target_month = resolve_order_target_month(year, month)
+    period = calculate_order_period(
+        meal.meal_type,
+        target_year=target_year,
+        target_month=target_month,
+    )
+    check_menu_published_for_meal_month(meal, target_year, target_month)
     check_existing_monthly_lock(customer, period.order_month)
     check_wallet_min_balance(customer)
 
@@ -130,8 +188,6 @@ def create_meal_order(customer, meal: MealCategory, customer_note: str = '') -> 
 
 
 def get_current_package(customer, reference_date=None):
-    from django.utils import timezone
-
     today = reference_date or timezone.localdate()
     current_month = today.strftime('%Y-%m')
     return (

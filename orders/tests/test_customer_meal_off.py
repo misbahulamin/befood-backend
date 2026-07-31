@@ -82,6 +82,13 @@ class MealOffDeadlineHelperTests(SimpleTestCase):
 @override_settings(MEDIA_ROOT='test_media', EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class CustomerMealOffAPITestCase(APITestCase):
     def setUp(self):
+        self._publish_patcher = patch(
+            'orders.services.order_service.published_schedule_for_meal',
+            return_value=object(),
+        )
+        self._publish_patcher.start()
+        self.addCleanup(self._publish_patcher.stop)
+
         self.customer_group, _ = Group.objects.get_or_create(name='CUSTOMER')
         self.admin_group, _ = Group.objects.get_or_create(name='ADMIN')
 

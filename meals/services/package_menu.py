@@ -119,3 +119,37 @@ def build_package_menu_for_customer(
         'month': target_month,
         'packages': packages,
     }
+
+
+def build_order_menu_preview_for_meal(
+    meal,
+    *,
+    year: int | str | None = None,
+    month: int | str | None = None,
+    reference_date=None,
+) -> dict:
+    """
+    Pre-order published menu preview for a meal + month.
+
+    Does not require the customer to own an order. Unpublished months return
+    schedule_published=false with an empty day list.
+    """
+    target_year, target_month = resolve_target_year_month(
+        year=year,
+        month=month,
+        reference_date=reference_date,
+    )
+    schedule = published_schedule_for_meal(meal.id, target_year, target_month)
+    days = (
+        serialize_schedule_assignments(schedule, customer_visible_only=True)
+        if schedule is not None
+        else []
+    )
+    return {
+        'year': target_year,
+        'month': target_month,
+        'meal_public_id': str(meal.public_id),
+        'meal_name': meal.meal_name,
+        'schedule_published': schedule is not None,
+        'days': days,
+    }

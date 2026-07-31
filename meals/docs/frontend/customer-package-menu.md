@@ -170,9 +170,20 @@ Example `400` (field errors):
 
 ---
 
+## Pre-order menu preview (Order Now)
+
+To show a published monthly menu **before** the customer has an order for that month, use:
+
+`GET /meals/order-menu-preview/?meal_public_id=&year=&month=`
+
+`my-package-menu` remains ownership-scoped and returns empty `packages` when there is no order. Full Order Now month-picker flow: see `orders/docs/frontend/future-month-meal-ordering.md`.
+
+---
+
 ## How to verify quickly
 
 1. Login as verified customer with a confirmed order for a month that has a **published** menu schedule.
 2. `GET /meals/my-package-menu/?year=YYYY&month=M` → `schedule_published: true` and many `days`.
 3. Without auth → `401`.
 4. `?month=13` → `400`.
+5. Without an order, `my-package-menu` is empty; `order-menu-preview` can still return a published menu for that meal.
