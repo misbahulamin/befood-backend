@@ -3,7 +3,16 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import Group, User
 from django.utils import timezone
 
-from .models import AdminProfile, CustomerAddress, CustomerDeliveryPlace, CustomerProfile, MealDeliveryDayOverride, MealDeliveryPreference
+from .models import (
+    AdminProfile,
+    CustomerAddress,
+    CustomerDeliveryPlace,
+    CustomerProfile,
+    MealDeliveryDayOverride,
+    MealDeliveryPreference,
+    RiderProfile,
+)
+from .services.deliveryman_auth import approve_deliveryman, reject_deliveryman, set_deliveryman_verified
 
 
 admin.site.unregister(User)
@@ -108,3 +117,51 @@ class MealDeliveryDayOverrideAdmin(admin.ModelAdmin):
     list_filter = ('meal_period', 'weekday')
     search_fields = ('customer_profile__user__email', 'place__label')
     autocomplete_fields = ('customer_profile', 'place')
+
+
+@admin.register(RiderProfile)
+class RiderProfileAdmin(admin.ModelAdmin):
+    list_display = (
+        'user',
+        'phone',
+        'is_email_verified',
+        'approval_status',
+        'is_verified',
+        'verified_at',
+        'created_at',
+    )
+    list_filter = ('approval_status', 'is_email_verified', 'is_verified', 'is_available')
+    search_fields = ('user__email', 'user__first_name', 'user__last_name', 'phone', 'address')
+    autocomplete_fields = ('user',)
+    readonly_fields = (
+        'public_id',
+        'email_verified_at',
+        'verified_at',
+        'rejected_at',
+        'created_at',
+        'updated_at',
+    )
+    actions = ('approve_selected', 'reject_selected')
+
+    @admin.action(description='Approve selected Delivery Men')
+    def approve_selected(self, request, queryset):
+        for profile in queryset.select_related('user'):
+            if profile.is_email_verified and not profile.is_verified:
+                approve_deliveryman(profile, send_email=True)
+
+    @admin.action(description='Reject selected Delivery Men')
+    def reject_selected(self, request, queryset):
+        for profile in queryset.select_related('user'):
+            reject_deliveryman(profile, reason='Rejected from Django admin', send_email=True)
+
+    def save_model(self, request, obj, form, change):
+        previous = None
+        if change and obj.pk:
+            previous = RiderProfile.objects.filter(pk=obj.pk).first()
+        super().save_model(request, obj, form, change)
+        if previous is None:
+            return
+        if obj.is_verified and not previous.is_verified:
+            set_deliveryman_verified(obj, True, admin_notes=obj.admin_notes, send_email=True)
+        elif not obj.is_verified and previous.is_verified:
+            set_deliveryman_verified(obj, False, admin_notes=obj.admin_notes, send_email=False)

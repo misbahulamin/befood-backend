@@ -7,6 +7,14 @@ from .delivery_views import (
     MealDeliveryPreferencePreviewView,
     MealDeliveryPreferenceView,
 )
+from .deliveryman_views import (
+    AdminDeliverymanViewSet,
+    DeliverymanCurrentUserView,
+    DeliverymanLoginView,
+    DeliverymanRegistrationView,
+    DeliverymanResendVerificationView,
+    DeliverymanVerifyEmailView,
+)
 from .profile_views import CustomerAddressViewSet, CustomerProfileView, SetDefaultDeliveryAddressView
 from .views import (
     AdminCurrentUserView,
@@ -28,6 +36,7 @@ router.register(
     CustomerDeliveryPlaceViewSet,
     basename='customer-delivery-place',
 )
+router.register(r'admin/deliverymen', AdminDeliverymanViewSet, basename='admin-deliveryman')
 
 urlpatterns = [
     path('customer/register/', CustomerRegistrationView.as_view(), name='customer-register'),
@@ -38,6 +47,19 @@ urlpatterns = [
     path('logout/', LogoutView.as_view(), name='logout'),
     path('admin/login/', AdminLoginView.as_view(), name='admin-login'),
     path('admin/me/', AdminCurrentUserView.as_view(), name='admin-me'),
+    path('deliveryman/register/', DeliverymanRegistrationView.as_view(), name='deliveryman-register'),
+    path('deliveryman/login/', DeliverymanLoginView.as_view(), name='deliveryman-login'),
+    path(
+        'deliveryman/verify-email/<uidb64>/<token>/',
+        DeliverymanVerifyEmailView.as_view(),
+        name='deliveryman-verify-email',
+    ),
+    path(
+        'deliveryman/resend-verification/',
+        DeliverymanResendVerificationView.as_view(),
+        name='deliveryman-resend-verification',
+    ),
+    path('deliveryman/me/', DeliverymanCurrentUserView.as_view(), name='deliveryman-me'),
     path('customer/profile/', CustomerProfileView.as_view(), name='customer-profile'),
     path(
         'customer/addresses/<uuid:public_id>/set-default/',

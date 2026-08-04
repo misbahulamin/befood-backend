@@ -37,3 +37,15 @@ class IsVerifiedAdmin(IsAuthenticated):
 
     def has_permission(self, request, view):
         return super().has_permission(request, view) and is_verified_admin(request.user)
+
+
+class IsVerifiedDeliveryman(IsAuthenticated):
+    message = 'Verified delivery man access required.'
+
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+        if not request.user.is_active:
+            return False
+        profile = getattr(request.user, 'rider_profile', None)
+        return profile is not None and profile.is_verified

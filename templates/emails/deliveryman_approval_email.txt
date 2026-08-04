@@ -1,0 +1,7 @@
+Hi {{ first_name }},
+
+Good news! Your Delivery Man account with {{ brand_name }} has been approved by an admin.
+
+You can now log in and start using your account.
+
+If you did not request this, please contact support.

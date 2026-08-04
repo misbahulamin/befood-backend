@@ -212,13 +212,37 @@ class MealDeliveryDayOverride(TimeStampedModel):
         )
 
 
-class RiderProfile(models.Model):
+class RiderProfile(PublicIdMixin, TimeStampedModel):
+    """Delivery Man profile (API paths use deliveryman; ORM related_name stays rider_profile)."""
+
+    class ApprovalStatus(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        APPROVED = 'approved', 'Approved'
+        REJECTED = 'rejected', 'Rejected'
+
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='rider_profile')
+    phone = models.CharField(max_length=10, unique=True, null=True, blank=True)
+    address = models.TextField(blank=True)
     vehicle_type = models.CharField(max_length=100, blank=True)
     license_number = models.CharField(max_length=100, blank=True)
     is_available = models.BooleanField(default=True)
     current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    is_email_verified = models.BooleanField(default=False)
+    email_verified_at = models.DateTimeField(null=True, blank=True)
+    approval_status = models.CharField(
+        max_length=20,
+        choices=ApprovalStatus.choices,
+        default=ApprovalStatus.PENDING,
+    )
+    is_verified = models.BooleanField(default=False)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+    admin_notes = models.TextField(blank=True)
+
+    def __str__(self):
+        return self.user.email
 
 
 class StaffProfile(models.Model):

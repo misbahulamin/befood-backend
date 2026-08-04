@@ -1,0 +1,8 @@
+<html>
+  <body>
+    <p>Hi {{ first_name }},</p>
+    <p>Your Delivery Man registration with {{ brand_name }} was not approved at this time.</p>
+    {% if reason %}<p>Reason: {{ reason }}</p>{% endif %}
+    <p>If you believe this is a mistake, please contact support.</p>
+  </body>
+</html>

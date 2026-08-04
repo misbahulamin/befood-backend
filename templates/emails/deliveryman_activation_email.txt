@@ -1,0 +1,12 @@
+Hi {{ first_name }},
+
+Thank you for registering as a Delivery Man with {{ brand_name }}.
+
+Please verify your email by clicking the link below:
+{{ activation_link }}
+
+This link expires in 24 hours.
+
+After email verification, an admin will review your information. You will receive another email when your account is approved.
+
+If you did not register, please ignore this email.

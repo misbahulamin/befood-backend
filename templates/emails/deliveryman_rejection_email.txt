@@ -1,0 +1,7 @@
+Hi {{ first_name }},
+
+Your Delivery Man registration with {{ brand_name }} was not approved at this time.
+
+{% if reason %}Reason: {{ reason }}
+{% endif %}
+If you believe this is a mistake, please contact support.
