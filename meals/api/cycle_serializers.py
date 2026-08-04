@@ -236,7 +236,6 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
             'meal_category',
             'meal_category_detail',
             'meal_public_id',
-            'other_cost_percent',
             'profit_percent',
             'status',
             'snapshot_product_cost',
@@ -283,11 +282,6 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
         self.context['resolved_meal_category'] = meal
         return value
 
-    def validate_other_cost_percent(self, value):
-        if value is None or value < 0 or value > 100:
-            raise serializers.ValidationError('other_cost_percent must be between 0 and 100.')
-        return value
-
     def validate_profit_percent(self, value):
         if value is None or value < 0 or value > 100:
             raise serializers.ValidationError('profit_percent must be between 0 and 100.')
@@ -307,7 +301,7 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
         if self.instance is not None and self.instance.is_finalized:
             editable = set(attrs.keys()) - {'notes'}
             # Allow notes-only patch on finalized; block margin/identity changes
-            blocked = editable & {'cycle', 'meal_category', 'other_cost_percent', 'profit_percent'}
+            blocked = editable & {'cycle', 'meal_category', 'profit_percent'}
             if blocked:
                 raise serializers.ValidationError(
                     {'status': 'Finalized plans cannot be edited. Reopen the plan first.'}
@@ -322,3 +316,26 @@ class MealCyclePlanSerializer(serializers.ModelSerializer):
                     {error_key: 'A plan already exists for this meal package in the selected cycle.'}
                 )
         return attrs
+
+
+class MealCyclePlanCostPreviewSerializer(serializers.Serializer):
+    ingredient_public_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        allow_empty=False,
+        help_text='Ingredient public_ids selected for one-meal cost preview.',
+    )
+
+    def validate_ingredient_public_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError('Duplicate ingredient_public_ids are not allowed.')
+        ingredients = list(Ingredient.objects.filter(public_id__in=value))
+        found = {ingredient.public_id for ingredient in ingredients}
+        missing = [str(item) for item in value if item not in found]
+        if missing:
+            raise serializers.ValidationError(
+                f'Unknown ingredient_public_ids: {", ".join(missing)}.'
+            )
+        # Preserve request order
+        by_id = {ingredient.public_id: ingredient for ingredient in ingredients}
+        self.context['resolved_ingredients'] = [by_id[item] for item in value]
+        return value

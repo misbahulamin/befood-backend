@@ -101,6 +101,9 @@ class CustomerPackageMenuAPITestCase(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.customer_token.key}')
 
     def _finalize_plan(self, year, month, chicken_count, beef_count):
+        from meals.tests.helpers import ensure_operational_cost_month
+
+        ensure_operational_cost_month(year, month, items=[])
         cycle, _ = MealCycle.objects.get_or_create(year=year, month=month)
         plan = MealCyclePlan.objects.create(cycle=cycle, meal_category=self.meal)
         total = cycle.total_meals
@@ -268,6 +271,9 @@ class CustomerPackageMenuAPITestCase(APITestCase):
             is_customer_visible=False,
         )
         cycle, _ = MealCycle.objects.get_or_create(year=2026, month=7)
+        from meals.tests.helpers import ensure_operational_cost_month
+
+        ensure_operational_cost_month(2026, 7, items=[])
         plan = MealCyclePlan.objects.create(cycle=cycle, meal_category=self.meal)
         total = cycle.total_meals
         MealCyclePlanLine.objects.create(

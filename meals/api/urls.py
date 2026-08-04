@@ -14,6 +14,7 @@ from .menu_schedule_views import (
     MenuRevealSettingsView,
     MonthlyMenuScheduleViewSet,
 )
+from .operational_cost_views import OperationalCostMonthViewSet
 from .views import MealCategoryViewSet
 
 app_name = 'meals'
@@ -23,6 +24,11 @@ router.register('ingredients', IngredientViewSet, basename='ingredients')
 router.register('cycles', MealCycleViewSet, basename='cycles')
 router.register('cycle-plans', MealCyclePlanViewSet, basename='cycle-plans')
 router.register('cycle-plan-lines', MealCyclePlanLineViewSet, basename='cycle-plan-lines')
+router.register(
+    'operational-cost-months',
+    OperationalCostMonthViewSet,
+    basename='operational-cost-months',
+)
 router.register('menu-schedules', MonthlyMenuScheduleViewSet, basename='menu-schedules')
 router.register('', MealCategoryViewSet, basename='meals')
 

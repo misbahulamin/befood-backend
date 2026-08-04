@@ -168,6 +168,9 @@ class FutureMonthOrderAPITests(APITestCase):
         return wallet
 
     def _create_published_schedule(self, year, month):
+        from meals.tests.helpers import ensure_operational_cost_month
+
+        ensure_operational_cost_month(year, month, items=[])
         cycle, _ = MealCycle.objects.get_or_create(year=year, month=month)
         plan = MealCyclePlan.objects.create(cycle=cycle, meal_category=self.meal)
         total = cycle.total_meals

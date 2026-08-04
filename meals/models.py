@@ -170,12 +170,6 @@ class MealCyclePlan(PublicIdMixin, models.Model):
         on_delete=models.CASCADE,
         related_name='cycle_plans',
     )
-    other_cost_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('30.00'),
-        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
-    )
     profit_percent = models.DecimalField(
         max_digits=5,
         decimal_places=2,
@@ -338,6 +332,60 @@ class MonthlyMenuSlotItem(models.Model):
 
     def __str__(self):
         return f'{self.slot_id}: {self.ingredient.name}'
+
+
+class OperationalCostMonth(PublicIdMixin, models.Model):
+    """Company-wide operational cost ledger for one calendar month."""
+
+    year = models.PositiveIntegerField()
+    month = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(12)],
+    )
+    target_meal_quantity = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)],
+        help_text='Planned meal sales volume used to allocate monthly overhead per meal.',
+    )
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-year', '-month']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['year', 'month'],
+                name='unique_operational_cost_month_year_month',
+            ),
+        ]
+
+    def __str__(self):
+        return f'OpCost {self.year}-{self.month:02d} (target={self.target_meal_quantity})'
+
+
+class OperationalCostItem(PublicIdMixin, models.Model):
+    """Named absolute cost line on an operational cost month."""
+
+    month = models.ForeignKey(
+        OperationalCostMonth,
+        on_delete=models.CASCADE,
+        related_name='items',
+    )
+    name = models.CharField(max_length=255)
+    amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    notes = models.TextField(blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'id']
+
+    def __str__(self):
+        return f'{self.name}: {self.amount}'
 
 
 class MenuRevealSettings(models.Model):

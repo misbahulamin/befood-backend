@@ -10,6 +10,8 @@ from .models import (
     MonthlyMenuSchedule,
     MonthlyMenuSlot,
     MonthlyMenuSlotItem,
+    OperationalCostItem,
+    OperationalCostMonth,
 )
 
 
@@ -17,6 +19,11 @@ class MealCyclePlanLineInline(admin.TabularInline):
     model = MealCyclePlanLine
     extra = 0
     autocomplete_fields = ('ingredient',)
+
+
+class OperationalCostItemInline(admin.TabularInline):
+    model = OperationalCostItem
+    extra = 0
 
 
 class MonthlyMenuSlotItemInline(admin.TabularInline):
@@ -78,7 +85,6 @@ class MealCyclePlanAdmin(admin.ModelAdmin):
         'cycle',
         'meal_category',
         'status',
-        'other_cost_percent',
         'profit_percent',
         'snapshot_per_meal_rate',
         'finalized_at',
@@ -106,6 +112,24 @@ class MealCyclePlanLineAdmin(admin.ModelAdmin):
     search_fields = ('ingredient__name', 'plan__meal_category__meal_name')
     autocomplete_fields = ('plan', 'ingredient')
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(OperationalCostMonth)
+class OperationalCostMonthAdmin(admin.ModelAdmin):
+    list_display = ('year', 'month', 'target_meal_quantity', 'created_at')
+    list_filter = ('year', 'month')
+    search_fields = ('year', 'month', 'notes')
+    readonly_fields = ('public_id', 'created_at', 'updated_at')
+    inlines = [OperationalCostItemInline]
+
+
+@admin.register(OperationalCostItem)
+class OperationalCostItemAdmin(admin.ModelAdmin):
+    list_display = ('month', 'name', 'amount', 'sort_order', 'updated_at')
+    list_filter = ('month__year', 'month__month')
+    search_fields = ('name',)
+    autocomplete_fields = ('month',)
+    readonly_fields = ('public_id', 'created_at', 'updated_at')
 
 
 @admin.register(MonthlyMenuSchedule)

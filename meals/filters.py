@@ -7,6 +7,7 @@ from meals.models import (
     MealCyclePlan,
     MealCyclePlanLine,
     MonthlyMenuSchedule,
+    OperationalCostMonth,
 )
 
 
@@ -72,3 +73,12 @@ class MonthlyMenuScheduleFilter(django_filters.FilterSet):
     class Meta:
         model = MonthlyMenuSchedule
         fields = ['cycle', 'meal_category', 'plan', 'status', 'year', 'month']
+
+
+class OperationalCostMonthFilter(django_filters.FilterSet):
+    year = django_filters.NumberFilter()
+    month = django_filters.NumberFilter()
+
+    class Meta:
+        model = OperationalCostMonth
+        fields = ['year', 'month']

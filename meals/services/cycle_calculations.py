@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from meals.models import Ingredient, MealCyclePlan, MealCyclePlanLine
 from meals.services.meal_offering import publish_meal_price_from_plan
+from meals.services.operational_cost import resolve_per_meal_operational_cost
 from meals.services.plan_roles import MAIN_ROLE
 from meals.services.pricing import expected_servings
 
@@ -141,13 +142,21 @@ def build_line_detail(line: MealCyclePlanLine) -> dict:
 
 def calculate_package_totals(
     product_cost: Decimal,
-    other_cost_percent: Decimal,
+    per_meal_operational_cost: Decimal,
     profit_percent: Decimal,
     expected_servings_count: int,
 ) -> dict[str, Decimal]:
+    """
+    Roll up package costs using absolute operational allocation.
+
+    other_cost = expected_servings × per_meal_operational_cost
+    profit = product_cost × profit_percent / 100
+    """
     if expected_servings_count <= 0:
         raise ValidationError('expected_servings must be greater than 0.')
-    other_cost = _quantize(product_cost * (Decimal(other_cost_percent) / Decimal('100')))
+    other_cost = _quantize(
+        Decimal(expected_servings_count) * Decimal(per_meal_operational_cost)
+    )
     profit = _quantize(product_cost * (Decimal(profit_percent) / Decimal('100')))
     total_cost = _quantize(product_cost + other_cost + profit)
     per_meal_rate = _quantize(total_cost / Decimal(expected_servings_count))
@@ -157,7 +166,58 @@ def calculate_package_totals(
         'profit': profit,
         'total_cost': total_cost,
         'per_meal_rate': per_meal_rate,
+        'per_meal_operational_cost': _quantize(Decimal(per_meal_operational_cost)),
     }
+
+
+def build_one_meal_price_preview(
+    ingredients: list[Ingredient],
+    *,
+    per_meal_operational_cost: Decimal,
+    profit_percent: Decimal,
+) -> dict:
+    """Single-serving admin cost preview from selected ingredients."""
+    for ingredient in ingredients:
+        require_resolvable_ingredient_cost(ingredient)
+
+    selected_cost = sum(
+        (combined_unit_cost_per_customer(ingredient) for ingredient in ingredients),
+        Decimal('0'),
+    )
+    selected_cost = _quantize(selected_cost, COST_PLACES)
+    other_one = _quantize(Decimal(per_meal_operational_cost))
+    profit_one = _quantize(selected_cost * (Decimal(profit_percent) / Decimal('100')))
+    final_price = _quantize(selected_cost + other_one + profit_one)
+    return {
+        'selected_ingredients_cost': str(_quantize(selected_cost)),
+        'per_meal_operational_cost': str(other_one),
+        'profit_percent': str(_quantize(Decimal(profit_percent))),
+        'profit': str(profit_one),
+        'final_meal_price': str(final_price),
+        'ingredients': [
+            {
+                'public_id': str(ingredient.public_id),
+                'name': ingredient.name,
+                'unit_cost_per_customer': str(combined_unit_cost_per_customer(ingredient)),
+            }
+            for ingredient in ingredients
+        ],
+    }
+
+
+def build_plan_cost_preview(plan: MealCyclePlan, ingredients: list[Ingredient]) -> dict:
+    per_meal_op = resolve_per_meal_operational_cost(plan.cycle.year, plan.cycle.month)
+    preview = build_one_meal_price_preview(
+        ingredients,
+        per_meal_operational_cost=per_meal_op,
+        profit_percent=plan.profit_percent,
+    )
+    preview['plan_public_id'] = str(plan.public_id)
+    preview['cycle'] = {
+        'year': plan.cycle.year,
+        'month': plan.cycle.month,
+    }
+    return preview
 
 
 def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None) -> dict:
@@ -168,21 +228,26 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
     servings_expected = plan_expected_servings(plan)
 
     if use_snapshot and plan.snapshot_total_cost is not None:
+        per_meal_op = _quantize(
+            Decimal(plan.snapshot_other_cost or 0) / Decimal(servings_expected)
+        )
         totals = {
             'product_cost': plan.snapshot_product_cost,
             'other_cost': plan.snapshot_other_cost,
             'profit': plan.snapshot_profit,
             'total_cost': plan.snapshot_total_cost,
             'per_meal_rate': plan.snapshot_per_meal_rate,
+            'per_meal_operational_cost': per_meal_op,
         }
     else:
+        per_meal_op = resolve_per_meal_operational_cost(plan.cycle.year, plan.cycle.month)
         product_cost = sum(
             (Decimal(item['line_product_cost']) for item in line_details),
             Decimal('0.00'),
         )
         totals = calculate_package_totals(
             product_cost=product_cost,
-            other_cost_percent=plan.other_cost_percent,
+            per_meal_operational_cost=per_meal_op,
             profit_percent=plan.profit_percent,
             expected_servings_count=servings_expected,
         )
@@ -215,8 +280,8 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
             ),
             'pricing_status': plan.meal_category.pricing_status,
         },
-        'other_cost_percent': str(plan.other_cost_percent),
         'profit_percent': str(plan.profit_percent),
+        'per_meal_operational_cost': str(totals['per_meal_operational_cost']),
         'main_servings_total': main_servings,
         'main_servings_expected': servings_expected,
         'expected_servings': servings_expected,

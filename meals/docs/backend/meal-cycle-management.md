@@ -97,11 +97,15 @@ Both may be present on the same ingredient. They are **additive**, not alternati
 line_product_cost = (resolved_cost_per_customer + cost_per_customer) × servings_count
                     # missing side treated as 0 in the sum
 product_cost      = sum(line_product_cost)
-other_cost        = product_cost × (other_cost_percent / 100)   # default 30%
+other_cost        = expected_servings × per_meal_operational_cost
+                    # from OperationalCostMonth for the cycle year/month
 profit            = product_cost × (profit_percent / 100)       # default 10%
-operational_cost  = allocated share of kitchen operational_cost_total
-total_cost        = product_cost + other_cost + operational_cost + profit
+total_cost        = product_cost + other_cost + profit
 per_meal_rate     = total_cost ÷ plan_expected_servings
+```
+
+```text
+per_meal_operational_cost = total_operational_cost ÷ target_meal_quantity
 ```
 
 Examples:
@@ -109,8 +113,11 @@ Examples:
 - Kg only: `(54.166667 + 0) × 2`
 - Flat only: `(0 + 6.00) × 60`
 - Both: `(54.166667 + 2.00) × 10`
+- July op cost: total `310000` / target `10000` → per-meal `31`; package other_cost for 60 servings → `1860`
 
-Kitchen `operational_cost_total` comes from the standalone `operational_costs` app (not meals-owned models). Allocation by plan expected servings stays in meals. See [`operational-costs.md`](./operational-costs.md) and [`../../../operational_costs/docs/backend/overview.md`](../../../operational_costs/docs/backend/overview.md).
+**BREAKING:** `other_cost_percent` is removed. Other cost is absolute operational allocation, not a percent of product cost. Summary/finalize require an `OperationalCostMonth` for the cycle’s year/month (empty items allowed → per-meal `0.00`).
+
+See [`operational-costs.md`](./operational-costs.md) for ledger APIs and admin cost preview.
 
 Optional purchasing hint (not the primary input):
 
@@ -179,10 +186,9 @@ Pricing rule (catalog):
 | --- | --- |
 | `cycle` | FK to MealCycle |
 | `meal_category` | Meal package (read FK); create with write-only `meal_public_id` UUID |
-| `other_cost_percent` | Default `30.00` |
 | `profit_percent` | Default `10.00` (override per package, e.g. `20`) |
 | `status` | `draft` or `finalized` |
-| `snapshot_*` | Locked totals after finalize |
+| `snapshot_*` | Locked totals after finalize (includes absolute `snapshot_other_cost`) |
 
 ### MealCyclePlanLine
 
@@ -202,15 +208,18 @@ Unique: one ingredient once per plan.
 | Method | Endpoint | Why |
 | --- | --- | --- |
 | CRUD | `/meals/ingredients/` | Product catalog |
+| CRUD | `/meals/operational-cost-months/` | Monthly op-cost ledger + target meals |
+| `PUT` | `/meals/operational-cost-months/{public_id}/items/` | Replace ledger items |
 | CRUD | `/meals/cycles/` | Create month cycles |
 | CRUD | `/meals/cycle-plans/` | Plan per package/month |
 | CRUD | `/meals/cycle-plan-lines/` | Single line edits |
-| `PUT` | `/meals/cycle-plans/{id}/lines/` | Replace full servings matrix |
-| `GET` | `/meals/cycle-plans/{id}/summary/` | Live or snapshot meal details |
-| `POST` | `/meals/cycle-plans/{id}/finalize/` | Lock plan |
-| `POST` | `/meals/cycle-plans/{id}/reopen/` | Unlock for edits |
+| `PUT` | `/meals/cycle-plans/{public_id}/lines/` | Replace full servings matrix |
+| `GET` | `/meals/cycle-plans/{public_id}/summary/` | Live or snapshot meal details |
+| `POST` | `/meals/cycle-plans/{public_id}/cost-preview/` | One-meal admin cost preview |
+| `POST` | `/meals/cycle-plans/{public_id}/finalize/` | Lock plan |
+| `POST` | `/meals/cycle-plans/{public_id}/reopen/` | Unlock for edits |
 
-Swagger tag: **Admin Meal Cycle** (`/api/docs/`).
+Swagger tags: **Admin Meal Cycle**, **Admin Operational Cost** (`/api/docs/`).
 
 > Legacy `/meals/recipes/` (kg-quantity recipes) was **removed**. Use cycle plans + servings instead.
 
@@ -226,12 +235,13 @@ sequenceDiagram
     Admin->>API: POST /user_management/admin/login/
     API-->>Admin: token
     Admin->>API: POST /meals/ingredients/ (catalog)
+    Admin->>API: POST /meals/operational-cost-months/ (ledger + target meals)
     Admin->>API: POST /meals/cycles/ {year, month}
     API-->>Admin: cycle_days + total_meals
-    Admin->>API: POST /meals/cycle-plans/ {cycle, meal_public_id, margins}
+    Admin->>API: POST /meals/cycle-plans/ {cycle, meal_public_id, profit_percent}
     Admin->>API: PUT /meals/cycle-plans/{id}/lines/ (servings matrix)
     Admin->>API: GET /meals/cycle-plans/{id}/summary/
-    API-->>Admin: costs + per_meal_rate
+    API-->>Admin: costs + per_meal_rate + per_meal_operational_cost
     Admin->>API: POST /meals/cycle-plans/{id}/finalize/
     API-->>Admin: locked meal details
 ```
@@ -334,7 +344,6 @@ January returns `cycle_days: 31`, `total_meals: 62`.
 {
   "cycle": 1,
   "meal_public_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-  "other_cost_percent": "30.00",
   "profit_percent": "20.00"
 }
 ```

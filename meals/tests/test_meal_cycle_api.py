@@ -11,6 +11,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
 from meals.models import Ingredient, MealCategory, MealCycle, MealCyclePlan, MealCyclePlanLine
+from meals.tests.helpers import ensure_operational_cost_month
 from user_management.models import AdminProfile, CustomerProfile
 
 
@@ -80,6 +81,8 @@ class MealCycleAPITestCase(APITestCase):
         self.plans_url = reverse('meals:cycle-plans-list')
         self.lines_url = reverse('meals:cycle-plan-lines-list')
         self.meals_url = reverse('meals:meals-list')
+        self.op_cost_url = reverse('meals:operational-cost-months-list')
+        ensure_operational_cost_month(2026, 4, items=[])
 
     def _auth_admin(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
@@ -92,7 +95,6 @@ class MealCycleAPITestCase(APITestCase):
         plan = MealCyclePlan.objects.create(
             cycle=cycle,
             meal_category=self.meal,
-            other_cost_percent=Decimal('30.00'),
             profit_percent=Decimal('20.00'),
         )
         return cycle, plan
@@ -210,7 +212,6 @@ class MealCycleAPITestCase(APITestCase):
             {
                 'cycle': cycle.id,
                 'meal_public_id': str(self.meal.public_id),
-                'other_cost_percent': '30.00',
                 'profit_percent': '20.00',
             },
             format='json',
@@ -219,6 +220,7 @@ class MealCycleAPITestCase(APITestCase):
         self.assertEqual(response.data['meal_category'], self.meal.id)
         self.assertEqual(response.data['cycle'], cycle.id)
         self.assertNotIn('meal_public_id', response.data)
+        self.assertNotIn('other_cost_percent', response.data)
 
     def test_create_plan_unknown_meal_public_id_rejected(self):
         self._auth_admin()
@@ -242,7 +244,6 @@ class MealCycleAPITestCase(APITestCase):
             {
                 'cycle': cycle.id,
                 'meal_category': self.meal.id,
-                'other_cost_percent': '30.00',
                 'profit_percent': '20.00',
             },
             format='json',
@@ -640,3 +641,138 @@ class MealCycleAPITestCase(APITestCase):
             veg_line['line_product_cost']
         )
         self.assertEqual(Decimal(summary.data['product_cost']), expected_product)
+        self.assertIn('per_meal_operational_cost', summary.data)
+
+    def test_summary_fails_without_operational_cost_month(self):
+        self._auth_admin()
+        cycle = MealCycle.objects.create(year=2026, month=10)
+        plan = MealCyclePlan.objects.create(cycle=cycle, meal_category=self.meal)
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=self.chicken,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=62,
+        )
+        summary = self.client.get(
+            reverse('meals:cycle-plans-summary', kwargs={'public_id': plan.public_id})
+        )
+        self.assertEqual(summary.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('operational_cost_month', summary.data)
+
+    def test_operational_cost_month_crud_and_items(self):
+        self._auth_admin()
+        create = self.client.post(
+            self.op_cost_url,
+            {
+                'year': 2026,
+                'month': 7,
+                'target_meal_quantity': 10_000,
+                'items_payload': [
+                    {'name': 'Office Rent', 'amount': '50000.00'},
+                    {'name': 'Electricity', 'amount': '10000.00'},
+                    {'name': 'Employee Salary', 'amount': '200000.00'},
+                    {'name': 'Chef Salary', 'amount': '50000.00'},
+                ],
+            },
+            format='json',
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.data)
+        self.assertEqual(create.data['total_operational_cost'], '310000.00')
+        self.assertEqual(create.data['per_meal_operational_cost'], '31.00')
+        public_id = create.data['public_id']
+
+        duplicate = self.client.post(
+            self.op_cost_url,
+            {'year': 2026, 'month': 7, 'target_meal_quantity': 1},
+            format='json',
+        )
+        self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
+
+        zero_target = self.client.post(
+            self.op_cost_url,
+            {'year': 2026, 'month': 8, 'target_meal_quantity': 0},
+            format='json',
+        )
+        self.assertEqual(zero_target.status_code, status.HTTP_400_BAD_REQUEST)
+
+        replace = self.client.put(
+            reverse('meals:operational-cost-months-replace-items', kwargs={'public_id': public_id}),
+            {'items': [{'name': 'Rent Only', 'amount': '100000.00'}]},
+            format='json',
+        )
+        self.assertEqual(replace.status_code, status.HTTP_200_OK)
+        detail = self.client.get(
+            reverse('meals:operational-cost-months-detail', kwargs={'public_id': public_id})
+        )
+        self.assertEqual(detail.data['total_operational_cost'], '100000.00')
+        self.assertEqual(detail.data['per_meal_operational_cost'], '10.00')
+
+    def test_operational_cost_and_preview_permissions(self):
+        self._auth_admin()
+        create = self.client.post(
+            self.op_cost_url,
+            {'year': 2026, 'month': 5, 'target_meal_quantity': 1000},
+            format='json',
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED)
+        _, plan = self._create_april_plan()
+
+        self._auth_customer()
+        denied_list = self.client.get(self.op_cost_url)
+        self.assertIn(denied_list.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        denied_preview = self.client.post(
+            reverse('meals:cycle-plans-cost-preview', kwargs={'public_id': plan.public_id}),
+            {'ingredient_public_ids': [str(self.chicken.public_id)]},
+            format='json',
+        )
+        self.assertIn(
+            denied_preview.status_code,
+            (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+        )
+
+        self.client.credentials()
+        anon = self.client.get(self.op_cost_url)
+        self.assertEqual(anon.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_cost_preview_for_verified_admin(self):
+        self._auth_admin()
+        ensure_operational_cost_month(
+            2026,
+            4,
+            target_meal_quantity=10_000,
+            items=[('Rent', Decimal('310000.00'))],
+        )
+        _, plan = self._create_april_plan()
+        response = self.client.post(
+            reverse('meals:cycle-plans-cost-preview', kwargs={'public_id': plan.public_id}),
+            {'ingredient_public_ids': [str(self.chicken.public_id), str(self.rice.public_id)]},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['per_meal_operational_cost'], '31.00')
+        self.assertEqual(response.data['profit_percent'], '20.00')
+        self.assertIn('selected_ingredients_cost', response.data)
+        self.assertIn('final_meal_price', response.data)
+
+    def test_public_meal_detail_omits_operational_costing(self):
+        self._auth_admin()
+        _, plan = self._create_april_plan()
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=self.chicken,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=60,
+        )
+        self.client.post(reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id}))
+        self.client.credentials()
+        detail = self.client.get(
+            reverse('meals:meals-detail', kwargs={'public_id': self.meal.public_id})
+        )
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        payload = detail.data
+        self.assertNotIn('per_meal_operational_cost', payload)
+        self.assertNotIn('profit_percent', payload)
+        self.assertNotIn('operational_cost_month', payload)
+        offering = payload.get('current_cycle_offering') or {}
+        self.assertNotIn('per_meal_operational_cost', offering)
+        self.assertNotIn('profit_percent', offering)

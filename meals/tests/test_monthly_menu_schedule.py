@@ -110,6 +110,9 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.customer_token.key}')
 
     def _finalize_plan(self, meal, year, month, chicken_count, beef_count, rice_count=None):
+        from meals.tests.helpers import ensure_operational_cost_month
+
+        ensure_operational_cost_month(year, month, items=[])
         cycle, _ = MealCycle.objects.get_or_create(year=year, month=month)
         plan = MealCyclePlan.objects.create(cycle=cycle, meal_category=meal)
         total = cycle.total_meals

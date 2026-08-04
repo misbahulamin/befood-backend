@@ -15,6 +15,7 @@ from ..filters import (
 )
 from ..models import Ingredient, MealCycle, MealCyclePlan, MealCyclePlanLine
 from ..services.cycle_calculations import (
+    build_plan_cost_preview,
     build_plan_summary,
     finalize_plan,
     reopen_plan,
@@ -22,6 +23,7 @@ from ..services.cycle_calculations import (
 )
 from .cycle_serializers import (
     IngredientSerializer,
+    MealCyclePlanCostPreviewSerializer,
     MealCyclePlanLineBulkSerializer,
     MealCyclePlanLineSerializer,
     MealCyclePlanSerializer,
@@ -189,6 +191,28 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
         except DjangoValidationError as exc:
             return _django_validation_to_response(exc)
         return Response(MealCyclePlanLineSerializer(lines, many=True).data)
+
+    @extend_schema(
+        tags=['Admin Meal Cycle'],
+        summary='Preview one-meal cost for selected ingredients',
+        description=(
+            'Verified-admin only. Returns selected ingredients cost, '
+            'per_meal_operational_cost for the plan cycle month, profit_percent, '
+            'and final_meal_price for one serving.'
+        ),
+        request=MealCyclePlanCostPreviewSerializer,
+        responses={200: OpenApiResponse(description='One-meal cost preview')},
+    )
+    @action(detail=True, methods=['post'], url_path='cost-preview')
+    def cost_preview(self, request, public_id=None):
+        plan = self.get_object()
+        serializer = MealCyclePlanCostPreviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ingredients = serializer.context['resolved_ingredients']
+        try:
+            return Response(build_plan_cost_preview(plan, ingredients))
+        except DjangoValidationError as exc:
+            return _django_validation_to_response(exc)
 
 
 @extend_schema_view(
