@@ -57,6 +57,16 @@ The system MUST NOT compute `other_cost` from `other_cost_percent` or any percen
 - **WHEN** the same product cost structure is applied to a January cycle with `total_meals` `62`
 - **THEN** `per_meal_rate` equals `total_cost / 62` (not hardcoded `60`)
 
+#### Scenario: Per meal rate for monthly dinner April package
+
+- **WHEN** a plan’s `total_cost` is computed for a monthly `dinner` package in an April cycle (`expected_servings` `30`)
+- **THEN** `per_meal_rate` equals `total_cost / 30` quantized to money precision
+
+#### Scenario: Per meal rate for daily both package
+
+- **WHEN** a plan’s `total_cost` is computed for a daily `both` package (`expected_servings` `2`)
+- **THEN** `per_meal_rate` equals `total_cost / 2` quantized to money precision
+
 #### Scenario: Custom profit percent
 
 - **WHEN** a plan sets `profit_percent` to `20`
@@ -161,3 +171,17 @@ Public and customer APIs MUST NOT expose this preview.
 
 - **WHEN** a customer or unauthenticated client requests the cost preview
 - **THEN** the system denies access
+
+### Requirement: Package per-meal rate is reference average only for delivery charging
+
+The system SHALL continue to compute and expose package-level `per_meal_rate` from finalized cycle plan totals (`total_cost / expected_servings`) as an estimated average meal rate for offering, eligibility estimates, and admin summaries. The system MUST NOT treat `per_meal_rate` as the authoritative amount to debit from a customer wallet when a delivered meal has a published per-slot final meal price.
+
+#### Scenario: Finalized summary still shows average per_meal_rate
+
+- **WHEN** a verified admin finalizes a cycle plan
+- **THEN** the summary includes `per_meal_rate` equal to `total_cost / expected_servings` quantized to money precision
+
+#### Scenario: Average rate is not the delivery charge basis when slot price exists
+
+- **WHEN** a package’s `per_meal_rate` is `50.00` and a published lunch slot for a delivery has final meal price `62.00`
+- **THEN** delivery charging uses `62.00` and MUST NOT substitute `50.00` from `per_meal_rate`

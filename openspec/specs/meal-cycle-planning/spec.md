@@ -80,6 +80,11 @@ The system SHALL provide a summary for a cycle plan that lists each line’s ser
 - **WHEN** a verified admin requests summary for a draft plan in a month with `per_meal_operational_cost` `31.00`
 - **THEN** the summary includes `per_meal_operational_cost` `31.00` and `other_cost` equal to expected servings times `31.00`
 
+#### Scenario: Summary for monthly lunch in January
+
+- **WHEN** a verified admin requests summary for a January plan linked to a monthly `lunch` package
+- **THEN** `expected_servings` and `main_servings_expected` are `31`
+
 ### Requirement: Finalize locks a plan and returns meal details
 
 The system SHALL allow a verified admin to finalize a draft plan. On finalize the system MUST validate that the sum of `servings_count` for plan lines with `product_role=main` equals the plan’s expected servings for the cycle (package meal-period aware), MUST require a resolvable operational cost month for the cycle `(year, month)`, MUST persist snapshot totals (including absolute `other_cost` from operational allocation), MUST set status to `finalized`, MUST publish `snapshot_total_cost` onto the linked meal’s `total_price`, and MUST return the full meal details summary including the published meal price. Summary line details MUST expose each line’s plan-level `product_role`.
@@ -88,6 +93,21 @@ The system SHALL allow a verified admin to finalize a draft plan. On finalize th
 
 - **WHEN** a draft April plan’s main plan-line servings sum to the expected servings, April has a resolvable operational cost month, and the admin finalizes
 - **THEN** the plan becomes `finalized` and the response includes product cost, other cost, profit, total cost, per-meal rate, and the meal’s updated `total_price`
+
+#### Scenario: Successful finalize for April monthly both
+
+- **WHEN** a draft April plan for a monthly `both` package has main servings summing to `60`, April has a resolvable operational cost month, and the admin finalizes
+- **THEN** the plan becomes `finalized` and the response includes product cost, other cost, profit, total cost, per-meal rate, `expected_servings` `60`, and the meal’s updated `total_price`
+
+#### Scenario: Successful finalize for April monthly dinner
+
+- **WHEN** a draft April plan for a monthly `dinner` package has main servings summing to `30`, April has a resolvable operational cost month, and the admin finalizes
+- **THEN** the plan becomes `finalized` and `expected_servings` is `30`
+
+#### Scenario: Successful finalize for daily both
+
+- **WHEN** a draft plan for a daily `both` package has main servings summing to `2`, the cycle month has a resolvable operational cost month, and the admin finalizes
+- **THEN** the plan becomes `finalized` and `expected_servings` is `2`
 
 #### Scenario: Finalize blocked when main servings mismatch
 

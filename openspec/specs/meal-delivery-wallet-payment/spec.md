@@ -1,7 +1,7 @@
 # Meal Delivery Wallet Payment
 
 ## Purpose
-Charge the customer wallet only when a meal delivery is completed, using the order’s snapshotted per-meal price and recording an idempotent payment history entry.
+Charge the customer wallet only when a meal delivery is completed, using the published menu slot’s final meal price snapshot and recording an idempotent payment history entry.
 
 ## Requirements
 
@@ -34,19 +34,29 @@ The system SHALL debit the customer’s wallet for a meal slot if and only if th
 - **WHEN** a delivery is marked `missed` (including lifecycle close-expired behavior)
 - **THEN** the system does not debit the wallet for that slot
 
-### Requirement: Charge amount is the order per-meal price snapshot
+### Requirement: Charge amount is the published slot final meal price
 
-The system MUST charge `Order.per_meal_price_snapshot` (two decimal places, BDT) for each successfully delivered slot belonging to that order. The system MUST NOT recalculate ingredient cost, operational cost, or profit percent at delivery time for the debit amount. The charged amount MUST equal the published final per-meal price that was snapshotted when the package order was created.
+The system MUST charge the published menu slot’s `final_meal_price` snapshot (two decimal places, BDT) for each successfully delivered slot, matching the order’s meal package and the delivery’s `service_date` and `meal_period`. The system MUST NOT recalculate ingredient cost, operational cost, or profit percent at delivery time for the debit amount. The system MUST NOT debit the order’s average `per_meal_price_snapshot` or package `per_meal_rate` when a slot final price snapshot is available. The system MUST reject the mark-delivered charge path when the matching published slot or its final price snapshot is missing.
 
-#### Scenario: Delivered lunch uses order snapshot price
+#### Scenario: Delivered lunch uses published slot final price
 
-- **WHEN** an order has `per_meal_price_snapshot` of `65.00` and a lunch delivery for that order is marked `delivered` with a sufficient wallet
-- **THEN** the wallet is debited by `65.00` and the payment transaction amount is `65.00`
+- **WHEN** the package average per-meal rate is `50.00` but the published lunch slot for that delivery’s date has `final_meal_price` `62.00`, and a lunch delivery is marked `delivered` with a sufficient wallet
+- **THEN** the wallet is debited by `62.00` and the payment transaction amount is `62.00`
 
-#### Scenario: Later cycle price change does not alter delivered charge
+#### Scenario: Delivered dinner charges its own slot price
 
-- **WHEN** admin later changes meal-cycle costing so the published meal price differs from the order snapshot, and a still-`scheduled` slot on that order is then marked `delivered`
-- **THEN** the debit still uses the order’s original `per_meal_price_snapshot`
+- **WHEN** the same day’s dinner slot snapshot is `38.00` and that dinner delivery is marked `delivered` with sufficient balance
+- **THEN** the wallet is debited `38.00`, not the lunch price and not the package average
+
+#### Scenario: Later catalog price change does not alter delivered charge
+
+- **WHEN** admin later changes ingredient catalog costs after the menu was published, and a still-`scheduled` slot on that order is then marked `delivered`
+- **THEN** the debit still uses the published slot’s original `final_meal_price` snapshot
+
+#### Scenario: Missing slot price blocks charge
+
+- **WHEN** an operator marks a delivery delivered but no published slot final price exists for that package, date, and meal period
+- **THEN** the system rejects the charge, does not complete a meal-payment debit, and does not leave the delivery successfully charged
 
 ### Requirement: Meal payment creates a wallet history entry with meal details
 
@@ -82,7 +92,7 @@ When marking `delivered` would require a meal-payment debit, the system MUST rej
 
 #### Scenario: Insufficient balance rejects mark delivered
 
-- **WHEN** an operator marks a delivery `delivered` but the customer wallet balance is below `per_meal_price_snapshot`
+- **WHEN** an operator marks a delivery `delivered` but the customer wallet balance is below the published slot `final_meal_price`
 - **THEN** the system rejects the operation with a clear wallet error, the delivery status stays `scheduled`, and the balance is unchanged
 
 #### Scenario: Frozen wallet rejects mark delivered
