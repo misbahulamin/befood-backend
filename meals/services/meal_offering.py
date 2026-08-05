@@ -38,7 +38,10 @@ def build_public_cycle_offering(plan: MealCyclePlan) -> dict:
         'cycle_days': plan.cycle.cycle_days,
         'total_meals': plan.cycle.total_meals,
         'package_total_price': str(plan.snapshot_total_cost) if plan.snapshot_total_cost is not None else None,
+        # Estimated average (total_cost / expected servings). Delivery charges use
+        # published per-slot final_meal_price, not this rate.
         'per_meal_rate': str(plan.snapshot_per_meal_rate) if plan.snapshot_per_meal_rate is not None else None,
+        'per_meal_rate_role': 'estimate',
         'finalized_at': finalized_at,
         'menu_items': menu_items,
     }

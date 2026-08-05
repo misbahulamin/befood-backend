@@ -121,6 +121,8 @@ class OrderDeliverySerializer(serializers.ModelSerializer):
             'meal_period',
             'status',
             'skip_source',
+            'payment_status',
+            'charged_amount',
             'can_meal_off',
             'meal_off_deadline_at',
             'delivery_label_snapshot',

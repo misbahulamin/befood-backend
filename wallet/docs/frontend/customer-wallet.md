@@ -118,6 +118,7 @@ Content-Type: application/json
     "status": "completed",
     "method": "manual",
     "note": "Cash top-up",
+    "meal_payment": null,
     "created_at": "...",
     "updated_at": "..."
   }
@@ -136,7 +137,7 @@ Content-Type: application/json
 }
 ```
 
-Successful response mirrors recharge shape with `type=withdraw`, `direction=debit`, and decreased `balance`.
+Successful response mirrors recharge shape with `type=withdraw`, `direction=debit`, decreased `balance`, and `meal_payment: null`.
 
 ### List transactions
 
@@ -145,6 +146,28 @@ GET /wallet/transactions/?page=1&page_size=20
 ```
 
 Paginated (`count`, `next`, `previous`, `results`). Default page size 20, max 50.
+
+Meal-delivery charges appear as `type=payment`, `direction=debit`, with a structured `meal_payment` object:
+
+```json
+{
+  "type": "payment",
+  "direction": "debit",
+  "amount": "62.00",
+  "note": "Meal payment: Premium Meal Package lunch on 2026-08-05",
+  "meal_payment": {
+    "meal_name": "Premium Meal Package",
+    "service_date": "2026-08-05",
+    "meal_period": "lunch",
+    "order_public_id": "...",
+    "delivery_public_id": "...",
+    "final_meal_price": "62.00",
+    "charge_source": "slot_final_price"
+  }
+}
+```
+
+Charge `amount` is the **published lunch/dinner slot final price** for that delivery (may differ lunch vs dinner). Do not assume it equals package average `per_meal_price_snapshot`. See [`orders/docs/frontend/meal-delivery-wallet-payment.md`](../../orders/docs/frontend/meal-delivery-wallet-payment.md).
 
 ---
 

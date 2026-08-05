@@ -291,6 +291,37 @@ class MonthlyMenuSlot(models.Model):
     )
     service_date = models.DateField()
     meal_period = models.CharField(max_length=10, choices=MealPeriod.choices)
+    # Locked at menu publish; immutable while published. Cleared on unpublish.
+    final_meal_price_snapshot = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Published final selling price for this lunch/dinner slot.',
+    )
+    ingredient_cost_snapshot = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    operational_cost_snapshot = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    profit_snapshot = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    ingredient_cost_lines = models.JSONField(
+        null=True,
+        blank=True,
+        help_text='Audit lines of unit costs used when the slot price was published.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

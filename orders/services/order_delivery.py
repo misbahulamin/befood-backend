@@ -9,6 +9,7 @@ from meals.models import MealCategory
 from meals.services.pricing import expected_servings, periods_for_meal_period, periods_per_day
 from orders.models import Order, OrderDelivery
 from orders.services.delivery_address import resolve_and_apply_snapshot
+from orders.services.meal_payment import MealPaymentError, charge_delivered_meal
 from orders.services.order_status import OrderStatusError, change_order_status
 
 TERMINAL_DELIVERY_STATUSES = {
@@ -24,7 +25,9 @@ MARKABLE_STATUSES = {
 
 
 class DeliveryError(Exception):
-    pass
+    def __init__(self, message: str, *, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 def _daterange(start_date: date, end_date: date):
@@ -264,6 +267,14 @@ def mark_delivery(
         locked.skip_source = OrderDelivery.SkipSource.ADMIN
         update_fields.append('skip_source')
     locked.save(update_fields=update_fields)
+
+    if to_status == OrderDelivery.DeliveryStatus.DELIVERED:
+        try:
+            charged = charge_delivered_meal(locked)
+            if charged is not None:
+                locked = charged
+        except MealPaymentError as exc:
+            raise DeliveryError(str(exc), code=exc.code) from exc
 
     order.refresh_from_db()
     try:

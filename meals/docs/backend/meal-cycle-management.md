@@ -483,7 +483,7 @@ Adds `current_cycle_offering` from the **latest finalized** plan for that meal:
 | Field | Meaning |
 | --- | --- |
 | `year`, `month`, `cycle_days`, `total_meals` | Package scope |
-| `package_total_price`, `per_meal_rate` | What customer pays |
+| `package_total_price`, `per_meal_rate` | Package total and **estimated average** per meal (`per_meal_rate_role: "estimate"`). Delivery charges use published slot final prices, not this average. |
 | `product_cost`, `other_cost`, `profit` | High-level cost bands (from snapshots) |
 | `menu_items[]` | `name`, `product_role` (from plan line), `servings_count` — omits `is_customer_visible=false` |
 | `finalized_at` | When this offering was published |

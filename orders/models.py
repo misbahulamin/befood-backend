@@ -122,6 +122,11 @@ class OrderDelivery(PublicIdMixin, models.Model):
         CUSTOMER = 'customer', 'Customer'
         ADMIN = 'admin', 'Admin'
 
+    class PaymentStatus(models.TextChoices):
+        NOT_APPLICABLE = 'not_applicable', 'Not applicable'
+        CHARGED = 'charged', 'Charged'
+        FAILED = 'failed', 'Failed'
+
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='deliveries')
     service_date = models.DateField()
     meal_period = models.CharField(max_length=20, choices=MealPeriod.choices)
@@ -136,6 +141,27 @@ class OrderDelivery(PublicIdMixin, models.Model):
         null=True,
         blank=True,
         help_text='Who initiated a skip: customer meal-off or admin mark.',
+    )
+    payment_status = models.CharField(
+        max_length=20,
+        choices=PaymentStatus.choices,
+        default=PaymentStatus.NOT_APPLICABLE,
+        help_text='Wallet charge outcome for this slot (charged only after successful delivered debit).',
+    )
+    charged_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Wallet debit amount when charged (published slot final price).',
+    )
+    wallet_transaction = models.ForeignKey(
+        'wallet.WalletTransaction',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='order_deliveries',
+        help_text='Ledger row for the meal-delivery payment debit, when charged.',
     )
     marked_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

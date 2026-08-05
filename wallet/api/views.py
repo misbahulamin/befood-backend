@@ -117,7 +117,12 @@ class WalletTransactionViewSet(
     @extend_schema(
         tags=['Customer Wallet'],
         summary='List wallet transactions',
-        description='Paginated ledger for the caller\'s wallet, newest first.',
+        description=(
+            'Paginated ledger for the caller\'s wallet, newest first. '
+            'Meal-delivery payment debits include a structured meal_payment object '
+            '(meal name, service date, lunch/dinner, order and delivery public ids); '
+            'other transaction types return meal_payment as null.'
+        ),
         parameters=[
             OpenApiParameter(
                 name='page',
@@ -142,7 +147,8 @@ class WalletTransactionViewSet(
         summary='Get wallet transaction by public_id',
         description=(
             'Retrieve a single ledger row belonging to the caller\'s wallet. '
-            'Foreign public_id values return 404.'
+            'Foreign public_id values return 404. '
+            'Payment rows for delivered meals include meal_payment context.'
         ),
         responses={
             200: WalletTransactionSerializer,

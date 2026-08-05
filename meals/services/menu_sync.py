@@ -238,6 +238,9 @@ def apply_sync_suggestion(
 ) -> MonthlyMenuSchedule:
     """
     Apply either an explicit assignments payload or recompute from source and apply.
+
+    Mutates only ``target`` (via replace_schedule_assignments). The source schedule
+    and any sibling package schedules for the same cycle are never written.
     """
     if target.is_published:
         raise ValidationError(

@@ -2,9 +2,20 @@ from decimal import Decimal, InvalidOperation
 
 from rest_framework import serializers
 
+from orders.services.meal_payment import MEAL_DELIVERY_PURPOSE
 from orders.services.order_wallet_settings import get_order_wallet_settings
 from wallet.models import Wallet, WalletTransaction
 from wallet.services.ledger import MAX_FUNDING_AMOUNT, MIN_FUNDING_AMOUNT
+
+
+class MealPaymentInfoSerializer(serializers.Serializer):
+    meal_name = serializers.CharField(allow_null=True)
+    service_date = serializers.CharField(allow_null=True)
+    meal_period = serializers.CharField(allow_null=True)
+    order_public_id = serializers.CharField(allow_null=True)
+    delivery_public_id = serializers.CharField(allow_null=True)
+    final_meal_price = serializers.CharField(allow_null=True, required=False)
+    charge_source = serializers.CharField(allow_null=True, required=False)
 
 
 class WalletSerializer(serializers.ModelSerializer):
@@ -29,6 +40,8 @@ class WalletSerializer(serializers.ModelSerializer):
 
 
 class WalletTransactionSerializer(serializers.ModelSerializer):
+    meal_payment = serializers.SerializerMethodField()
+
     class Meta:
         model = WalletTransaction
         fields = (
@@ -40,10 +53,27 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
             'status',
             'method',
             'note',
+            'meal_payment',
             'created_at',
             'updated_at',
         )
         read_only_fields = fields
+
+    def get_meal_payment(self, obj):
+        if obj.type != WalletTransaction.Type.PAYMENT:
+            return None
+        metadata = obj.metadata or {}
+        if metadata.get('purpose') != MEAL_DELIVERY_PURPOSE:
+            return None
+        return {
+            'meal_name': metadata.get('meal_name'),
+            'service_date': metadata.get('service_date'),
+            'meal_period': metadata.get('meal_period'),
+            'order_public_id': metadata.get('order_public_id'),
+            'delivery_public_id': metadata.get('delivery_public_id'),
+            'final_meal_price': metadata.get('final_meal_price'),
+            'charge_source': metadata.get('charge_source'),
+        }
 
 
 class FundingRequestSerializer(serializers.Serializer):

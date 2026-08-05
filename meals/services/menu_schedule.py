@@ -17,6 +17,10 @@ from meals.models import (
     MonthlyMenuSlotItem,
 )
 from meals.services.plan_roles import MAIN_ROLE, plan_ingredient_role_map
+from meals.services.slot_pricing import (
+    clear_price_snapshots_for_schedule,
+    snapshot_prices_for_schedule,
+)
 
 
 MEAL_PERIODS = (
@@ -91,7 +95,16 @@ def serialize_schedule_assignments(
     schedule: MonthlyMenuSchedule,
     *,
     customer_visible_only: bool = False,
+    include_final_price: bool | None = None,
 ) -> list[dict]:
+    """
+    Serialize slot assignments.
+
+    ``include_final_price`` defaults to False for customer-visible payloads and
+    True for admin (full) payloads — admin-first slot pricing exposure.
+    """
+    if include_final_price is None:
+        include_final_price = not customer_visible_only
     roles = plan_ingredient_role_map(schedule.plan)
     slots = (
         schedule.slots.prefetch_related('items__ingredient')
@@ -111,13 +124,15 @@ def serialize_schedule_assignments(
                     'product_role': roles.get(item.ingredient_id),
                 }
             )
-        result.append(
-            {
-                'service_date': slot.service_date.isoformat(),
-                'meal_period': slot.meal_period,
-                'ingredients': ingredients,
-            }
-        )
+        entry = {
+            'service_date': slot.service_date.isoformat(),
+            'meal_period': slot.meal_period,
+            'ingredients': ingredients,
+        }
+        if include_final_price:
+            final_price = slot.final_meal_price_snapshot
+            entry['final_meal_price'] = str(final_price) if final_price is not None else None
+        result.append(entry)
     return result
 
 
@@ -351,6 +366,9 @@ def publish_schedule(schedule: MonthlyMenuSchedule) -> MonthlyMenuSchedule:
     if over:
         raise ValidationError({'quota': 'Schedule exceeds plan quotas.', 'details': over})
 
+    # Lock per-slot final prices for this schedule only (package × month isolation).
+    snapshot_prices_for_schedule(schedule)
+
     schedule.status = MonthlyMenuSchedule.Status.PUBLISHED
     schedule.published_at = timezone.now()
     schedule.save(update_fields=['status', 'published_at', 'updated_at'])
@@ -359,9 +377,17 @@ def publish_schedule(schedule: MonthlyMenuSchedule) -> MonthlyMenuSchedule:
 
 @transaction.atomic
 def unpublish_schedule(schedule: MonthlyMenuSchedule) -> MonthlyMenuSchedule:
+    """
+    Return schedule to draft.
+
+    Clears slot price snapshots on this schedule only so draft APIs show null
+    until republish recomputes from catalog + plan costs at that later time.
+    Sibling package schedules are never touched.
+    """
     schedule = MonthlyMenuSchedule.objects.select_for_update().get(pk=schedule.pk)
     if not schedule.is_published:
         raise ValidationError({'status': 'Only published schedules can be unpublished.'})
+    clear_price_snapshots_for_schedule(schedule)
     schedule.status = MonthlyMenuSchedule.Status.DRAFT
     schedule.published_at = None
     schedule.save(update_fields=['status', 'published_at', 'updated_at'])

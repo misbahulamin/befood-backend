@@ -82,17 +82,17 @@ The system SHALL provide a summary for a cycle plan that lists each line’s ser
 
 ### Requirement: Finalize locks a plan and returns meal details
 
-The system SHALL allow a verified admin to finalize a draft plan. On finalize the system MUST validate that the sum of `servings_count` for plan lines with `product_role=main` equals the plan’s expected servings for the cycle (package meal-period aware), MUST require a resolvable operational cost month for the cycle `(year, month)`, MUST persist snapshot totals (including absolute `other_cost` from operational allocation), MUST set status to `finalized`, and MUST return the full meal details summary. Summary line details MUST expose each line’s plan-level `product_role`.
+The system SHALL allow a verified admin to finalize a draft plan. On finalize the system MUST validate that the sum of `servings_count` for plan lines with `product_role=main` equals the plan’s expected servings for the cycle (package meal-period aware), MUST require a resolvable operational cost month for the cycle `(year, month)`, MUST persist snapshot totals (including absolute `other_cost` from operational allocation), MUST set status to `finalized`, MUST publish `snapshot_total_cost` onto the linked meal’s `total_price`, and MUST return the full meal details summary including the published meal price. Summary line details MUST expose each line’s plan-level `product_role`.
 
 #### Scenario: Successful finalize for April
 
 - **WHEN** a draft April plan’s main plan-line servings sum to the expected servings, April has a resolvable operational cost month, and the admin finalizes
-- **THEN** the plan becomes `finalized` and the response includes product cost, other cost, profit, total cost, and per-meal rate
+- **THEN** the plan becomes `finalized` and the response includes product cost, other cost, profit, total cost, per-meal rate, and the meal’s updated `total_price`
 
 #### Scenario: Finalize blocked when main servings mismatch
 
 - **WHEN** main plan-line servings sum to a value other than expected servings
-- **THEN** the system rejects finalize with a validation error identifying the expected and actual totals
+- **THEN** the system rejects finalize with a validation error identifying the expected and actual totals and MUST NOT change the meal’s `total_price`
 
 #### Scenario: Finalize blocked when operational cost missing
 
@@ -103,6 +103,15 @@ The system SHALL allow a verified admin to finalize a draft plan. On finalize th
 
 - **WHEN** a plan is `finalized` and an admin attempts to change servings or product_role
 - **THEN** the system rejects the change until the plan is reopened
+
+### Requirement: Reopen keeps last published meal price
+
+When a finalized plan is reopened, the system MUST return the plan to draft for editing and MUST NOT clear the meal’s already published `total_price` until a subsequent finalize overwrites it.
+
+#### Scenario: Reopen does not blank storefront price
+
+- **WHEN** a meal was priced by finalize and the admin reopens that plan
+- **THEN** the plan is `draft` and the meal `total_price` remains the previously published value
 
 ### Requirement: Menu schedule and sync resolve roles from plan lines
 
@@ -123,23 +132,38 @@ The system SHALL resolve an ingredient’s `product_role` for a monthly menu sch
 - **WHEN** an admin assigns two ingredients that are both `main` on the linked plan to the same slot
 - **THEN** the system rejects the assignment
 
+### Requirement: Finalized plan is prerequisite for monthly menu schedule
+
+The system SHALL require a `MealCyclePlan` to be `finalized` before a monthly menu schedule may be created for that plan. Draft plans MUST NOT own a monthly menu schedule.
+
+#### Scenario: Schedule create requires finalized plan
+
+- **WHEN** a verified admin creates a monthly menu schedule for a finalized cycle plan
+- **THEN** the system accepts the create
+
+#### Scenario: Schedule create rejected for draft plan
+
+- **WHEN** a verified admin creates a monthly menu schedule for a draft cycle plan
+- **THEN** the system rejects the create with a validation error
+
 ### Requirement: Admin can reopen a finalized plan
 
-The system SHALL allow a verified admin to reopen a finalized plan, returning it to `draft` so lines and margins can be edited again.
+The system SHALL allow a verified admin to reopen a finalized plan, returning it to `draft` so lines and margins can be edited again. If a monthly menu schedule exists for that plan, reopen MUST be rejected while the schedule is `published`; if the schedule is `draft`, reopen MUST either (a) reject until the schedule is deleted, or (b) delete/clear schedule assignments and then reopen. The chosen behavior MUST be consistent and MUST prevent quota-breaking orphan schedules.
 
 #### Scenario: Reopen enables edits
 
-- **WHEN** a verified admin reopens a finalized plan
+- **WHEN** a verified admin reopens a finalized plan that has no monthly menu schedule
 - **THEN** the plan status is `draft` and servings updates are accepted
 
-### Requirement: Public meal APIs remain unchanged
+#### Scenario: Reopen blocked while schedule published
 
-The system MUST NOT expose cycle planning or ingredient costing data on public customer meal list/detail endpoints as part of this capability.
+- **WHEN** a verified admin attempts to reopen a finalized plan whose monthly menu schedule is `published`
+- **THEN** the system rejects reopen with a conflict or validation error instructing to unpublish or remove the schedule first
 
-#### Scenario: Public meal list unchanged
+#### Scenario: Reopen with draft schedule clears or blocks safely
 
-- **WHEN** an unauthenticated client lists meals
-- **THEN** the response does not include cycle plans, servings matrices, or costing breakdowns
+- **WHEN** a verified admin reopens a finalized plan that has only a `draft` monthly menu schedule
+- **THEN** the system either clears that schedule’s assignments (or deletes the schedule) as part of reopen, or rejects reopen until the draft schedule is removed, and MUST NOT leave a schedule that can exceed the reopened plan’s new quotas
 
 ### Requirement: Costing details restricted to verified admins
 

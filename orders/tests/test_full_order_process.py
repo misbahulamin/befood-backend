@@ -107,10 +107,14 @@ class FullOrderProcessTestCase(APITestCase):
         self.admin_list_url = reverse('web_orders:admin-order-list')
 
         from orders.models import OrderWalletSettings
+        from wallet.services.ledger import credit_wallet, get_or_create_wallet
 
         settings_obj = OrderWalletSettings.load()
         settings_obj.min_wallet_balance_to_order = Decimal('0.00')
         settings_obj.save()
+
+        wallet = get_or_create_wallet(self.customer_profile)
+        credit_wallet(wallet, Decimal('10000.00'))
 
     def _auth(self, token):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
@@ -128,6 +132,14 @@ class FullOrderProcessTestCase(APITestCase):
         self.assertEqual(len(response.data['deliveries']), 1)
         order = Order.objects.get(public_id=response.data['public_id'])
         delivery = order.deliveries.get()
+        from orders.tests.test_meal_delivery_wallet_payment import ensure_priced_delivery_slot
+
+        ensure_priced_delivery_slot(
+            self.daily_meal,
+            delivery.service_date,
+            delivery.meal_period,
+            price=Decimal('62.00'),
+        )
 
         self._auth(self.admin_token)
         mark_url = reverse(
@@ -224,14 +236,23 @@ class FullOrderProcessTestCase(APITestCase):
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
     def test_duplicate_mark_and_invalid_transition(self, _mock_date):
+        from orders.tests.test_meal_delivery_wallet_payment import ensure_priced_delivery_slot
+
         order = create_meal_order(self.customer_profile, self.daily_meal)
         delivery = order.deliveries.get()
+        ensure_priced_delivery_slot(
+            self.daily_meal,
+            delivery.service_date,
+            delivery.meal_period,
+            price=Decimal('62.00'),
+        )
 
         with patch('orders.services.order_delivery.timezone.localdate', return_value=date(2026, 7, 10)):
             first = mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
             second = mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
         self.assertEqual(first.status, OrderDelivery.DeliveryStatus.DELIVERED)
         self.assertEqual(second.status, OrderDelivery.DeliveryStatus.DELIVERED)
+        self.assertEqual(first.charged_amount, Decimal('62.00'))
 
         from orders.services.order_delivery import DeliveryError
 

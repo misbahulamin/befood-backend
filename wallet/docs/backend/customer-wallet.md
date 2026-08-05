@@ -14,6 +14,8 @@ The `wallet` app owns customer balances and an append-only ledger. Customer APIs
 
 Order create eligibility (month lock + wallet minimum) is enforced in `orders.services.order_service.create_meal_order` and does **not** debit the wallet. See `orders/docs/backend/order-eligibility-wallet-min-balance.md`.
 
+**Meal delivery payment:** when an order delivery is marked `delivered`, `orders.services.meal_payment.charge_delivered_meal` debits via `debit_wallet` with `type=payment`. Amount is the published menu slot `final_meal_price_snapshot` for that package + `service_date` + `meal_period` (not package average `Order.per_meal_price_snapshot`, unless emergency flag `MEAL_DELIVERY_CHARGE_USE_ORDER_AVERAGE`). See `orders/docs/backend/meal-delivery-wallet-payment.md`.
+
 ---
 
 ## Permissions matrix
@@ -43,15 +45,15 @@ Balance **must** change only through `wallet.services.ledger`.
 
 | Field | Notes |
 |-------|-------|
-| `type` | `recharge`, `withdraw`, reserved: `payment`, `refund`, `adjustment` |
+| `type` | `recharge`, `withdraw`, `payment` (meal delivery), reserved: `refund`, `adjustment` |
 | `direction` | `credit` \| `debit` |
 | `amount` | Positive decimal |
 | `balance_after` | Snapshot after completed money move |
 | `status` | `pending`, `completed`, `failed`, `cancelled` |
 | `method` | `manual`, `bkash`, `nagad` |
-| `idempotency_key` | Unique per wallet when set |
+| `idempotency_key` | Unique per wallet when set (meal delivery uses `meal-delivery:{delivery.public_id}`) |
 | `external_ref` | Future gateway reference |
-| `metadata` | JSON bag for provider payloads later |
+| `metadata` | JSON; meal payments set `purpose=meal_delivery` plus order/delivery context |
 
 ---
 

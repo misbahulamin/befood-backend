@@ -9,8 +9,9 @@ After a **meal cycle plan** is finalized (how many times each ingredient is serv
 1. Finalize a cycle plan for a package (Regular, Student, …) for a month.
 2. Create a monthly menu schedule for that plan.
 3. Assign ingredients to each `(date, lunch|dinner)` slot — never more than the plan’s `servings_count`.
-4. Publish when every slot has exactly one **main** protein.
+4. Publish when every slot has exactly one **main** protein. Publish also **locks** each slot’s `final_meal_price` (ingredient + operational + profit). Unpublish clears those snapshots; republish recomputes from catalog costs at that time.
 5. Kitchen uses the full month (admin only). Customers with an active order only see **today’s** menu after reveal times (default lunch 08:00, dinner 16:00, `Asia/Dhaka`).
+6. Delivery wallet charges use the published slot final price — **not** package average `per_meal_rate`.
 
 **Who can use what:**
 
@@ -34,9 +35,11 @@ MealCycle (2026-07 → 31 days → 62 meals)
   └── MealCyclePlan (finalized) — Chicken × 20, Beef × 42, …
         └── MonthlyMenuSchedule (draft | published)
               └── MonthlyMenuSlot (date + lunch|dinner)
+                    ├── final_meal_price_snapshot (locked on publish)
                     └── MonthlyMenuSlotItem (ingredient)
 ```
 
+Each **meal package × month** has its own schedule. Publishing Premium July never mutates Regular July.
 | Concept | Meaning |
 | --- | --- |
 | Quota | From cycle plan line `servings_count` — hard cap on schedule assignments |
@@ -104,10 +107,10 @@ sequenceDiagram
 4. `PUT .../assignments/` with all slots you want to set (bulk replace).
 5. Check `GET .../quota-summary/` — no `over_quota`, mains progressing toward full month.
 6. Optionally sync another package from a source schedule.
-7. `POST .../publish/` when every date×period has exactly one main.
+7. `POST .../publish/` when every date×period has exactly one main (locks per-slot `final_meal_price`).
 8. Optionally `PATCH /meals/menu-reveal-settings/` for reveal clocks.
-9. To edit again: `POST .../unpublish/` → edit → publish.
-10. To reopen the **cycle plan**: unpublish/delete schedule first if published; draft schedule is **deleted** on reopen.
+9. To edit again: `POST .../unpublish/` (clears slot price snapshots) → edit → publish.
+10. To reopen the **cycle plan**: unpublish/delete schedule first if published; draft schedule is **deleted** on reopen. Sibling packages are never mutated.
 
 ---
 

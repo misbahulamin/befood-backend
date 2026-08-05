@@ -105,3 +105,18 @@ WALLET_MANUAL_FUNDING_ENABLED = config(
     default=True,
     cast=bool,
 )
+
+# Debit customer wallet when an order delivery is marked delivered.
+MEAL_DELIVERY_WALLET_CHARGE_ENABLED = config(
+    'MEAL_DELIVERY_WALLET_CHARGE_ENABLED',
+    default=True,
+    cast=bool,
+)
+
+# Emergency rollback: charge Order.per_meal_price_snapshot instead of published
+# lunch/dinner slot final_meal_price_snapshot. Default False (slot pricing).
+MEAL_DELIVERY_CHARGE_USE_ORDER_AVERAGE = config(
+    'MEAL_DELIVERY_CHARGE_USE_ORDER_AVERAGE',
+    default=False,
+    cast=bool,
+)

@@ -131,8 +131,19 @@ def _mark_order_delivery(request, order, delivery_id):
         )
     except DeliveryError as exc:
         message = str(exc)
+        payload = {'detail': message}
+        if getattr(exc, 'code', None):
+            payload['error_code'] = exc.code
+        if getattr(exc, 'code', None) in {
+            'WALLET_INSUFFICIENT_FOR_MEAL',
+            'WALLET_FROZEN',
+            'MEAL_PAYMENT_IDEMPOTENCY_CONFLICT',
+            'MEAL_PAYMENT_FAILED',
+            'MEAL_SLOT_PRICE_MISSING',
+        }:
+            return Response(payload, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
         code = status.HTTP_409_CONFLICT if 'already' in message.lower() else status.HTTP_400_BAD_REQUEST
-        return Response({'detail': message}, status=code)
+        return Response(payload, status=code)
 
     return Response(OrderDeliverySerializer(updated).data)
 
@@ -150,6 +161,9 @@ class AdminDeliveryActionsMixin:
             403: OpenApiResponse(description='Admin required'),
             404: OpenApiResponse(description='Not found'),
             409: OpenApiResponse(description='Conflict / already terminal'),
+            422: OpenApiResponse(
+                description='Wallet insufficient/frozen for meal delivery charge'
+            ),
         },
     )
     @action(
