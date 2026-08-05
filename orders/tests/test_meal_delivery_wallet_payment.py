@@ -15,7 +15,7 @@ from rest_framework.test import APITestCase
 
 from meals.models import MealCategory, MealCycle, MealCyclePlan, MonthlyMenuSchedule, MonthlyMenuSlot
 from orders.models import Order, OrderDelivery, OrderWalletSettings
-from orders.services.meal_off import customer_meal_off
+from orders.services.meal_off import customer_meal_off, customer_meal_on
 from orders.services.order_delivery import DeliveryError, close_expired_order, mark_delivery
 from orders.services.order_service import create_meal_order
 from user_management.models import AdminProfile, CustomerProfile
@@ -255,6 +255,43 @@ class MealDeliveryWalletPaymentTests(APITestCase):
                 type=WalletTransaction.Type.PAYMENT,
             ).count(),
             0,
+        )
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
+    @patch('orders.services.meal_off.meal_off_business_now')
+    def test_meal_on_does_not_debit_then_delivered_charges_once(self, mock_now, _mock_date):
+        mock_now.return_value = datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        order = create_meal_order(self.customer_profile, self.daily_meal)
+        delivery = order.deliveries.get()
+        self._prepare_chargeable(delivery)
+        balance_before = Wallet.objects.get(pk=self.wallet.pk).balance
+
+        customer_meal_off(delivery, self.customer_user)
+        customer_meal_on(delivery, self.customer_user)
+        delivery.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+        self.assertEqual(self.wallet.balance, balance_before)
+        self.assertEqual(
+            WalletTransaction.objects.filter(
+                wallet=self.wallet,
+                type=WalletTransaction.Type.PAYMENT,
+            ).count(),
+            0,
+        )
+
+        with patch('orders.services.order_delivery.timezone.localdate', return_value=date(2026, 8, 5)):
+            mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
+        self.wallet.refresh_from_db()
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.DELIVERED)
+        self.assertEqual(self.wallet.balance, balance_before - self.slot_charge_price)
+        self.assertEqual(
+            WalletTransaction.objects.filter(
+                wallet=self.wallet,
+                type=WalletTransaction.Type.PAYMENT,
+            ).count(),
+            1,
         )
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))

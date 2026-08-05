@@ -18,7 +18,9 @@ from orders.models import MealOffSettings, Order, OrderDelivery
 from orders.services.meal_off import (
     MealOffError,
     can_meal_off,
+    can_meal_on,
     customer_meal_off,
+    customer_meal_on,
     meal_off_deadline,
 )
 from orders.services.order_service import create_meal_order
@@ -77,6 +79,38 @@ class MealOffDeadlineHelperTests(SimpleTestCase):
         after = datetime(2026, 7, 23, 14, 0, 1, tzinfo=tz)
         self.assertTrue(can_meal_off(delivery, now=before, settings_obj=self.settings_obj))
         self.assertFalse(can_meal_off(delivery, now=after, settings_obj=self.settings_obj))
+
+    def test_can_meal_on_customer_skipped_before_deadline(self):
+        delivery = OrderDelivery(
+            service_date=date(2026, 7, 23),
+            meal_period='dinner',
+            status=OrderDelivery.DeliveryStatus.SKIPPED,
+            skip_source=OrderDelivery.SkipSource.CUSTOMER,
+        )
+        delivery.order = Order(order_status=Order.OrderStatus.ACTIVE)
+        tz = ZoneInfo('Asia/Dhaka')
+        before = datetime(2026, 7, 23, 13, 59, 0, tzinfo=tz)
+        after = datetime(2026, 7, 23, 14, 0, 1, tzinfo=tz)
+        self.assertTrue(can_meal_on(delivery, now=before, settings_obj=self.settings_obj))
+        self.assertFalse(can_meal_on(delivery, now=after, settings_obj=self.settings_obj))
+
+    def test_can_meal_on_false_for_scheduled_and_admin_skip(self):
+        scheduled = OrderDelivery(
+            service_date=date(2026, 7, 23),
+            meal_period='dinner',
+            status=OrderDelivery.DeliveryStatus.SCHEDULED,
+        )
+        scheduled.order = Order(order_status=Order.OrderStatus.ACTIVE)
+        admin_skip = OrderDelivery(
+            service_date=date(2026, 7, 23),
+            meal_period='dinner',
+            status=OrderDelivery.DeliveryStatus.SKIPPED,
+            skip_source=OrderDelivery.SkipSource.ADMIN,
+        )
+        admin_skip.order = Order(order_status=Order.OrderStatus.ACTIVE)
+        now = datetime(2026, 7, 23, 13, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        self.assertFalse(can_meal_on(scheduled, now=now, settings_obj=self.settings_obj))
+        self.assertFalse(can_meal_on(admin_skip, now=now, settings_obj=self.settings_obj))
 
 
 @override_settings(MEDIA_ROOT='test_media', EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
@@ -263,4 +297,114 @@ class CustomerMealOffAPITestCase(APITestCase):
             if d['service_date'] == '2026-07-11' and d['meal_period'] == 'lunch'
         )
         self.assertTrue(lunch['can_meal_off'])
+        self.assertFalse(lunch['can_meal_on'])
         self.assertIn('2026-07-10', lunch['meal_off_deadline_at'])
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
+    @patch('orders.services.meal_off.meal_off_business_now')
+    def test_meal_on_dinner_before_deadline(self, mock_now, _mock_date):
+        mock_now.return_value = datetime(2026, 7, 10, 13, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        order = create_meal_order(self.customer_profile, self.monthly_meal)
+        dinner = order.deliveries.get(service_date=date(2026, 7, 10), meal_period='dinner')
+        customer_meal_off(dinner, self.customer_user)
+        dinner.refresh_from_db()
+        self.assertEqual(dinner.status, OrderDelivery.DeliveryStatus.SKIPPED)
+
+        self._auth(self.customer_token)
+        response = self.client.post(
+            f'/orders/{order.public_id}/deliveries/{dinner.public_id}/meal-on',
+            {'note': 'Changed plans'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['status'], 'scheduled')
+        self.assertIsNone(response.data['skip_source'])
+        dinner.refresh_from_db()
+        self.assertEqual(dinner.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+        self.assertIsNone(dinner.skip_source)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
+    @patch('orders.services.meal_off.meal_off_business_now')
+    def test_meal_on_after_deadline_rejected(self, mock_now, _mock_date):
+        mock_now.return_value = datetime(2026, 7, 10, 13, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        order = create_meal_order(self.customer_profile, self.monthly_meal)
+        dinner = order.deliveries.get(service_date=date(2026, 7, 10), meal_period='dinner')
+        customer_meal_off(dinner, self.customer_user)
+        mock_now.return_value = datetime(2026, 7, 10, 14, 1, tzinfo=ZoneInfo('Asia/Dhaka'))
+        with self.assertRaises(MealOffError):
+            customer_meal_on(dinner, self.customer_user)
+        dinner.refresh_from_db()
+        self.assertEqual(dinner.status, OrderDelivery.DeliveryStatus.SKIPPED)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
+    @patch('orders.services.meal_off.meal_off_business_now')
+    def test_toggle_off_on_before_deadline(self, mock_now, _mock_date):
+        mock_now.return_value = datetime(2026, 7, 10, 12, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        order = create_meal_order(self.customer_profile, self.monthly_meal)
+        dinner = order.deliveries.get(service_date=date(2026, 7, 10), meal_period='dinner')
+        customer_meal_off(dinner, self.customer_user)
+        updated = customer_meal_on(dinner, self.customer_user)
+        self.assertEqual(updated.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+        customer_meal_off(updated, self.customer_user)
+        updated.refresh_from_db()
+        self.assertEqual(updated.status, OrderDelivery.DeliveryStatus.SKIPPED)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
+    @patch('orders.services.meal_off.meal_off_business_now')
+    def test_admin_skip_cannot_meal_on(self, mock_now, _mock_date):
+        mock_now.return_value = datetime(2026, 7, 10, 12, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        order = create_meal_order(self.customer_profile, self.monthly_meal)
+        dinner = order.deliveries.get(service_date=date(2026, 7, 10), meal_period='dinner')
+        dinner.status = OrderDelivery.DeliveryStatus.SKIPPED
+        dinner.skip_source = OrderDelivery.SkipSource.ADMIN
+        dinner.save(update_fields=['status', 'skip_source', 'updated_at'])
+        with self.assertRaises(MealOffError):
+            customer_meal_on(dinner, self.customer_user)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
+    @patch('orders.services.meal_off.meal_off_business_now')
+    def test_other_user_cannot_meal_on(self, mock_now, _mock_date):
+        mock_now.return_value = datetime(2026, 7, 10, 12, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        order = create_meal_order(self.customer_profile, self.monthly_meal)
+        dinner = order.deliveries.get(service_date=date(2026, 7, 10), meal_period='dinner')
+        customer_meal_off(dinner, self.customer_user)
+        self._auth(self.other_token)
+        response = self.client.post(
+            f'/orders/{order.public_id}/deliveries/{dinner.public_id}/meal-on',
+            {},
+            format='json',
+        )
+        self.assertIn(response.status_code, {status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND})
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
+    @patch('orders.services.meal_off.meal_off_business_now')
+    def test_daily_reopens_after_meal_on(self, mock_now, _mock_date):
+        mock_now.return_value = datetime(2026, 7, 9, 20, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        order = create_meal_order(self.customer_profile, self.daily_lunch)
+        delivery = order.deliveries.get()
+        customer_meal_off(delivery, self.customer_user)
+        order.refresh_from_db()
+        self.assertEqual(order.order_status, Order.OrderStatus.COMPLETED)
+
+        customer_meal_on(delivery, self.customer_user)
+        order.refresh_from_db()
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+        self.assertEqual(order.order_status, Order.OrderStatus.CONFIRMED)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
+    @patch('orders.services.meal_off.meal_off_business_now')
+    def test_detail_exposes_can_meal_on_when_skipped(self, mock_now, _mock_date):
+        mock_now.return_value = datetime(2026, 7, 10, 12, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        order = create_meal_order(self.customer_profile, self.monthly_meal)
+        dinner = order.deliveries.get(service_date=date(2026, 7, 10), meal_period='dinner')
+        customer_meal_off(dinner, self.customer_user)
+        self._auth(self.customer_token)
+        detail = self.client.get(reverse('orders:order-detail', kwargs={'public_id': order.public_id}))
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        dinner_payload = next(
+            d for d in detail.data['deliveries']
+            if d['service_date'] == '2026-07-10' and d['meal_period'] == 'dinner'
+        )
+        self.assertFalse(dinner_payload['can_meal_off'])
+        self.assertTrue(dinner_payload['can_meal_on'])

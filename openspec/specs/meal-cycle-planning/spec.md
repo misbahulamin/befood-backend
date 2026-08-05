@@ -6,7 +6,7 @@ Month-scoped meal cycle planning: calendar-derived meal counts, per-package serv
 
 ### Requirement: Month defines cycle size and meal count
 
-The system SHALL represent a meal cycle by calendar `year` and `month`. For each cycle the system MUST derive `cycle_days` from the calendar month length and MUST set `total_meals` to `cycle_days × 2` (two meals per day).
+The system SHALL represent a meal cycle by calendar `year` and `month`. For each cycle the system MUST derive `cycle_days` from the calendar month length and MUST set `total_meals` to `cycle_days × 2` as the calendar capacity (full lunch + dinner for every day). Cycle `total_meals` MUST NOT be used as the finalize target for every package plan; each plan’s expected servings MUST come from the linked package’s `meal_type` and `meal_period` for that cycle month.
 
 #### Scenario: January cycle
 
@@ -68,7 +68,7 @@ The system SHALL reject adding or replacing a meal-cycle plan line when the refe
 
 ### Requirement: Admin can view meal details summary before finalize
 
-The system SHALL provide a summary for a cycle plan that lists each line’s servings, cost-per-customer, line product cost, and package-level totals derived from the costing capability. Package-level totals MUST include `product_cost`, operational `other_cost` (expected servings × per-meal operational cost for the cycle month), `profit`, `total_cost`, `per_meal_rate`, and the resolved `per_meal_operational_cost`. Summary and costing breakdown fields MUST be available only to verified admins.
+The system SHALL provide a summary for a cycle plan that lists each line’s servings, cost-per-customer, line product cost, and package-level totals derived from the costing capability. Package-level totals MUST include `expected_servings`, `main_servings_expected` equal to that value, `product_cost`, operational `other_cost` (expected servings × per-meal operational cost for the cycle month), `profit`, `total_cost`, `per_meal_rate`, and the resolved `per_meal_operational_cost`. `expected_servings` MUST be computed from the linked package’s `meal_type`, `meal_period`, and the cycle’s year/month. Summary and costing breakdown fields MUST be available only to verified admins.
 
 #### Scenario: Draft summary uses live prices
 

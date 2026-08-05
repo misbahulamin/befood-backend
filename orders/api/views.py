@@ -16,6 +16,7 @@ from orders.models import Order, OrderDelivery
 from orders.services.meal_off import (
     MealOffError,
     customer_meal_off,
+    customer_meal_on,
     get_meal_off_settings,
     update_meal_off_settings,
 )
@@ -36,6 +37,7 @@ from .serializers import (
     MarkDeliverySerializer,
     MealOffRequestSerializer,
     MealOffSettingsSerializer,
+    MealOnRequestSerializer,
     OrderCancelSerializer,
     OrderCreateSerializer,
     OrderDetailSerializer,
@@ -321,6 +323,8 @@ class MealOrderViewSet(
             return MarkDeliverySerializer
         if self.action == 'meal_off':
             return MealOffRequestSerializer
+        if self.action == 'meal_on':
+            return MealOnRequestSerializer
         if self.action == 'today_board':
             return TodayBoardDeliverySerializer
         if self.action == 'list' and admin_viewer:
@@ -332,7 +336,7 @@ class MealOrderViewSet(
             return [IsVerifiedCustomer()]
         if self.action in {'today_board', 'mark_delivery'}:
             return [IsVerifiedAdmin()]
-        if self.action == 'meal_off':
+        if self.action in {'meal_off', 'meal_on'}:
             return [IsVerifiedCustomer()]
         if self.action in {'list', 'retrieve', 'my_orders', 'cancel', 'current_package'}:
             return [IsAuthenticated()]
@@ -587,6 +591,78 @@ class MealOrderViewSet(
             code = (
                 status.HTTP_409_CONFLICT
                 if 'already' in message.lower()
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return Response({'detail': message}, status=code)
+
+        return Response(OrderDeliverySerializer(updated).data)
+
+    @extend_schema(
+        tags=['Order Management'],
+        summary='Meal-on a customer-skipped delivery slot',
+        description=(
+            'Customer undoes a prior meal-off and restores the slot to scheduled, '
+            'only while still before the same lunch/dinner cook-prep deadline. '
+            'Does not charge the wallet.'
+        ),
+        request=MealOnRequestSerializer,
+        responses={
+            200: OrderDeliverySerializer,
+            400: OpenApiResponse(description='Deadline passed or invalid state'),
+            401: OpenApiResponse(description='Authentication required'),
+            403: OpenApiResponse(description='Verified customer required'),
+            404: OpenApiResponse(description='Order or delivery not found'),
+            409: OpenApiResponse(description='Not a customer-skipped slot'),
+        },
+        examples=[
+            OpenApiExample(
+                'Meal-on success',
+                value={'note': 'Changed plans'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Deadline passed',
+                value={'detail': 'Meal-on deadline has passed for this slot.'},
+                response_only=True,
+                status_codes=['400'],
+            ),
+        ],
+    )
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'deliveries/(?P<delivery_id>[^/.]+)/meal-on',
+        permission_classes=[IsVerifiedCustomer],
+    )
+    def meal_on(self, request, public_id=None, delivery_id=None):
+        order = self.get_object()
+        profile = getattr(request.user, 'customer_profile', None)
+        if profile is None or order.customer_id != profile.pk:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            delivery = order.deliveries.get(public_id=delivery_id)
+        except (OrderDelivery.DoesNotExist, ValueError):
+            return Response({'detail': 'Delivery not found for this order.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = MealOnRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            updated = customer_meal_on(
+                delivery,
+                user=request.user,
+                note=serializer.validated_data.get('note', ''),
+            )
+        except MealOffError as exc:
+            message = str(exc)
+            if 'not found' in message.lower():
+                return Response({'detail': message}, status=status.HTTP_404_NOT_FOUND)
+            code = (
+                status.HTTP_409_CONFLICT
+                if (
+                    'cannot be meal-oned' in message.lower()
+                    or 'only customer meal-offs' in message.lower()
+                )
                 else status.HTTP_400_BAD_REQUEST
             )
             return Response({'detail': message}, status=code)

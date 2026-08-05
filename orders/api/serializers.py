@@ -4,7 +4,7 @@ from decimal import Decimal, InvalidOperation
 
 from meals.models import MealCategory
 from orders.models import MealOffSettings, Order, OrderDelivery, OrderWalletSettings
-from orders.services.meal_off import can_meal_off, meal_off_deadline
+from orders.services.meal_off import can_meal_off, can_meal_on, meal_off_deadline
 from orders.services.order_delivery import get_order_progress
 from orders.services.order_service import (
     FrozenWalletOrderError,
@@ -111,6 +111,7 @@ class OrderProgressMixin:
 
 class OrderDeliverySerializer(serializers.ModelSerializer):
     can_meal_off = serializers.SerializerMethodField()
+    can_meal_on = serializers.SerializerMethodField()
     meal_off_deadline_at = serializers.SerializerMethodField()
 
     class Meta:
@@ -124,6 +125,7 @@ class OrderDeliverySerializer(serializers.ModelSerializer):
             'payment_status',
             'charged_amount',
             'can_meal_off',
+            'can_meal_on',
             'meal_off_deadline_at',
             'delivery_label_snapshot',
             'delivery_full_address_snapshot',
@@ -142,6 +144,9 @@ class OrderDeliverySerializer(serializers.ModelSerializer):
     def get_can_meal_off(self, obj):
         return can_meal_off(obj)
 
+    def get_can_meal_on(self, obj):
+        return can_meal_on(obj)
+
     def get_meal_off_deadline_at(self, obj):
         try:
             deadline = meal_off_deadline(obj.service_date, obj.meal_period)
@@ -151,6 +156,10 @@ class OrderDeliverySerializer(serializers.ModelSerializer):
 
 
 class MealOffRequestSerializer(serializers.Serializer):
+    note = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class MealOnRequestSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, default='')
 
 

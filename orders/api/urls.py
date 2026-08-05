@@ -11,6 +11,7 @@ router.register('', MealOrderViewSet, basename='order')
 # Frontend POSTs without trailing slash; APPEND_SLASH cannot redirect POST.
 mark_delivery = MealOrderViewSet.as_view({'post': 'mark_delivery'})
 meal_off = MealOrderViewSet.as_view({'post': 'meal_off'})
+meal_on = MealOrderViewSet.as_view({'post': 'meal_on'})
 
 urlpatterns = [
     path('meal-off-settings/', MealOffSettingsView.as_view(), name='meal-off-settings'),
@@ -25,5 +26,10 @@ urlpatterns = [
         r'^(?P<public_id>[^/.]+)/deliveries/(?P<delivery_id>[^/.]+)/meal-off$',
         meal_off,
         name='order-meal-off-noslash',
+    ),
+    re_path(
+        r'^(?P<public_id>[^/.]+)/deliveries/(?P<delivery_id>[^/.]+)/meal-on$',
+        meal_on,
+        name='order-meal-on-noslash',
     ),
 ]
