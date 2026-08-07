@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     'assets',
     'faqs',
     'blogs',
+    'onahar',
 ]
 
 MIDDLEWARE = [
@@ -112,6 +113,9 @@ MEAL_DELIVERY_WALLET_CHARGE_ENABLED = config(
     default=True,
     cast=bool,
 )
+
+# Onahar charity campaign: credit points on delivered meals.
+ONAHAR_ENABLED = config('ONAHAR_ENABLED', default=True, cast=bool)
 
 # Emergency rollback: charge Order.per_meal_price_snapshot instead of published
 # lunch/dinner slot final_meal_price_snapshot. Default False (slot pricing).

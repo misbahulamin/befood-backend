@@ -275,6 +275,17 @@ def mark_delivery(
                 locked = charged
         except MealPaymentError as exc:
             raise DeliveryError(str(exc), code=exc.code) from exc
+        try:
+            from onahar.services.contribution import credit_for_delivery
+
+            credit_for_delivery(locked, actor=marked_by)
+        except Exception:
+            # Never block meal delivery on charity processing failures; reconcile later.
+            import logging
+
+            logging.getLogger(__name__).exception(
+                'Onahar credit_for_delivery failed for delivery_id=%s', locked.pk
+            )
 
     order.refresh_from_db()
     try:

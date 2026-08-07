@@ -20,6 +20,8 @@ urlpatterns = [
     path('wallet/', include('wallet.api.urls')),
     path('faqs/', include('faqs.api.urls')),
     path('blogs/', include('blogs.api.urls')),
+    path('onahar/', include('onahar.api.urls')),
+    path('api/v1/web/onahar/', include('onahar.api.web_urls')),
 ]
 
 if settings.DEBUG:
