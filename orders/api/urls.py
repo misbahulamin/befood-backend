@@ -1,7 +1,14 @@
 from django.urls import include, path, re_path
 from rest_framework.routers import DefaultRouter
 
-from .views import MealOffSettingsView, MealOrderViewSet, OrderWalletSettingsView
+from .views import (
+    KitchenTodayMealRequirementView,
+    MealDemandHistoryView,
+    MealOffSettingsView,
+    MealOrderViewSet,
+    MealStatisticsView,
+    OrderWalletSettingsView,
+)
 
 app_name = 'orders'
 
@@ -16,6 +23,14 @@ meal_on = MealOrderViewSet.as_view({'post': 'meal_on'})
 urlpatterns = [
     path('meal-off-settings/', MealOffSettingsView.as_view(), name='meal-off-settings'),
     path('order-wallet-settings/', OrderWalletSettingsView.as_view(), name='order-wallet-settings'),
+    # Shared /orders/ mount (admin SPA uses this base, same as meal-off-settings)
+    path('meal-statistics/', MealStatisticsView.as_view(), name='meal-statistics'),
+    path(
+        'kitchen/today-meal-requirement/',
+        KitchenTodayMealRequirementView.as_view(),
+        name='kitchen-today-meal-requirement',
+    ),
+    path('meal-history/', MealDemandHistoryView.as_view(), name='meal-history'),
     path('', include(router.urls)),
     re_path(
         r'^(?P<public_id>[^/.]+)/deliveries/(?P<delivery_id>[^/.]+)/mark$',

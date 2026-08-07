@@ -278,3 +278,60 @@ class OrderWalletSettings(models.Model):
     def load(cls) -> 'OrderWalletSettings':
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+
+class MealDemandSnapshot(models.Model):
+    """Frozen per-package cooking demand for a service date and meal period."""
+
+    class MealPeriod(models.TextChoices):
+        LUNCH = 'lunch', 'Lunch'
+        DINNER = 'dinner', 'Dinner'
+
+    class ConfirmationStatus(models.TextChoices):
+        ESTIMATED = 'estimated', 'Estimated'
+        CONFIRMED = 'confirmed', 'Confirmed'
+
+    service_date = models.DateField()
+    meal_period = models.CharField(max_length=20, choices=MealPeriod.choices)
+    package = models.ForeignKey(
+        'meals.MealCategory',
+        on_delete=models.PROTECT,
+        related_name='meal_demand_snapshots',
+    )
+    expected_meal_count = models.PositiveIntegerField()
+    meal_off_count = models.PositiveIntegerField()
+    final_cooking_count = models.PositiveIntegerField()
+    total_customers = models.PositiveIntegerField(default=0)
+    confirmation_status = models.CharField(
+        max_length=20,
+        choices=ConfirmationStatus.choices,
+        default=ConfirmationStatus.CONFIRMED,
+    )
+    ingredient_requirements = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Frozen ingredient quantity lines at capture time.',
+    )
+    captured_at = models.DateTimeField()
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-service_date', 'meal_period', 'package_id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['service_date', 'meal_period', 'package'],
+                name='unique_meal_demand_snapshot_slot_package',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['service_date', 'meal_period']),
+            models.Index(fields=['confirmation_status']),
+        ]
+
+    def __str__(self):
+        return (
+            f'Demand {self.service_date} {self.meal_period} '
+            f'package={self.package_id} final={self.final_cooking_count}'
+        )

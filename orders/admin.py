@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     Cart,
     CartItem,
+    MealDemandSnapshot,
     MealOffSettings,
     Order,
     OrderDelivery,
@@ -144,3 +145,42 @@ class MealOffSettingsAdmin(admin.ModelAdmin):
 class OrderWalletSettingsAdmin(admin.ModelAdmin):
     list_display = ('min_wallet_balance_to_order', 'updated_at')
     readonly_fields = ('updated_at',)
+
+
+@admin.register(MealDemandSnapshot)
+class MealDemandSnapshotAdmin(admin.ModelAdmin):
+    list_display = (
+        'service_date',
+        'meal_period',
+        'package',
+        'expected_meal_count',
+        'meal_off_count',
+        'final_cooking_count',
+        'confirmation_status',
+        'captured_at',
+        'confirmed_at',
+    )
+    list_filter = ('meal_period', 'confirmation_status', 'service_date')
+    search_fields = ('package__meal_name',)
+    readonly_fields = (
+        'service_date',
+        'meal_period',
+        'package',
+        'expected_meal_count',
+        'meal_off_count',
+        'final_cooking_count',
+        'total_customers',
+        'confirmation_status',
+        'ingredient_requirements',
+        'captured_at',
+        'confirmed_at',
+        'created_at',
+        'updated_at',
+    )
+    date_hierarchy = 'service_date'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False

@@ -12,7 +12,7 @@ class TimeStampedModel(models.Model):
         abstract = True
 
 
-class CustomerProfile(TimeStampedModel):
+class CustomerProfile(PublicIdMixin, TimeStampedModel):
     class Occupation(models.TextChoices):
         STUDENT = 'student', 'Student'
         JOB_HOLDER = 'job_holder', 'Job Holder'

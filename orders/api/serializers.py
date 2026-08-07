@@ -3,7 +3,13 @@ from rest_framework import serializers
 from decimal import Decimal, InvalidOperation
 
 from meals.models import MealCategory
-from orders.models import MealOffSettings, Order, OrderDelivery, OrderWalletSettings
+from orders.models import (
+    MealDemandSnapshot,
+    MealOffSettings,
+    Order,
+    OrderDelivery,
+    OrderWalletSettings,
+)
 from orders.services.meal_off import can_meal_off, can_meal_on, meal_off_deadline
 from orders.services.order_delivery import get_order_progress
 from orders.services.order_service import (
@@ -345,4 +351,74 @@ class TodayBoardDeliverySerializer(serializers.ModelSerializer):
             'delivery_full_address_snapshot',
             'delivery_area_snapshot',
             'delivery_city_snapshot',
+        )
+
+
+class MealDemandPackageSerializer(serializers.Serializer):
+    package_public_id = serializers.UUIDField()
+    package_name = serializers.CharField()
+    total_customers = serializers.IntegerField()
+    expected_meal_count = serializers.IntegerField()
+    meal_off_count = serializers.IntegerField()
+    final_cooking_count = serializers.IntegerField()
+
+
+class MealDemandPeriodSerializer(serializers.Serializer):
+    service_date = serializers.DateField()
+    meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'])
+    confirmation_status = serializers.ChoiceField(choices=['estimated', 'confirmed'])
+    meal_off_deadline_at = serializers.DateTimeField()
+    total_customers = serializers.IntegerField()
+    expected_meal_count = serializers.IntegerField()
+    meal_off_count = serializers.IntegerField()
+    final_cooking_count = serializers.IntegerField()
+    remaining_meal_count = serializers.IntegerField()
+    packages = MealDemandPackageSerializer(many=True)
+
+
+class MealStatisticsResponseSerializer(serializers.Serializer):
+    service_date = serializers.DateField()
+    periods = MealDemandPeriodSerializer(many=True)
+
+
+class IngredientRequirementSerializer(serializers.Serializer):
+    ingredient_public_id = serializers.UUIDField()
+    name = serializers.CharField()
+    unit = serializers.CharField(allow_null=True)
+    quantity = serializers.CharField(allow_null=True)
+    kg_per_person = serializers.CharField(allow_null=True)
+    quantity_available = serializers.BooleanField()
+
+
+class KitchenTodayRequirementSerializer(serializers.Serializer):
+    service_date = serializers.DateField()
+    meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'])
+    confirmation_status = serializers.ChoiceField(choices=['estimated', 'confirmed'])
+    expected_meal_count = serializers.IntegerField()
+    meal_off_count = serializers.IntegerField()
+    final_cooking_count = serializers.IntegerField()
+    total_customers = serializers.IntegerField()
+    ingredients_incomplete = serializers.BooleanField()
+    ingredients = IngredientRequirementSerializer(many=True)
+
+
+class MealDemandHistoryItemSerializer(serializers.ModelSerializer):
+    package_public_id = serializers.UUIDField(source='package.public_id', read_only=True)
+    package_name = serializers.CharField(source='package.meal_name', read_only=True)
+
+    class Meta:
+        model = MealDemandSnapshot
+        fields = (
+            'service_date',
+            'meal_period',
+            'package_public_id',
+            'package_name',
+            'total_customers',
+            'expected_meal_count',
+            'meal_off_count',
+            'final_cooking_count',
+            'confirmation_status',
+            'ingredient_requirements',
+            'captured_at',
+            'confirmed_at',
         )

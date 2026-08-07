@@ -12,12 +12,19 @@ from rest_framework.views import APIView
 from meals.models import MealCategory
 from orders.api.permissions import IsOrderOwnerOrAdmin, IsVerifiedCustomer
 from orders.filters import OrderFilter
-from orders.models import Order, OrderDelivery
+from orders.models import MealDemandSnapshot, Order, OrderDelivery
+from orders.services.meal_demand import (
+    build_kitchen_requirement,
+    demand_to_dict,
+    get_demand,
+    resolve_default_kitchen_slot,
+)
 from orders.services.meal_off import (
     MealOffError,
     customer_meal_off,
     customer_meal_on,
     get_meal_off_settings,
+    meal_off_business_now,
     update_meal_off_settings,
 )
 from orders.services.order_delivery import DeliveryError, mark_delivery
@@ -34,10 +41,13 @@ from user_management.services.admin_access import is_verified_admin
 from .serializers import (
     AdminOrderDetailSerializer,
     AdminOrderListSerializer,
+    KitchenTodayRequirementSerializer,
     MarkDeliverySerializer,
+    MealDemandHistoryItemSerializer,
     MealOffRequestSerializer,
     MealOffSettingsSerializer,
     MealOnRequestSerializer,
+    MealStatisticsResponseSerializer,
     OrderCancelSerializer,
     OrderCreateSerializer,
     OrderDetailSerializer,
@@ -766,6 +776,281 @@ class OrderWalletSettingsView(APIView):
             min_wallet_balance_to_order=serializer.validated_data.get('min_wallet_balance_to_order'),
         )
         return Response(OrderWalletSettingsSerializer(updated).data)
+
+
+def _parse_demand_service_date(raw_value, *, settings_obj):
+    today = meal_off_business_now(settings_obj).date()
+    if not raw_value:
+        return today, None
+    try:
+        return datetime.strptime(raw_value, '%Y-%m-%d').date(), None
+    except (TypeError, ValueError):
+        return None, Response(
+            {'detail': 'service_date must be YYYY-MM-DD.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+
+class MealStatisticsView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=['Admin Order Management'],
+        summary='Meal demand statistics for a service date',
+        description=(
+            'Expected / meal-off / final cooking counts with package breakdown. '
+            'confirmation_status is estimated before the meal-off deadline and confirmed after.'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='service_date',
+                type=str,
+                description='YYYY-MM-DD (default: today in meal-off timezone)',
+            ),
+            OpenApiParameter(
+                name='meal_period',
+                type=str,
+                description='lunch|dinner (omit for both)',
+            ),
+            OpenApiParameter(
+                name='package_public_id',
+                type=str,
+                description='Optional meal package UUID filter',
+            ),
+        ],
+        responses={
+            200: MealStatisticsResponseSerializer,
+            400: OpenApiResponse(description='Invalid filter'),
+            403: OpenApiResponse(description='Admin required'),
+        },
+        examples=[
+            OpenApiExample(
+                'Dinner statistics',
+                value={
+                    'service_date': '2026-08-05',
+                    'periods': [
+                        {
+                            'service_date': '2026-08-05',
+                            'meal_period': 'dinner',
+                            'confirmation_status': 'estimated',
+                            'total_customers': 500,
+                            'expected_meal_count': 500,
+                            'meal_off_count': 50,
+                            'final_cooking_count': 450,
+                            'remaining_meal_count': 450,
+                            'packages': [],
+                        }
+                    ],
+                },
+                response_only=True,
+            ),
+        ],
+    )
+    def get(self, request):
+        settings_obj = get_meal_off_settings()
+        service_date, error = _parse_demand_service_date(
+            request.query_params.get('service_date'),
+            settings_obj=settings_obj,
+        )
+        if error is not None:
+            return error
+
+        meal_period = request.query_params.get('meal_period')
+        if meal_period and meal_period not in {
+            OrderDelivery.MealPeriod.LUNCH,
+            OrderDelivery.MealPeriod.DINNER,
+        }:
+            return Response(
+                {'detail': 'meal_period must be lunch or dinner.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        package_public_id = request.query_params.get('package_public_id')
+        if package_public_id:
+            if not MealCategory.objects.filter(public_id=package_public_id).exists():
+                return Response(
+                    {'detail': 'package_public_id not found.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        periods = (
+            [meal_period]
+            if meal_period
+            else [OrderDelivery.MealPeriod.LUNCH, OrderDelivery.MealPeriod.DINNER]
+        )
+        period_payloads = []
+        for period in periods:
+            demand = get_demand(
+                service_date,
+                period,
+                package_public_id=package_public_id,
+                settings_obj=settings_obj,
+            )
+            period_payloads.append(demand_to_dict(demand))
+
+        return Response(
+            {
+                'service_date': service_date.isoformat(),
+                'periods': period_payloads,
+            }
+        )
+
+
+class KitchenTodayMealRequirementView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=['Admin Order Management'],
+        summary='Kitchen today cooking requirement',
+        description=(
+            'Lean cooking headcount + ingredient quantities. Defaults to today and lunch '
+            'before dinner_off_time, else dinner. Override with service_date / meal_period.'
+        ),
+        parameters=[
+            OpenApiParameter(name='service_date', type=str, description='YYYY-MM-DD override'),
+            OpenApiParameter(name='meal_period', type=str, description='lunch|dinner override'),
+        ],
+        responses={
+            200: KitchenTodayRequirementSerializer,
+            400: OpenApiResponse(description='Invalid filter'),
+            403: OpenApiResponse(description='Admin required'),
+        },
+        examples=[
+            OpenApiExample(
+                'Today lunch requirement',
+                value={
+                    'service_date': '2026-08-05',
+                    'meal_period': 'lunch',
+                    'confirmation_status': 'confirmed',
+                    'expected_meal_count': 500,
+                    'meal_off_count': 50,
+                    'final_cooking_count': 450,
+                    'total_customers': 500,
+                    'ingredients_incomplete': False,
+                    'ingredients': [
+                        {
+                            'ingredient_public_id': '11111111-1111-1111-1111-111111111111',
+                            'name': 'Rice',
+                            'unit': 'kg',
+                            'quantity': '135.000000',
+                            'kg_per_person': '0.300000',
+                            'quantity_available': True,
+                        }
+                    ],
+                },
+                response_only=True,
+            ),
+        ],
+    )
+    def get(self, request):
+        settings_obj = get_meal_off_settings()
+        raw_date = request.query_params.get('service_date')
+        raw_period = request.query_params.get('meal_period')
+
+        if raw_date or raw_period:
+            if raw_date:
+                service_date, error = _parse_demand_service_date(
+                    raw_date, settings_obj=settings_obj
+                )
+                if error is not None:
+                    return error
+            else:
+                service_date = meal_off_business_now(settings_obj).date()
+
+            if raw_period:
+                if raw_period not in {
+                    OrderDelivery.MealPeriod.LUNCH,
+                    OrderDelivery.MealPeriod.DINNER,
+                }:
+                    return Response(
+                        {'detail': 'meal_period must be lunch or dinner.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                meal_period = raw_period
+            else:
+                _, meal_period = resolve_default_kitchen_slot(settings_obj=settings_obj)
+        else:
+            service_date, meal_period = resolve_default_kitchen_slot(settings_obj=settings_obj)
+
+        payload = build_kitchen_requirement(
+            service_date,
+            meal_period,
+            settings_obj=settings_obj,
+        )
+        return Response(payload)
+
+
+class MealDemandHistoryView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=['Admin Order Management'],
+        summary='Historical meal demand snapshots',
+        description=(
+            'Returns frozen MealDemandSnapshot rows (counts + ingredient requirements). '
+            'Does not recalculate from live deliveries.'
+        ),
+        parameters=[
+            OpenApiParameter(name='service_date', type=str, description='Exact YYYY-MM-DD'),
+            OpenApiParameter(name='date_from', type=str, description='Range start YYYY-MM-DD'),
+            OpenApiParameter(name='date_to', type=str, description='Range end YYYY-MM-DD'),
+            OpenApiParameter(name='meal_period', type=str, description='lunch|dinner'),
+            OpenApiParameter(name='package_public_id', type=str, description='Package UUID'),
+        ],
+        responses={
+            200: MealDemandHistoryItemSerializer(many=True),
+            400: OpenApiResponse(description='Invalid filter'),
+            403: OpenApiResponse(description='Admin required'),
+        },
+    )
+    def get(self, request):
+        qs = MealDemandSnapshot.objects.select_related('package').all()
+
+        service_date = request.query_params.get('service_date')
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+        meal_period = request.query_params.get('meal_period')
+        package_public_id = request.query_params.get('package_public_id')
+
+        def _parse_date(raw, field_name):
+            try:
+                return datetime.strptime(raw, '%Y-%m-%d').date(), None
+            except (TypeError, ValueError):
+                return None, Response(
+                    {'detail': f'{field_name} must be YYYY-MM-DD.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if service_date:
+            parsed, error = _parse_date(service_date, 'service_date')
+            if error is not None:
+                return error
+            qs = qs.filter(service_date=parsed)
+        if date_from:
+            parsed, error = _parse_date(date_from, 'date_from')
+            if error is not None:
+                return error
+            qs = qs.filter(service_date__gte=parsed)
+        if date_to:
+            parsed, error = _parse_date(date_to, 'date_to')
+            if error is not None:
+                return error
+            qs = qs.filter(service_date__lte=parsed)
+        if meal_period:
+            if meal_period not in {
+                OrderDelivery.MealPeriod.LUNCH,
+                OrderDelivery.MealPeriod.DINNER,
+            }:
+                return Response(
+                    {'detail': 'meal_period must be lunch or dinner.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            qs = qs.filter(meal_period=meal_period)
+        if package_public_id:
+            qs = qs.filter(package__public_id=package_public_id)
+
+        serializer = MealDemandHistoryItemSerializer(qs[:500], many=True)
+        return Response(serializer.data)
 
 
 @extend_schema_view(
