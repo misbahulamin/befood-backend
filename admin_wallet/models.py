@@ -98,6 +98,11 @@ class AdminWalletTransaction(PublicIdMixin, TimeStampedModel):
         PROMOTIONAL_COST = 'promotional_cost', 'Promotional cost'
         PLATFORM_EXPENSE = 'platform_expense', 'Platform expense'
         MANUAL_ADJUSTMENT = 'manual_adjustment', 'Manual adjustment'
+        INVENTORY_PURCHASE = 'inventory_purchase', 'Inventory purchase'
+        INVENTORY_PURCHASE_REVERSAL = (
+            'inventory_purchase_reversal',
+            'Inventory purchase reversal',
+        )
 
     class Direction(models.TextChoices):
         CREDIT = 'credit', 'Credit'
@@ -123,6 +128,7 @@ class AdminWalletTransaction(PublicIdMixin, TimeStampedModel):
         Type.ADJUSTMENT,
         Type.REFUND_REVERSAL,
         Type.OTHER_INCOME,
+        Type.INVENTORY_PURCHASE_REVERSAL,
     }
     DEBIT_TYPES = {
         Type.WITHDRAWAL,
@@ -135,6 +141,7 @@ class AdminWalletTransaction(PublicIdMixin, TimeStampedModel):
         Type.PROMOTIONAL_COST,
         Type.PLATFORM_EXPENSE,
         Type.MANUAL_ADJUSTMENT,
+        Type.INVENTORY_PURCHASE,
     }
     EXPENSE_TYPES = DEBIT_TYPES - {Type.WITHDRAWAL, Type.CUSTOMER_WITHDRAW}
 
@@ -238,6 +245,11 @@ class AdminWalletAuditLog(models.Model):
         WITHDRAWAL = 'withdrawal', 'Withdrawal'
         EXPENSE = 'expense', 'Expense'
         ADJUSTMENT = 'adjustment', 'Adjustment'
+        INVENTORY_PURCHASE = 'inventory_purchase', 'Inventory purchase'
+        INVENTORY_PURCHASE_REVERSAL = (
+            'inventory_purchase_reversal',
+            'Inventory purchase reversal',
+        )
 
     actor_admin = models.ForeignKey(
         AdminProfile,

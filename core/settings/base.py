@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'payments',
     'wallet',
     'admin_wallet',
+    'inventory',
     'notifications',
     'promotions',
     'notices',

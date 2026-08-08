@@ -130,6 +130,10 @@ Allowlisted `type` values (debit expenses):
 - `promotional_cost`
 - `platform_expense`
 - `manual_adjustment`
+- `inventory_purchase` (created by Inventory confirm — prefer Inventory UI; see `inventory/docs/frontend/admin-inventory.md`)
+
+Related credit type from inventory cancel: `inventory_purchase_reversal`.  
+Wallet history rows for inventory include `reference` like `Purchase #{uuid}` and metadata `inventory_purchase_public_id` — use that to deep-link to Inventory purchase detail.
 
 ## Transaction history filters
 
@@ -139,7 +143,7 @@ Query params (only these; others → **400**):
 |-------|---------|-------|
 | `date_from` / `date_to` | `2026-08-01` | Date inclusive |
 | `direction` | `credit` \| `debit` | |
-| `type` | `customer_funding`, `customer_withdraw`, `customer_payment` (legacy), or group `expense` / `refund` | |
+| `type` | `customer_funding`, `customer_withdraw`, `inventory_purchase`, `inventory_purchase_reversal`, `customer_payment` (legacy), or group `expense` / `refund` | |
 | `method` | `manual` \| `wallet` \| `bkash` \| `nagad` \| `other` | |
 | `status` | `completed` | |
 | `q` | uuid / email / order id | Search |
@@ -158,6 +162,8 @@ Common custody types:
 | `customer_funding` | credit | Customer recharged personal wallet |
 | `customer_withdraw` | debit | Customer withdrew from personal wallet |
 | `customer_payment` | credit | Legacy meal cash credit (should not appear for new meals) |
+| `inventory_purchase` | debit | Food inventory purchase confirmed |
+| `inventory_purchase_reversal` | credit | Inventory purchase cancelled |
 
 ## Errors
 

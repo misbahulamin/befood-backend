@@ -110,22 +110,30 @@ def _apply_lifetime_counters(
     """Mutate denormalized counters on locked wallet; return update_fields extras."""
     fields: list[str] = []
     if direction == AdminWalletTransaction.Direction.CREDIT:
-        wallet.total_received = (wallet.total_received or Decimal('0.00')) + amount
-        fields.append('total_received')
-        if txn_type == AdminWalletTransaction.Type.MANUAL_DEPOSIT:
-            wallet.total_manual_added = (wallet.total_manual_added or Decimal('0.00')) + amount
-            fields.append('total_manual_added')
-        if txn_type == AdminWalletTransaction.Type.CUSTOMER_FUNDING:
-            wallet.total_customer_funding = (
-                wallet.total_customer_funding or Decimal('0.00')
-            ) + amount
-            fields.append('total_customer_funding')
-        # Legacy: historical meal cash credits only (new meal path does not cash-credit).
-        if txn_type == AdminWalletTransaction.Type.CUSTOMER_PAYMENT:
-            wallet.total_customer_payments = (
-                wallet.total_customer_payments or Decimal('0.00')
-            ) + amount
-            fields.append('total_customer_payments')
+        if txn_type == AdminWalletTransaction.Type.INVENTORY_PURCHASE_REVERSAL:
+            # Compensating credit for cancelled inventory purchase — not income.
+            current = wallet.total_expenses or Decimal('0.00')
+            wallet.total_expenses = max(Decimal('0.00'), current - amount)
+            fields.append('total_expenses')
+        else:
+            wallet.total_received = (wallet.total_received or Decimal('0.00')) + amount
+            fields.append('total_received')
+            if txn_type == AdminWalletTransaction.Type.MANUAL_DEPOSIT:
+                wallet.total_manual_added = (
+                    wallet.total_manual_added or Decimal('0.00')
+                ) + amount
+                fields.append('total_manual_added')
+            if txn_type == AdminWalletTransaction.Type.CUSTOMER_FUNDING:
+                wallet.total_customer_funding = (
+                    wallet.total_customer_funding or Decimal('0.00')
+                ) + amount
+                fields.append('total_customer_funding')
+            # Legacy: historical meal cash credits only (new meal path does not cash-credit).
+            if txn_type == AdminWalletTransaction.Type.CUSTOMER_PAYMENT:
+                wallet.total_customer_payments = (
+                    wallet.total_customer_payments or Decimal('0.00')
+                ) + amount
+                fields.append('total_customer_payments')
     else:
         if txn_type == AdminWalletTransaction.Type.WITHDRAWAL:
             wallet.total_withdrawn = (wallet.total_withdrawn or Decimal('0.00')) + amount

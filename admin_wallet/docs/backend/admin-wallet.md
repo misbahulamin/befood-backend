@@ -11,8 +11,9 @@ BeFood’s **platform cash ledger** for verified admins. Separate from customer 
 | Auth | Token + `IsVerifiedAdmin` |
 | Money | Decimal BDT, append-only ledger |
 | Auto credit | Successful **customer wallet recharge** (custody) |
-| Auto debit | Successful **customer wallet withdraw** (custody out) |
+| Auto debit | Successful **customer wallet withdraw** (custody out); confirmed **inventory purchases** (`inventory_purchase`) |
 | Meal revenue | Recognized from charged deliveries (does **not** cash-credit) |
+| Inventory | See `inventory/docs/backend/admin-inventory.md` — purchase confirm debits wallet atomically with stock |
 
 ## Permissions
 
@@ -95,7 +96,15 @@ python manage.py reconcile_admin_wallet_meal_payments [--dry-run]
 
 Optional header on mutations: `Idempotency-Key`.
 
-Filter `type` examples: `customer_funding`, `customer_withdraw`, `customer_payment` (legacy), `manual_deposit`, group `expense`.
+Filter `type` examples: `customer_funding`, `customer_withdraw`, `customer_payment` (legacy), `manual_deposit`, `inventory_purchase`, `inventory_purchase_reversal`, group `expense`.
+
+### Inventory purchase debit
+
+Service: `debit_for_inventory_purchase` / cancel via `credit_for_inventory_purchase_reversal`.
+
+- Debit type `inventory_purchase`; idempotency `inventory-purchase:{purchase.public_id}`
+- Credit type `inventory_purchase_reversal` on cancel (reduces `total_expenses`, not counted as income)
+- Metadata / reference includes `inventory_purchase_public_id` for cross-navigation from Wallet → Inventory purchase
 
 ## How to verify
 

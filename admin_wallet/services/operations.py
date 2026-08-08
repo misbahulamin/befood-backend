@@ -175,6 +175,98 @@ def post_expense(
 
 
 @transaction.atomic
+def debit_for_inventory_purchase(
+    amount,
+    *,
+    purchase_public_id,
+    actor_admin=None,
+    note: str = '',
+    reason: str = 'Inventory purchase',
+    idempotency_key: Optional[str] = None,
+) -> AdminWalletTransaction:
+    """Debit Admin Wallet for a confirmed inventory purchase (idempotent)."""
+    reason = _require_reason(reason)
+    amount = validate_amount(amount)
+    wallet = get_or_create_platform_wallet()
+    purchase_ref = str(purchase_public_id)
+    key = idempotency_key or f'inventory-purchase:{purchase_ref}'
+
+    txn = debit_admin_wallet(
+        amount,
+        type=AdminWalletTransaction.Type.INVENTORY_PURCHASE,
+        method=AdminWalletTransaction.Method.MANUAL,
+        status=AdminWalletTransaction.Status.COMPLETED,
+        note=note,
+        reason=reason,
+        source='Inventory Purchase',
+        reference=f'Purchase #{purchase_ref}',
+        idempotency_key=key,
+        actor_admin=actor_admin,
+        wallet=wallet,
+        metadata={
+            'inventory_purchase_public_id': purchase_ref,
+        },
+    )
+    _write_audit_once(
+        action=AdminWalletAuditLog.Action.INVENTORY_PURCHASE,
+        actor_admin=actor_admin,
+        amount=amount,
+        previous_balance=txn.balance_after + amount,
+        reason=reason,
+        new_balance=txn.balance_after,
+        transaction_obj=txn,
+        metadata={'inventory_purchase_public_id': purchase_ref},
+    )
+    return txn
+
+
+@transaction.atomic
+def credit_for_inventory_purchase_reversal(
+    amount,
+    *,
+    purchase_public_id,
+    actor_admin=None,
+    note: str = '',
+    reason: str = 'Inventory purchase cancelled',
+    idempotency_key: Optional[str] = None,
+) -> AdminWalletTransaction:
+    """Credit Admin Wallet when a confirmed inventory purchase is cancelled."""
+    reason = _require_reason(reason)
+    amount = validate_amount(amount)
+    wallet = get_or_create_platform_wallet()
+    purchase_ref = str(purchase_public_id)
+    key = idempotency_key or f'inventory-purchase-reversal:{purchase_ref}'
+
+    txn = credit_admin_wallet(
+        amount,
+        type=AdminWalletTransaction.Type.INVENTORY_PURCHASE_REVERSAL,
+        method=AdminWalletTransaction.Method.MANUAL,
+        status=AdminWalletTransaction.Status.COMPLETED,
+        note=note,
+        reason=reason,
+        source='Inventory Purchase Reversal',
+        reference=f'Purchase #{purchase_ref}',
+        idempotency_key=key,
+        actor_admin=actor_admin,
+        wallet=wallet,
+        metadata={
+            'inventory_purchase_public_id': purchase_ref,
+        },
+    )
+    _write_audit_once(
+        action=AdminWalletAuditLog.Action.INVENTORY_PURCHASE_REVERSAL,
+        actor_admin=actor_admin,
+        amount=amount,
+        previous_balance=txn.balance_after - amount,
+        new_balance=txn.balance_after,
+        reason=reason,
+        transaction_obj=txn,
+        metadata={'inventory_purchase_public_id': purchase_ref},
+    )
+    return txn
+
+
+@transaction.atomic
 def adjust_admin_wallet(
     amount,
     *,
