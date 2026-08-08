@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     'delivery',
     'payments',
     'wallet',
+    'admin_wallet',
     'notifications',
     'promotions',
     'notices',
@@ -110,6 +111,13 @@ WALLET_MANUAL_FUNDING_ENABLED = config(
 # Debit customer wallet when an order delivery is marked delivered.
 MEAL_DELIVERY_WALLET_CHARGE_ENABLED = config(
     'MEAL_DELIVERY_WALLET_CHARGE_ENABLED',
+    default=True,
+    cast=bool,
+)
+
+# Credit BeFood Admin Wallet when a meal-delivery customer charge succeeds.
+ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED = config(
+    'ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED',
     default=True,
     cast=bool,
 )
