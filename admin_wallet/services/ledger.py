@@ -115,6 +115,12 @@ def _apply_lifetime_counters(
         if txn_type == AdminWalletTransaction.Type.MANUAL_DEPOSIT:
             wallet.total_manual_added = (wallet.total_manual_added or Decimal('0.00')) + amount
             fields.append('total_manual_added')
+        if txn_type == AdminWalletTransaction.Type.CUSTOMER_FUNDING:
+            wallet.total_customer_funding = (
+                wallet.total_customer_funding or Decimal('0.00')
+            ) + amount
+            fields.append('total_customer_funding')
+        # Legacy: historical meal cash credits only (new meal path does not cash-credit).
         if txn_type == AdminWalletTransaction.Type.CUSTOMER_PAYMENT:
             wallet.total_customer_payments = (
                 wallet.total_customer_payments or Decimal('0.00')
@@ -124,6 +130,11 @@ def _apply_lifetime_counters(
         if txn_type == AdminWalletTransaction.Type.WITHDRAWAL:
             wallet.total_withdrawn = (wallet.total_withdrawn or Decimal('0.00')) + amount
             fields.append('total_withdrawn')
+        elif txn_type == AdminWalletTransaction.Type.CUSTOMER_WITHDRAW:
+            wallet.total_customer_withdrawals = (
+                wallet.total_customer_withdrawals or Decimal('0.00')
+            ) + amount
+            fields.append('total_customer_withdrawals')
         elif txn_type in AdminWalletTransaction.EXPENSE_TYPES:
             wallet.total_expenses = (wallet.total_expenses or Decimal('0.00')) + amount
             fields.append('total_expenses')

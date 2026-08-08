@@ -8,6 +8,12 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
 **Auth header:** `Authorization: Token <token>`  
 **Client:** web admin
 
+**Accounting model (important):**
+
+- Customer **recharge** increases Admin Wallet cash (`type=customer_funding`).
+- Customer **withdraw** decreases Admin Wallet cash (`type=customer_withdraw`).
+- Meal delivery charges do **not** increase Admin Wallet cash; `total_customer_payments` is recognized meal revenue from charged deliveries.
+
 ## Recommended call order
 
 1. `GET /dashboard/` — paint summary cards + recent table
@@ -39,24 +45,37 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
     "currency": "BDT",
     "status": "active",
     "total_received": "1500.00",
-    "total_manual_added": "1500.00",
+    "total_manual_added": "1000.00",
     "total_withdrawn": "0.00",
     "total_expenses": "0.00",
-    "total_customer_payments": "0.00",
+    "total_customer_payments": "62.00",
+    "total_customer_funding": "500.00",
+    "total_customer_withdrawals": "0.00",
     "created_at": "…",
     "updated_at": "…"
   },
-  "today_income": "0.00",
+  "today_income": "500.00",
   "today_expense": "0.00",
   "month_revenue": "1500.00",
   "month_expense": "0.00",
-  "total_customer_payments": "0.00",
+  "total_customer_payments": "62.00",
+  "total_customer_funding": "500.00",
+  "total_customer_withdrawals": "0.00",
   "total_withdrawn": "0.00",
   "recent_transactions": [ /* same shape as history rows */ ]
 }
 ```
 
-Suggested cards: **Current Balance**, **Today’s Income**, **Today’s Expense**, **This Month’s Revenue**, **This Month’s Expense**, **Total Customer Payments**, **Total Withdrawn**.
+| Field | UI meaning |
+|-------|------------|
+| `balance` | Current platform cash |
+| `today_income` / `month_revenue` | Cash credits in period (includes `customer_funding` + manual deposits) |
+| `total_customer_funding` | Lifetime customer recharge custody in |
+| `total_customer_withdrawals` | Lifetime customer withdraw custody out |
+| `total_customer_payments` | **Meal revenue recognized** (charged deliveries), not cash-in from recharge |
+| `total_withdrawn` | Admin-initiated withdrawals |
+
+Suggested cards: **Current Balance**, **Today’s Income**, **Today’s Expense**, **This Month’s Cash In**, **This Month’s Expense**, **Meal Revenue (recognized)**, **Customer Funding**, **Total Withdrawn**.
 
 ## Deposit
 
@@ -120,7 +139,7 @@ Query params (only these; others → **400**):
 |-------|---------|-------|
 | `date_from` / `date_to` | `2026-08-01` | Date inclusive |
 | `direction` | `credit` \| `debit` | |
-| `type` | `customer_payment` or group `expense` / `refund` | |
+| `type` | `customer_funding`, `customer_withdraw`, `customer_payment` (legacy), or group `expense` / `refund` | |
 | `method` | `manual` \| `wallet` \| `bkash` \| `nagad` \| `other` | |
 | `status` | `completed` | |
 | `q` | uuid / email / order id | Search |
@@ -131,6 +150,14 @@ Query params (only these; others → **400**):
 `public_id`, `type`, `direction`, `amount`, `balance_after`, `status`, `method`, `source`, `reference`, `reason`, `note`, `order_public_id`, `delivery_public_id`, `customer_public_id`, `customer_email`, `admin_email`, `created_at`, `updated_at`.
 
 Display tip: `+৳{amount} | {source} | {reference}`.
+
+Common custody types:
+
+| `type` | Direction | Meaning |
+|--------|-----------|---------|
+| `customer_funding` | credit | Customer recharged personal wallet |
+| `customer_withdraw` | debit | Customer withdrew from personal wallet |
+| `customer_payment` | credit | Legacy meal cash credit (should not appear for new meals) |
 
 ## Errors
 
@@ -155,4 +182,5 @@ Display tip: `+৳{amount} | {source} | {reference}`.
 
 - Empty ledger: balance `0.00`, empty recent list — show deposit CTA.
 - Frozen wallet (`status=frozen`): disable mutations; show banner (mutations will fail).
-- After meal deliveries are marked delivered elsewhere, refresh dashboard to see `customer_payment` credits.
+- After customers recharge, refresh dashboard to see `customer_funding` credits and higher balance.
+- Meal deliveries increase **Meal Revenue** (`total_customer_payments`), not cash balance.

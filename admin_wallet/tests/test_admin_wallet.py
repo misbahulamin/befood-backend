@@ -27,7 +27,14 @@ from orders.services.order_delivery import DeliveryError, mark_delivery
 from orders.services.order_service import create_meal_order
 from user_management.models import AdminProfile, CustomerProfile
 from wallet.models import WalletTransaction
-from wallet.services.ledger import credit_wallet, debit_wallet, get_or_create_wallet, recharge_wallet
+from wallet.services.ledger import (
+    PlatformFloatError,
+    credit_wallet,
+    debit_wallet,
+    get_or_create_wallet,
+    recharge_wallet,
+    withdraw_wallet,
+)
 
 
 def make_test_image(name='meal.jpg', size=(100, 100), color='red'):
@@ -86,7 +93,8 @@ def ensure_priced_delivery_slot(meal, service_date, meal_period, price=Decimal('
 @override_settings(
     MEDIA_ROOT='test_media',
     EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
-    ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED=True,
+    ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED=False,
+    ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED=True,
 )
 class AdminWalletServiceTests(APITestCase):
     def setUp(self):
@@ -174,7 +182,8 @@ class AdminWalletServiceTests(APITestCase):
 @override_settings(
     MEDIA_ROOT='test_media',
     EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
-    ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED=True,
+    ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED=False,
+    ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED=True,
     MEAL_DELIVERY_WALLET_CHARGE_ENABLED=True,
 )
 class AdminWalletIngestionTests(APITestCase):
@@ -238,7 +247,7 @@ class AdminWalletIngestionTests(APITestCase):
         )
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
-    def test_meal_charge_credits_admin_wallet_once(self, _mock_date):
+    def test_meal_charge_does_not_cash_credit_admin_wallet(self, _mock_date):
         order = create_meal_order(self.customer_profile, self.daily_meal)
         delivery = order.deliveries.get()
         self._prepare_chargeable(delivery)
@@ -248,18 +257,47 @@ class AdminWalletIngestionTests(APITestCase):
             mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
 
         wallet = get_or_create_platform_wallet()
-        self.assertEqual(wallet.balance, before + self.slot_charge_price)
-        credits = AdminWalletTransaction.objects.filter(
-            type=AdminWalletTransaction.Type.CUSTOMER_PAYMENT,
-            order_delivery=delivery,
+        self.assertEqual(wallet.balance, before)
+        self.assertFalse(
+            AdminWalletTransaction.objects.filter(
+                type=AdminWalletTransaction.Type.CUSTOMER_PAYMENT,
+                order_delivery=delivery,
+            ).exists()
         )
-        self.assertEqual(credits.count(), 1)
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.payment_status, OrderDelivery.PaymentStatus.CHARGED)
 
         with patch('orders.services.order_delivery.timezone.localdate', return_value=date(2026, 8, 5)):
             mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
-        self.assertEqual(credits.count(), 1)
         wallet.refresh_from_db()
-        self.assertEqual(wallet.balance, before + self.slot_charge_price)
+        self.assertEqual(wallet.balance, before)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
+    def test_recharge_then_meal_does_not_double_count_cash(self, _mock_date):
+        AdminWalletTransaction.objects.all().delete()
+        platform = get_or_create_platform_wallet()
+        platform.balance = Decimal('0.00')
+        platform.total_received = Decimal('0.00')
+        platform.total_customer_funding = Decimal('0.00')
+        platform.save()
+
+        recharge_wallet(self.customer_profile, Decimal('200.00'), note='fund')
+        after_funding = get_or_create_platform_wallet().balance
+        self.assertEqual(after_funding, Decimal('200.00'))
+
+        order = create_meal_order(self.customer_profile, self.daily_meal)
+        delivery = order.deliveries.get()
+        self._prepare_chargeable(delivery)
+        with patch('orders.services.order_delivery.timezone.localdate', return_value=date(2026, 8, 5)):
+            mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
+
+        platform.refresh_from_db()
+        self.assertEqual(platform.balance, Decimal('200.00'))
+        self.assertFalse(
+            AdminWalletTransaction.objects.filter(
+                type=AdminWalletTransaction.Type.CUSTOMER_PAYMENT,
+            ).exists()
+        )
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
     def test_failed_charge_does_not_credit_admin_wallet(self, _mock_date):
@@ -282,15 +320,77 @@ class AdminWalletIngestionTests(APITestCase):
             AdminWalletTransaction.objects.filter(order_delivery=delivery).exists()
         )
 
-    def test_customer_recharge_does_not_credit_admin_wallet(self):
+    def test_customer_recharge_credits_admin_wallet(self):
         before = get_or_create_platform_wallet().balance
-        AdminWalletTransaction.objects.all().delete()
-        recharge_wallet(self.customer_profile, Decimal('50.00'), note='topup')
+        AdminWalletTransaction.objects.filter(
+            type=AdminWalletTransaction.Type.CUSTOMER_FUNDING,
+        ).delete()
+        _, txn = recharge_wallet(self.customer_profile, Decimal('50.00'), note='topup')
+        platform = get_or_create_platform_wallet()
+        self.assertEqual(platform.balance, before + Decimal('50.00'))
+        credit = AdminWalletTransaction.objects.get(
+            type=AdminWalletTransaction.Type.CUSTOMER_FUNDING,
+            customer_wallet_transaction=txn,
+        )
+        self.assertEqual(credit.amount, Decimal('50.00'))
+        self.assertEqual(credit.direction, AdminWalletTransaction.Direction.CREDIT)
+
+    def test_customer_recharge_idempotent_admin_credit(self):
+        _, txn = recharge_wallet(
+            self.customer_profile,
+            Decimal('40.00'),
+            note='once',
+            idempotency_key='aw-recharge-idem-1',
+        )
+        before = get_or_create_platform_wallet().balance
+        recharge_wallet(
+            self.customer_profile,
+            Decimal('40.00'),
+            note='once',
+            idempotency_key='aw-recharge-idem-1',
+        )
         self.assertEqual(get_or_create_platform_wallet().balance, before)
-        self.assertFalse(
+        self.assertEqual(
             AdminWalletTransaction.objects.filter(
-                type=AdminWalletTransaction.Type.CUSTOMER_PAYMENT,
-            ).exists()
+                type=AdminWalletTransaction.Type.CUSTOMER_FUNDING,
+                customer_wallet_transaction=txn,
+            ).count(),
+            1,
+        )
+
+    def test_customer_withdraw_debits_admin_wallet(self):
+        recharge_wallet(self.customer_profile, Decimal('80.00'))
+        before = get_or_create_platform_wallet().balance
+        _, txn = withdraw_wallet(self.customer_profile, Decimal('30.00'))
+        platform = get_or_create_platform_wallet()
+        self.assertEqual(platform.balance, before - Decimal('30.00'))
+        debit = AdminWalletTransaction.objects.get(
+            type=AdminWalletTransaction.Type.CUSTOMER_WITHDRAW,
+            customer_wallet_transaction=txn,
+        )
+        self.assertEqual(debit.amount, Decimal('30.00'))
+
+    def test_insufficient_admin_float_blocks_customer_withdraw(self):
+        # Bypass custody: customer has balance, Admin Wallet empty.
+        credit_wallet(self.wallet, Decimal('25.00'))
+        platform = get_or_create_platform_wallet()
+        platform.balance = Decimal('0.00')
+        platform.save(update_fields=['balance', 'updated_at'])
+        customer_before = get_or_create_wallet(self.customer_profile).balance
+        withdraw_count = AdminWalletTransaction.objects.filter(
+            type=AdminWalletTransaction.Type.CUSTOMER_WITHDRAW,
+        ).count()
+        with self.assertRaises(PlatformFloatError):
+            withdraw_wallet(self.customer_profile, Decimal('10.00'))
+        self.assertEqual(
+            get_or_create_wallet(self.customer_profile).balance,
+            customer_before,
+        )
+        self.assertEqual(
+            AdminWalletTransaction.objects.filter(
+                type=AdminWalletTransaction.Type.CUSTOMER_WITHDRAW,
+            ).count(),
+            withdraw_count,
         )
 
 
@@ -342,6 +442,8 @@ class AdminWalletAPITests(APITestCase):
         res = self.client.get(url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertIn('balance', res.data)
+        self.assertIn('total_customer_funding', res.data)
+        self.assertIn('total_customer_withdrawals', res.data)
 
     def test_dashboard_deposit_filter_search(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
@@ -356,6 +458,8 @@ class AdminWalletAPITests(APITestCase):
         self.assertEqual(dash.status_code, status.HTTP_200_OK)
         self.assertEqual(Decimal(dash.data['wallet']['balance']), Decimal('1500.00'))
         self.assertIn('today_income', dash.data)
+        self.assertIn('total_customer_funding', dash.data)
+        self.assertIn('total_customer_withdrawals', dash.data)
 
         listed = self.client.get(
             reverse('web_admin_wallet:transactions'),

@@ -14,7 +14,13 @@ class AdminWalletSummarySerializer(serializers.Serializer):
     total_manual_added = serializers.DecimalField(max_digits=14, decimal_places=2)
     total_withdrawn = serializers.DecimalField(max_digits=14, decimal_places=2)
     total_expenses = serializers.DecimalField(max_digits=14, decimal_places=2)
-    total_customer_payments = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_customer_payments = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text='Recognized meal-delivery revenue (charged deliveries), not funding credits.',
+    )
+    total_customer_funding = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_customer_withdrawals = serializers.DecimalField(max_digits=14, decimal_places=2)
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
 
@@ -74,11 +80,25 @@ class AdminWalletTransactionSerializer(serializers.ModelSerializer):
 
 class AdminWalletDashboardSerializer(serializers.Serializer):
     wallet = AdminWalletSummarySerializer()
-    today_income = serializers.DecimalField(max_digits=14, decimal_places=2)
+    today_income = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text='Completed Admin Wallet cash credits today (includes customer_funding).',
+    )
     today_expense = serializers.DecimalField(max_digits=14, decimal_places=2)
-    month_revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
+    month_revenue = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text='Completed Admin Wallet cash credits this month (includes customer_funding).',
+    )
     month_expense = serializers.DecimalField(max_digits=14, decimal_places=2)
-    total_customer_payments = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_customer_payments = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text='Lifetime meal-delivery revenue from charged deliveries.',
+    )
+    total_customer_funding = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_customer_withdrawals = serializers.DecimalField(max_digits=14, decimal_places=2)
     total_withdrawn = serializers.DecimalField(max_digits=14, decimal_places=2)
     recent_transactions = AdminWalletTransactionSerializer(many=True)
 

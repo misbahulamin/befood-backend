@@ -59,6 +59,18 @@ class AdminWallet(PublicIdMixin, TimeStampedModel):
         default=Decimal('0.00'),
         validators=[MinValueValidator(Decimal('0.00'))],
     )
+    total_customer_funding = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    total_customer_withdrawals = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
 
     class Meta:
         verbose_name = 'Admin wallet'
@@ -71,11 +83,13 @@ class AdminWallet(PublicIdMixin, TimeStampedModel):
 class AdminWalletTransaction(PublicIdMixin, TimeStampedModel):
     class Type(models.TextChoices):
         CUSTOMER_PAYMENT = 'customer_payment', 'Customer payment'
+        CUSTOMER_FUNDING = 'customer_funding', 'Customer funding'
         MANUAL_DEPOSIT = 'manual_deposit', 'Manual deposit'
         ADJUSTMENT = 'adjustment', 'Adjustment'
         REFUND_REVERSAL = 'refund_reversal', 'Refund reversal'
         OTHER_INCOME = 'other_income', 'Other income'
         WITHDRAWAL = 'withdrawal', 'Withdrawal'
+        CUSTOMER_WITHDRAW = 'customer_withdraw', 'Customer withdraw'
         CUSTOMER_REFUND = 'customer_refund', 'Customer refund'
         RESTAURANT_SETTLEMENT = 'restaurant_settlement', 'Restaurant settlement'
         RIDER_PAYMENT = 'rider_payment', 'Rider payment'
@@ -104,6 +118,7 @@ class AdminWalletTransaction(PublicIdMixin, TimeStampedModel):
 
     CREDIT_TYPES = {
         Type.CUSTOMER_PAYMENT,
+        Type.CUSTOMER_FUNDING,
         Type.MANUAL_DEPOSIT,
         Type.ADJUSTMENT,
         Type.REFUND_REVERSAL,
@@ -111,6 +126,7 @@ class AdminWalletTransaction(PublicIdMixin, TimeStampedModel):
     }
     DEBIT_TYPES = {
         Type.WITHDRAWAL,
+        Type.CUSTOMER_WITHDRAW,
         Type.CUSTOMER_REFUND,
         Type.RESTAURANT_SETTLEMENT,
         Type.RIDER_PAYMENT,
@@ -120,7 +136,7 @@ class AdminWalletTransaction(PublicIdMixin, TimeStampedModel):
         Type.PLATFORM_EXPENSE,
         Type.MANUAL_ADJUSTMENT,
     }
-    EXPENSE_TYPES = DEBIT_TYPES - {Type.WITHDRAWAL}
+    EXPENSE_TYPES = DEBIT_TYPES - {Type.WITHDRAWAL, Type.CUSTOMER_WITHDRAW}
 
     wallet = models.ForeignKey(
         AdminWallet,

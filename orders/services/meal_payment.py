@@ -146,7 +146,6 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
         return locked
 
     if locked.payment_status == OrderDelivery.PaymentStatus.CHARGED and locked.wallet_transaction_id:
-        _credit_admin_wallet_for_meal(locked, locked.wallet_transaction)
         return locked
 
     order = locked.order
@@ -168,9 +167,7 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
                 'Meal payment idempotency conflict for this delivery.',
                 code='MEAL_PAYMENT_IDEMPOTENCY_CONFLICT',
             )
-        updated = _attach_charged_transaction(locked, existing, charged_amount=amount)
-        _credit_admin_wallet_for_meal(updated, existing)
-        return updated
+        return _attach_charged_transaction(locked, existing, charged_amount=amount)
 
     metadata = _build_metadata(locked, order, extra=price_meta)
     note = (
@@ -211,17 +208,6 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
         )
         if raced is None:
             raise
-        updated = _attach_charged_transaction(locked, raced, charged_amount=amount)
-        _credit_admin_wallet_for_meal(updated, raced)
-        return updated
+        return _attach_charged_transaction(locked, raced, charged_amount=amount)
 
-    updated = _attach_charged_transaction(locked, txn, charged_amount=amount)
-    _credit_admin_wallet_for_meal(updated, txn)
-    return updated
-
-
-def _credit_admin_wallet_for_meal(delivery: OrderDelivery, customer_txn: WalletTransaction) -> None:
-    """Credit platform Admin Wallet in the same atomic block (idempotent)."""
-    from admin_wallet.services.ingestion import credit_from_meal_payment
-
-    credit_from_meal_payment(delivery, customer_txn)
+    return _attach_charged_transaction(locked, txn, charged_amount=amount)

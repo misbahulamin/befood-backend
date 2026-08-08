@@ -37,6 +37,17 @@ class IdempotencyConflictError(WalletError):
     pass
 
 
+class PlatformFloatError(WalletError):
+    """Admin Wallet cannot cover a customer withdraw custody debit."""
+
+    def __init__(
+        self,
+        message: str = 'Platform wallet float is insufficient for this withdraw.',
+    ):
+        super().__init__(message)
+        self.code = 'PLATFORM_FLOAT_INSUFFICIENT'
+
+
 class PendingTransactionError(WalletError):
     pass
 
@@ -198,6 +209,7 @@ def recharge_wallet(
 
     existing = _find_idempotent_txn(locked, idempotency_key, amount)
     if existing is not None:
+        _sync_admin_wallet_recharge(existing)
         locked.refresh_from_db()
         return locked, existing
 
@@ -210,6 +222,7 @@ def recharge_wallet(
         note=note,
         idempotency_key=idempotency_key,
     )
+    _sync_admin_wallet_recharge(txn)
     locked.refresh_from_db()
     return locked, txn
 
@@ -232,6 +245,7 @@ def withdraw_wallet(
 
     existing = _find_idempotent_txn(locked, idempotency_key, amount)
     if existing is not None:
+        _sync_admin_wallet_withdraw(existing)
         locked.refresh_from_db()
         return locked, existing
 
@@ -244,8 +258,29 @@ def withdraw_wallet(
         note=note,
         idempotency_key=idempotency_key,
     )
+    _sync_admin_wallet_withdraw(txn)
     locked.refresh_from_db()
     return locked, txn
+
+
+def _sync_admin_wallet_recharge(customer_txn: WalletTransaction) -> None:
+    """Credit platform Admin Wallet custody (lazy import; same atomic block)."""
+    from admin_wallet.services.ingestion import credit_from_customer_recharge
+
+    credit_from_customer_recharge(customer_txn)
+
+
+def _sync_admin_wallet_withdraw(customer_txn: WalletTransaction) -> None:
+    """Debit platform Admin Wallet custody; map float shortfall to PlatformFloatError."""
+    from admin_wallet.services.ingestion import debit_from_customer_withdraw
+    from admin_wallet.services.ledger import InsufficientFundsError as AdminInsufficientFundsError
+
+    try:
+        debit_from_customer_withdraw(customer_txn)
+    except AdminInsufficientFundsError as exc:
+        raise PlatformFloatError(
+            'Platform wallet float is insufficient for this withdraw.'
+        ) from exc
 
 
 @transaction.atomic

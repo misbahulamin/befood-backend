@@ -81,6 +81,19 @@ Balance **must** change only through `wallet.services.ledger`.
 
 Settings flag: `WALLET_MANUAL_FUNDING_ENABLED` (env / `core.settings.base`, default `True`). When `False`, recharge/withdraw raise `ManualFundingDisabledError` → API `403`.
 
+### Admin Wallet custody side effects
+
+Successful `recharge_wallet` / `withdraw_wallet` also update the platform **Admin Wallet** (same DB transaction) when `ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED` is `True` (default):
+
+| Customer action | Admin Wallet effect | Type |
+|-----------------|---------------------|------|
+| Recharge | Credit (cash in) | `customer_funding` |
+| Withdraw | Debit (cash out) | `customer_withdraw` |
+
+If Admin Wallet float cannot cover a withdraw, `PlatformFloatError` is raised and the customer withdraw is rolled back → API **`409`**. See `admin_wallet/docs/backend/admin-wallet.md`.
+
+Meal-delivery `payment` debits do **not** cash-credit Admin Wallet (revenue is recognized separately from charged deliveries).
+
 ---
 
 ## Concurrency

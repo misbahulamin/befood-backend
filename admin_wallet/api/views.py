@@ -68,6 +68,12 @@ class AdminWalletSummaryView(APIView):
         tags=[ADMIN_WALLET_TAG],
         operation_id='adminWalletSummary',
         summary='Admin Wallet summary',
+        description=(
+            'Platform cash wallet summary. `total_customer_funding` / '
+            '`total_customer_withdrawals` are custody lifetime counters. '
+            '`total_customer_payments` is recognized meal-delivery revenue '
+            '(sum of charged deliveries), not a cash credit counter.'
+        ),
         responses={200: AdminWalletSummarySerializer},
     )
     def get(self, request):
@@ -82,6 +88,12 @@ class AdminWalletDashboardView(APIView):
         tags=[ADMIN_WALLET_TAG],
         operation_id='adminWalletDashboard',
         summary='Admin Wallet dashboard cards and recent transactions',
+        description=(
+            'Dashboard cards: today/month income are Admin Wallet cash credits '
+            '(includes `customer_funding`). `total_customer_payments` is meal '
+            'revenue from charged deliveries. Filter history by type '
+            '`customer_funding`, `customer_withdraw`, or legacy `customer_payment`.'
+        ),
         responses={200: AdminWalletDashboardSerializer},
     )
     def get(self, request):
@@ -100,7 +112,14 @@ class AdminWalletTransactionListView(APIView):
             OpenApiParameter('date_from', str, description='YYYY-MM-DD'),
             OpenApiParameter('date_to', str, description='YYYY-MM-DD'),
             OpenApiParameter('direction', str, enum=['credit', 'debit']),
-            OpenApiParameter('type', str, description='Transaction type or group (expense, refund)'),
+            OpenApiParameter(
+                'type',
+                str,
+                description=(
+                    'Transaction type (e.g. customer_funding, customer_withdraw, '
+                    'customer_payment, manual_deposit) or group (expense, refund)'
+                ),
+            ),
             OpenApiParameter('method', str),
             OpenApiParameter('status', str),
             OpenApiParameter('q', str, description='Search public_id / order / customer'),

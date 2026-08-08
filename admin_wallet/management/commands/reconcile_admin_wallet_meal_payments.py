@@ -12,8 +12,10 @@ from orders.models import OrderDelivery
 
 class Command(BaseCommand):
     help = (
-        'Create missing Admin Wallet customer_payment credits for deliveries '
-        'already charged on the customer wallet (idempotent).'
+        'LEGACY / emergency only: create missing Admin Wallet customer_payment '
+        'cash credits for charged deliveries. Under custody accounting '
+        '(credit on customer recharge), this MUST stay unused — enabling it '
+        'double-counts cash. Prefer reconcile_admin_wallet_customer_funding.'
     )
 
     def add_arguments(self, parser):

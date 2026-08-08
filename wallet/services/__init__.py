@@ -4,6 +4,7 @@ from wallet.services.ledger import (  # noqa: F401
     InvalidAmountError,
     ManualFundingDisabledError,
     PendingTransactionError,
+    PlatformFloatError,
     WalletError,
     WalletFrozenError,
     complete_pending_credit,

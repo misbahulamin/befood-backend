@@ -10,7 +10,9 @@ BeFood’s **platform cash ledger** for verified admins. Separate from customer 
 | Base path | `/api/v1/web/admin-wallet/` |
 | Auth | Token + `IsVerifiedAdmin` |
 | Money | Decimal BDT, append-only ledger |
-| Auto credit | Successful meal-delivery customer charge |
+| Auto credit | Successful **customer wallet recharge** (custody) |
+| Auto debit | Successful **customer wallet withdraw** (custody out) |
+| Meal revenue | Recognized from charged deliveries (does **not** cash-credit) |
 
 ## Permissions
 
@@ -21,7 +23,7 @@ BeFood’s **platform cash ledger** for verified admins. Separate from customer 
 
 ## Key models
 
-- **AdminWallet** — singleton `code=platform`, denormalized `balance` + lifetime counters.
+- **AdminWallet** — singleton `code=platform`, denormalized `balance` + lifetime counters (`total_customer_funding`, `total_customer_withdrawals`, etc.).
 - **AdminWalletTransaction** — append-only ledger (`type`, `direction`, `amount`, `balance_after`, source refs, `idempotency_key`).
 - **AdminWalletAuditLog** — deposit / withdraw / expense / adjustment audit with previous/new balance.
 
@@ -33,18 +35,50 @@ BeFood’s **platform cash ledger** for verified admins. Separate from customer 
 4. Idempotency key unique per wallet; replay returns original row.
 5. `reconcile_balance()` must match stored balance to Σcredits − Σdebits.
 
-## Meal-payment ingestion
+## Custody accounting (current)
 
-On successful `charge_delivered_meal`:
+### Customer recharge → Admin Wallet credit
 
-- Credit type `customer_payment`, method `wallet`
-- Idempotency: `meal-payment:{delivery.public_id}`
-- Same atomic block as customer debit
-- Flag: `ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED` (default `True`)
+On successful `recharge_wallet`:
 
-Customer wallet **recharge does not** credit Admin Wallet (avoids double-count).
+- Credit type `customer_funding`, method `manual`
+- Idempotency: `customer-recharge:{wallet_txn.public_id}`
+- Same atomic block as customer credit
+- Flag: `ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED` (default `True`)
 
-Backfill: `python manage.py reconcile_admin_wallet_meal_payments [--dry-run]`
+### Customer withdraw → Admin Wallet debit
+
+On successful `withdraw_wallet`:
+
+- Debit type `customer_withdraw`
+- Idempotency: `customer-withdraw:{wallet_txn.public_id}`
+- If Admin Wallet float is insufficient → `PlatformFloatError` → customer API `409`; customer balance unchanged
+
+### Meal delivery charge → no cash credit
+
+`charge_delivered_meal` debits the customer wallet only. It does **not** increase Admin Wallet balance (prepaid funds were already credited at recharge).
+
+- Dashboard field `total_customer_payments` = sum of charged `OrderDelivery.charged_amount` (meal revenue recognition)
+- Legacy flag `ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED` defaults to `False` (emergency rollback only; risks double-count)
+
+```text
+Customer recharges ৳500  → Admin Wallet +৳500 (customer_funding)
+Meal charged ৳62         → Customer wallet −৳62; Admin cash unchanged
+Customer withdraws ৳100  → Admin Wallet −৳100 (customer_withdraw)
+```
+
+## Reconcile / cutover
+
+```bash
+# Preferred under custody accounting
+python manage.py reconcile_admin_wallet_customer_funding --dry-run
+python manage.py reconcile_admin_wallet_customer_funding
+
+# LEGACY — do not use for cash backfill if funding credits are active
+python manage.py reconcile_admin_wallet_meal_payments [--dry-run]
+```
+
+**Cutover warning:** If historical `customer_payment` meal cash credits already exist and you also backfill `customer_funding`, Admin Wallet balance can be inflated. Prefer forward-only funding from deploy; reverse/adjust old meal cash credits manually if needed.
 
 ## Endpoint grid
 
@@ -61,6 +95,8 @@ Backfill: `python manage.py reconcile_admin_wallet_meal_payments [--dry-run]`
 
 Optional header on mutations: `Idempotency-Key`.
 
+Filter `type` examples: `customer_funding`, `customer_withdraw`, `customer_payment` (legacy), `manual_deposit`, group `expense`.
+
 ## How to verify
 
 ```bash
@@ -72,4 +108,4 @@ OpenAPI tag: **Admin Wallet** (drf-spectacular).
 
 ## OpenSpec
 
-`openspec/changes/admin-wallet-system/`
+`openspec/changes/admin-wallet-recharge-custody/`

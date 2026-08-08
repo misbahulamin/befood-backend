@@ -11,6 +11,7 @@ from wallet.services.ledger import (
     InsufficientFundsError,
     InvalidAmountError,
     ManualFundingDisabledError,
+    PlatformFloatError,
     WalletFrozenError,
     get_or_create_wallet,
     recharge_wallet,
@@ -36,7 +37,7 @@ def _customer_profile(request):
 
 
 def _funding_error_response(exc):
-    if isinstance(exc, IdempotencyConflictError):
+    if isinstance(exc, (IdempotencyConflictError, PlatformFloatError)):
         return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
     if isinstance(exc, (InvalidAmountError, InsufficientFundsError, WalletFrozenError)):
         return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -218,6 +219,7 @@ class WalletRechargeView(APIView):
             InsufficientFundsError,
             WalletFrozenError,
             ManualFundingDisabledError,
+            PlatformFloatError,
         ) as exc:
             return _funding_error_response(exc)
 
@@ -255,7 +257,12 @@ class WalletWithdrawView(APIView):
             400: OpenApiResponse(description='Invalid amount, frozen wallet, or insufficient funds'),
             401: OpenApiResponse(description='Unauthenticated'),
             403: OpenApiResponse(description='Manual funding disabled or not verified customer'),
-            409: OpenApiResponse(description='Idempotency key reused with different amount'),
+            409: OpenApiResponse(
+                description=(
+                    'Idempotency key reused with different amount, '
+                    'or platform Admin Wallet float insufficient for custody debit'
+                ),
+            ),
         },
         examples=[
             OpenApiExample(
@@ -288,6 +295,7 @@ class WalletWithdrawView(APIView):
             InsufficientFundsError,
             WalletFrozenError,
             ManualFundingDisabledError,
+            PlatformFloatError,
         ) as exc:
             return _funding_error_response(exc)
 

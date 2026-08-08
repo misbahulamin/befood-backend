@@ -115,9 +115,17 @@ MEAL_DELIVERY_WALLET_CHARGE_ENABLED = config(
     cast=bool,
 )
 
-# Credit BeFood Admin Wallet when a meal-delivery customer charge succeeds.
+# Deprecated for cash accounting: meal charges must not cash-credit Admin Wallet
+# (custody credits happen on customer recharge). Keep False unless emergency rollback.
 ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED = config(
     'ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED',
+    default=False,
+    cast=bool,
+)
+
+# Credit/debit BeFood Admin Wallet when a customer recharges/withdraws (custody).
+ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED = config(
+    'ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED',
     default=True,
     cast=bool,
 )

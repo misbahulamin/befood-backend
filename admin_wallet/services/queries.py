@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from admin_wallet.models import AdminWallet, AdminWalletTransaction
 from admin_wallet.services.ledger import get_or_create_platform_wallet
+from orders.models import OrderDelivery
 
 
 def _tz():
@@ -47,6 +48,24 @@ def _sum_completed(qs, direction: str) -> Decimal:
     return Decimal(total).quantize(Decimal('0.01'))
 
 
+def meal_revenue_recognized(*, start: datetime | None = None, end: datetime | None = None) -> Decimal:
+    """
+    Sum charged meal-delivery amounts (revenue recognition).
+
+    Not funded from Admin Wallet cash credits — custody is credited on recharge.
+    """
+    qs = OrderDelivery.objects.filter(
+        payment_status=OrderDelivery.PaymentStatus.CHARGED,
+        charged_amount__isnull=False,
+    )
+    if start is not None:
+        qs = qs.filter(updated_at__gte=start)
+    if end is not None:
+        qs = qs.filter(updated_at__lte=end)
+    total = qs.aggregate(total=Sum('charged_amount'))['total'] or Decimal('0.00')
+    return Decimal(total).quantize(Decimal('0.01'))
+
+
 def wallet_summary(wallet: AdminWallet | None = None) -> dict:
     wallet = wallet or get_or_create_platform_wallet()
     return {
@@ -58,7 +77,10 @@ def wallet_summary(wallet: AdminWallet | None = None) -> dict:
         'total_manual_added': wallet.total_manual_added,
         'total_withdrawn': wallet.total_withdrawn,
         'total_expenses': wallet.total_expenses,
-        'total_customer_payments': wallet.total_customer_payments,
+        # Meal revenue from charged deliveries (not funding credits / legacy counter).
+        'total_customer_payments': meal_revenue_recognized(),
+        'total_customer_funding': wallet.total_customer_funding,
+        'total_customer_withdrawals': wallet.total_customer_withdrawals,
         'updated_at': wallet.updated_at,
         'created_at': wallet.created_at,
     }
@@ -73,6 +95,7 @@ def period_totals(wallet: AdminWallet, start: datetime, end: datetime) -> dict:
     return {
         'income': _sum_completed(qs, AdminWalletTransaction.Direction.CREDIT),
         'expense': _sum_completed(qs, AdminWalletTransaction.Direction.DEBIT),
+        'meal_revenue': meal_revenue_recognized(start=start, end=end),
     }
 
 
@@ -98,7 +121,9 @@ def dashboard_payload(*, recent_limit: int = 10) -> dict:
         'today_expense': today['expense'],
         'month_revenue': month['income'],
         'month_expense': month['expense'],
-        'total_customer_payments': wallet.total_customer_payments,
+        'total_customer_payments': meal_revenue_recognized(),
+        'total_customer_funding': wallet.total_customer_funding,
+        'total_customer_withdrawals': wallet.total_customer_withdrawals,
         'total_withdrawn': wallet.total_withdrawn,
         'recent_transactions': recent,
     }
