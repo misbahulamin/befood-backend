@@ -66,6 +66,12 @@ class InvalidMealMonthError(OrderServiceError):
     pass
 
 
+class ServiceAreaOrderError(OrderServiceError):
+    def __init__(self, message: str, code: str = 'SERVICE_AREA_UNAVAILABLE'):
+        super().__init__(message)
+        self.code = code
+
+
 def check_existing_monthly_lock(customer, order_month: str) -> None:
     has_existing = Order.objects.filter(
         customer=customer,
@@ -170,6 +176,16 @@ def create_meal_order(
     check_menu_published_for_meal_month(meal, target_year, target_month)
     check_existing_monthly_lock(customer, period.order_month)
     check_wallet_min_balance(customer)
+
+    from service_area.services.verification import (
+        ServiceAreaError,
+        assert_customer_order_serviceable,
+    )
+
+    try:
+        assert_customer_order_serviceable(customer, meal.meal_period)
+    except ServiceAreaError as exc:
+        raise ServiceAreaOrderError(str(exc), code=exc.code) from exc
 
     snapshot = prepare_snapshot_fields(meal, reference_date=period.start_date)
     order = Order.objects.create(

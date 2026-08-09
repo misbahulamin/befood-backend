@@ -19,6 +19,7 @@ from orders.services.order_service import (
     InvalidMealMonthError,
     MenuNotPublishedError,
     MonthLockError,
+    ServiceAreaOrderError,
     UnpricedMealError,
     create_meal_order,
 )
@@ -85,6 +86,13 @@ class OrderCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError({'month': [str(exc)]})
         except (InsufficientWalletBalanceError, FrozenWalletOrderError) as exc:
             raise serializers.ValidationError({'non_field_errors': [str(exc)]})
+        except ServiceAreaOrderError as exc:
+            raise serializers.ValidationError(
+                {
+                    'non_field_errors': [str(exc)],
+                    'error_code': [exc.code],
+                }
+            )
         except InactiveMealError as exc:
             raise serializers.ValidationError({'meal_public_id': [str(exc)]})
         except UnpricedMealError as exc:

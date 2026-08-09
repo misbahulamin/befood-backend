@@ -30,6 +30,8 @@ INSTALLED_APPS = [
     'wallet',
     'admin_wallet',
     'inventory',
+    'service_area',
+    'search',
     'notifications',
     'promotions',
     'notices',
@@ -133,6 +135,20 @@ ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED = config(
 
 # Onahar charity campaign: credit points on delivered meals.
 ONAHAR_ENABLED = config('ONAHAR_ENABLED', default=True, cast=bool)
+
+# Reject meal package order create when delivery coords are outside active hubs.
+SERVICE_AREA_ORDER_GATE_ENABLED = config(
+    'SERVICE_AREA_ORDER_GATE_ENABLED',
+    default=True,
+    cast=bool,
+)
+
+# Soft GPS accuracy threshold (meters) for location_reliable on check API.
+SERVICE_AREA_ACCURACY_THRESHOLD_M = config(
+    'SERVICE_AREA_ACCURACY_THRESHOLD_M',
+    default=500,
+    cast=int,
+)
 
 # Emergency rollback: charge Order.per_meal_price_snapshot instead of published
 # lunch/dinner slot final_meal_price_snapshot. Default False (slot pricing).

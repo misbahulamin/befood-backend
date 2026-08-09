@@ -24,6 +24,10 @@ urlpatterns = [
     path('api/v1/web/onahar/', include('onahar.api.web_urls')),
     path('api/v1/web/admin-wallet/', include('admin_wallet.api.web_urls')),
     path('api/v1/web/inventory/', include('inventory.api.web_urls')),
+    path('api/v1/service-areas/', include('service_area.api.urls')),
+    path('api/v1/web/service-areas/', include('service_area.api.web_urls')),
+    path('api/v1/search/', include('search.api.urls')),
+    path('api/v1/web/search/', include('search.api.web_urls')),
 ]
 
 if settings.DEBUG:
