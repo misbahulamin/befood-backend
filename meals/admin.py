@@ -47,10 +47,11 @@ class MealCategoryAdmin(admin.ModelAdmin):
         'meal_type',
         'meal_period',
         'is_active',
+        'is_subscribable',
         'created_at',
     )
     search_fields = ('meal_name', 'public_id')
-    list_filter = ('meal_type', 'meal_period', 'is_active')
+    list_filter = ('meal_type', 'meal_period', 'is_active', 'is_subscribable')
     readonly_fields = ('public_id', 'created_at', 'updated_at')
 
 

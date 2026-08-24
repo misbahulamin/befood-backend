@@ -52,9 +52,9 @@ class CustomerProfile(PublicIdMixin, TimeStampedModel):
         PREFER_NOT_TO_SAY = 'prefer_not_to_say', 'Prefer not to say'
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='customer_profile')
-    phone = models.CharField(max_length=10, unique=True)
-    occupation = models.CharField(max_length=30, choices=Occupation.choices)
-    is_bachelor = models.BooleanField()
+    phone = models.CharField(max_length=10, unique=True, null=True, blank=True)
+    occupation = models.CharField(max_length=30, choices=Occupation.choices, null=True, blank=True)
+    is_bachelor = models.BooleanField(null=True, blank=True)
     is_email_verified = models.BooleanField(default=False)
     email_verified_at = models.DateTimeField(null=True, blank=True)
 

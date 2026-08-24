@@ -27,7 +27,7 @@ from meals.services.menu_schedule import (
     replace_schedule_assignments,
 )
 from meals.services.today_menu import build_today_menu_for_customer
-from orders.models import Order
+from orders.models import CustomerSubscription, Order
 from user_management.models import AdminProfile, CustomerProfile
 
 
@@ -153,6 +153,16 @@ class CustomerPackageMenuAPITestCase(APITestCase):
         plan = self._finalize_plan(year, month, chicken_count=20, beef_count=42)
         return MonthlyMenuSchedule.objects.create(plan=plan)
 
+    def _create_subscription(self, started_on=date(2026, 7, 1)):
+        return CustomerSubscription.objects.create(
+            customer=self.customer_profile,
+            meal=self.meal,
+            meal_name_snapshot=self.meal.meal_name,
+            meal_period_snapshot=self.meal.meal_period,
+            status=CustomerSubscription.Status.ACTIVE,
+            started_on=started_on,
+        )
+
     def _create_order(self, year=2026, month=7):
         return Order.objects.create(
             customer=self.customer_profile,
@@ -171,7 +181,7 @@ class CustomerPackageMenuAPITestCase(APITestCase):
 
     def test_verified_customer_gets_full_published_month_menu(self):
         schedule = self._create_published_schedule(2026, 7)
-        order = self._create_order(2026, 7)
+        subscription = self._create_subscription()
         expected_days = schedule.slots.count()
 
         self._auth_customer()
@@ -184,7 +194,8 @@ class CustomerPackageMenuAPITestCase(APITestCase):
         package = response.data['packages'][0]
         self.assertEqual(package['meal_public_id'], str(self.meal.public_id))
         self.assertEqual(package['meal_name'], 'Regular Package')
-        self.assertEqual(package['order_public_id'], str(order.public_id))
+        self.assertEqual(package['subscription_public_id'], str(subscription.public_id))
+        self.assertIsNone(package['order_public_id'])
         self.assertTrue(package['schedule_published'])
         self.assertEqual(len(package['days']), expected_days)
         self.assertIn('ingredients', package['days'][0])
@@ -204,7 +215,7 @@ class CustomerPackageMenuAPITestCase(APITestCase):
 
     def test_unpublished_schedule_returns_empty_days(self):
         self._create_draft_schedule(2026, 7)
-        order = self._create_order(2026, 7)
+        subscription = self._create_subscription()
 
         self._auth_customer()
         response = self.client.get(self.url, {'year': 2026, 'month': 7})
@@ -212,7 +223,7 @@ class CustomerPackageMenuAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['packages']), 1)
         package = response.data['packages'][0]
-        self.assertEqual(package['order_public_id'], str(order.public_id))
+        self.assertEqual(package['subscription_public_id'], str(subscription.public_id))
         self.assertFalse(package['schedule_published'])
         self.assertEqual(package['days'], [])
 
@@ -243,7 +254,7 @@ class CustomerPackageMenuAPITestCase(APITestCase):
 
     def test_today_menu_reveal_behavior_unchanged(self):
         self._create_published_schedule(2026, 7)
-        self._create_order(2026, 7)
+        self._create_subscription()
         tz = ZoneInfo('Asia/Dhaka')
 
         before_lunch = datetime(2026, 7, 22, 7, 0, tzinfo=tz)
@@ -310,7 +321,7 @@ class CustomerPackageMenuAPITestCase(APITestCase):
         schedule = MonthlyMenuSchedule.objects.create(plan=plan)
         replace_schedule_assignments(schedule, assignments)
         publish_schedule(schedule)
-        self._create_order(2026, 7)
+        self._create_subscription()
 
         self._auth_customer()
         response = self.client.get(self.url, {'year': 2026, 'month': 7})

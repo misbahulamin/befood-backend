@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from django.db import transaction
 from django.db.models import Count, Q
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from meals.services.slot_pricing import resolve_published_slot_for_delivery
@@ -20,6 +21,7 @@ from orders.services.meal_off import (
     meal_off_business_now,
     meal_off_deadline,
 )
+from orders.services.subscription_parent import live_delivery_q
 
 CONFIRMATION_ESTIMATED = 'estimated'
 CONFIRMATION_CONFIRMED = 'confirmed'
@@ -110,13 +112,28 @@ def _demand_queryset(
             service_date=service_date,
             meal_period=meal_period,
         )
-        .exclude(order__order_status=Order.OrderStatus.CANCELLED)
-        .select_related('order', 'order__meal')
+        .filter(live_delivery_q(service_date))
+        .select_related('order', 'order__meal', 'subscription', 'subscription__meal')
+        .annotate(
+            demand_meal_id=Coalesce('subscription__meal_id', 'order__meal_id'),
+            demand_meal_public_id=Coalesce(
+                'subscription__meal__public_id',
+                'order__meal__public_id',
+            ),
+            demand_meal_name=Coalesce(
+                'subscription__meal_name_snapshot',
+                'order__meal_name_snapshot',
+            ),
+            demand_customer_id=Coalesce(
+                'subscription__customer_id',
+                'order__customer_id',
+            ),
+        )
     )
     if package_id is not None:
-        qs = qs.filter(order__meal_id=package_id)
+        qs = qs.filter(demand_meal_id=package_id)
     if package_public_id is not None:
-        qs = qs.filter(order__meal__public_id=package_public_id)
+        qs = qs.filter(demand_meal_public_id=package_public_id)
     return qs
 
 
@@ -140,7 +157,7 @@ def get_demand(
     overall = qs.aggregate(
         expected=Count('id'),
         meal_off=Count('id', filter=Q(status=OrderDelivery.DeliveryStatus.SKIPPED)),
-        customers=Count('order_id', distinct=True),
+        customers=Count('demand_customer_id', distinct=True),
     )
     expected = int(overall['expected'] or 0)
     meal_off = int(overall['meal_off'] or 0)
@@ -150,25 +167,25 @@ def get_demand(
     package_rows: list[PackageDemandRow] = []
     package_agg = (
         qs.values(
-            'order__meal_id',
-            'order__meal__public_id',
-            'order__meal__meal_name',
+            'demand_meal_id',
+            'demand_meal_public_id',
+            'demand_meal_name',
         )
         .annotate(
             expected=Count('id'),
             meal_off=Count('id', filter=Q(status=OrderDelivery.DeliveryStatus.SKIPPED)),
-            customers=Count('order_id', distinct=True),
+            customers=Count('demand_customer_id', distinct=True),
         )
-        .order_by('order__meal__meal_name', 'order__meal_id')
+        .order_by('demand_meal_name', 'demand_meal_id')
     )
     for row in package_agg:
         pkg_expected = int(row['expected'] or 0)
         pkg_off = int(row['meal_off'] or 0)
         package_rows.append(
             PackageDemandRow(
-                package_id=row['order__meal_id'],
-                package_public_id=str(row['order__meal__public_id']),
-                package_name=row['order__meal__meal_name'],
+                package_id=row['demand_meal_id'],
+                package_public_id=str(row['demand_meal_public_id']),
+                package_name=row['demand_meal_name'],
                 total_customers=int(row['customers'] or 0),
                 expected_meal_count=pkg_expected,
                 meal_off_count=pkg_off,
@@ -432,7 +449,7 @@ def confirm_and_save_due_snapshots(
 
     delivery_slots = (
         OrderDelivery.objects.filter(service_date__gte=start, service_date__lte=end)
-        .exclude(order__order_status=Order.OrderStatus.CANCELLED)
+        .filter(live_delivery_q())
         .values_list('service_date', 'meal_period')
         .distinct()
     )

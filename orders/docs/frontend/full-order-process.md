@@ -2,7 +2,9 @@
 
 ## Summary
 
-Customers create a meal package and watch delivery progress. Admins list/filter orders and mark lunch/dinner (or daily one-shot) deliveries from a today board.
+**Purchase path:** subscribe — see [`customer-meal-subscription.md`](customer-meal-subscription.md). `POST /orders/` always returns `409 SUBSCRIBE_REQUIRED`.
+
+Historical orders remain list/detail read-only. Admins mark lunch/dinner deliveries from the today board (order-owned or subscription-owned slots).
 
 Target clients: **customer mobile/web** + **admin web**.
 
@@ -14,9 +16,11 @@ Authorization: Token <token>
 
 ## Customer integration
 
-### 1. Create order
+### 1. Subscribe (replaces create order)
 
-`POST /orders/`
+`POST /api/v1/subscriptions/` with `{ "plan_public_id": "..." }`. Success `201`. Do not send `year`/`month`.
+
+Meal identity is the catalog UUID from `GET /api/v1/subscription-plans/` (same `MealCategory.public_id` as `GET /meals/`).
 
 Meal identity is the catalog UUID from `GET /meals/` / `GET /meals/{public_id}/` (not the integer PK). See [`meal-public-uuid.md`](../../../meals/docs/frontend/meal-public-uuid.md).
 

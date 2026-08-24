@@ -1,19 +1,16 @@
-# Frontend: order eligibility (month lock + wallet minimum)
+# Frontend: order eligibility (wallet minimum to subscribe)
 
 ## Summary
 
-Before creating a meal package order, the server checks:
+`min_wallet_balance_to_order` is the **minimum wallet balance to subscribe** to a meal plan. Subscribe does **not** deduct wallet balance. Delivery debit still happens when a slot is marked delivered.
 
-1. Customer does **not** already have a non-cancelled package for that calendar month.
-2. Wallet balance is at least the admin-configured **minimum** (default **500.00 BDT**).
-
-This is an **eligibility** check only — placing an order does **not** deduct wallet balance.
+Monthly `POST /orders/` is retired. See [`customer-meal-subscription.md`](customer-meal-subscription.md).
 
 **New / changed:**
 
 - Admin: `GET|PATCH /api/v1/web/orders/order-wallet-settings/`
 - Customer wallet: `GET /wallet/` includes `min_wallet_balance_to_order`
-- Order create `400` may return insufficient-balance or frozen-wallet messages (in addition to month lock)
+- Subscribe `400` may return insufficient-balance or frozen-wallet messages (in addition to already-subscribed)
 
 ## Integration steps
 
@@ -22,23 +19,24 @@ This is an **eligibility** check only — placing an order does **not** deduct w
 1. Call `GET /api/v1/web/orders/order-wallet-settings/` with admin token.
 2. Show editable field for `min_wallet_balance_to_order` (decimal string, 2 places).
 3. Save with `PATCH` same URL and body `{ "min_wallet_balance_to_order": "600.00" }`.
-4. Label clearly: “Minimum wallet balance required to place an order (BDT). Order create does not charge the wallet.”
+4. Label clearly: “Minimum wallet balance required to subscribe (BDT). Subscribe does not charge the wallet.”
 
-### Customer app — before order CTA
+### Customer app — before Subscribe CTA
 
 1. Call `GET /wallet/` after login.
 2. Read `balance`, `status`, and `min_wallet_balance_to_order`.
-3. If `status === "frozen"`, disable order and explain wallet is frozen.
-4. If `balance < min_wallet_balance_to_order`, prompt recharge (link to wallet recharge) instead of (or before) order submit.
+3. If `status === "frozen"`, disable Subscribe and explain wallet is frozen.
+4. If `balance < min_wallet_balance_to_order`, prompt recharge instead of (or before) subscribe submit.
 5. Still handle server `400` — never rely on client checks alone.
 
-### Customer app — order create errors
+### Customer app — subscribe errors
 
 | Error text contains | UI |
 |---------------------|-----|
-| `already have a meal package for this month` | “You already have a package this month.” Hide/disable package switch. |
-| `Insufficient wallet balance` | Show required vs current; CTA to recharge. |
-| `wallet is frozen` | Support / wait messaging; do not offer recharge-only fix. |
+| `already have an active meal subscription` | Show Current; hide Subscribe |
+| `Insufficient wallet balance` | Show required vs current; CTA to recharge |
+| `wallet is frozen` | Support / wait messaging; do not offer recharge-only fix |
+| `SUBSCRIBE_REQUIRED` on `POST /orders/` | Route to Subscribe; Order Now is gone |
 
 ## Auth / headers
 

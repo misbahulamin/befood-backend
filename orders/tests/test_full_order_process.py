@@ -121,16 +121,8 @@ class FullOrderProcessTestCase(APITestCase):
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
     def test_daily_order_one_slot_and_completes_after_delivery(self, _mock_date):
-        self._auth(self.customer_token)
-        response = self.client.post(
-            self.create_url,
-            {'meal_public_id': str(self.daily_meal.public_id)},
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['expected_deliveries'], 1)
-        self.assertEqual(len(response.data['deliveries']), 1)
-        order = Order.objects.get(public_id=response.data['public_id'])
+        order = create_meal_order(self.customer_profile, self.daily_meal)
+        self.assertEqual(order.deliveries.count(), 1)
         delivery = order.deliveries.get()
         from orders.tests.test_meal_delivery_wallet_payment import ensure_priced_delivery_slot
 
@@ -201,15 +193,8 @@ class FullOrderProcessTestCase(APITestCase):
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
     def test_customer_isolation_and_progress_fields(self, _mock_date):
-        self._auth(self.customer_token)
-        created = self.client.post(
-            self.create_url,
-            {'meal_public_id': str(self.daily_meal.public_id)},
-            format='json',
-        )
-        order_id = created.data['public_id']
-        self.assertIn('expected_deliveries', created.data)
-        self.assertIn('delivered_count', created.data)
+        order = create_meal_order(self.customer_profile, self.daily_meal)
+        order_id = order.public_id
 
         detail_url = reverse('orders:order-detail', kwargs={'public_id': order_id})
         self._auth(self.other_token)
@@ -223,7 +208,8 @@ class FullOrderProcessTestCase(APITestCase):
 
         current = self.client.get(reverse('orders:order-current-package'))
         self.assertEqual(current.status_code, status.HTTP_200_OK)
-        self.assertEqual(current.data['current_package']['remaining_count'], 1)
+        self.assertIsNone(current.data['current_package'])
+        self.assertIsNone(current.data['current_subscription'])
 
         # Customer cannot mark delivery via admin endpoint
         delivery_id = ok.data['deliveries'][0]['public_id']

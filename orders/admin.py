@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     Cart,
     CartItem,
+    CustomerSubscription,
     MealDemandSnapshot,
     MealOffSettings,
     Order,
@@ -83,11 +84,43 @@ class OrderReviewAdmin(admin.ModelAdmin):
     search_fields = ('order__id',)
 
 
+@admin.register(CustomerSubscription)
+class CustomerSubscriptionAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'public_id',
+        'customer',
+        'meal_name_snapshot',
+        'meal_period_snapshot',
+        'status',
+        'started_on',
+        'cancel_effective_on',
+        'cancelled_at',
+        'created_at',
+    )
+    list_filter = ('status', 'meal_period_snapshot', 'started_on', 'created_at')
+    search_fields = (
+        'public_id',
+        'customer__user__email',
+        'meal_name_snapshot',
+    )
+    readonly_fields = (
+        'public_id',
+        'meal_name_snapshot',
+        'meal_period_snapshot',
+        'created_at',
+        'updated_at',
+    )
+    raw_id_fields = ('customer', 'meal')
+    date_hierarchy = 'started_on'
+
+
 @admin.register(OrderDelivery)
 class OrderDeliveryAdmin(admin.ModelAdmin):
     list_display = (
         'id',
         'order',
+        'subscription',
         'service_date',
         'meal_period',
         'status',
@@ -111,6 +144,8 @@ class OrderDeliveryAdmin(admin.ModelAdmin):
     search_fields = (
         'order__id',
         'order__customer__user__email',
+        'subscription__public_id',
+        'subscription__customer__user__email',
         'note',
         'delivery_full_address_snapshot',
         'delivery_label_snapshot',
@@ -132,7 +167,7 @@ class OrderDeliveryAdmin(admin.ModelAdmin):
     )
     date_hierarchy = 'service_date'
     autocomplete_fields = ('delivery_place',)
-    raw_id_fields = ('wallet_transaction',)
+    raw_id_fields = ('wallet_transaction', 'order', 'subscription')
 
 
 @admin.register(MealOffSettings)

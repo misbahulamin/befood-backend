@@ -15,6 +15,8 @@ from rest_framework.test import APITestCase
 from meals.models import MealCategory
 from orders.models import Order
 from orders.services.order_duration import calculate_order_period
+from orders.services.order_service import create_meal_order
+from orders.services.subscription_service import subscribe_customer
 from user_management.models import CustomerProfile
 
 
@@ -123,16 +125,12 @@ class OrderAPITestCase(APITestCase):
             'customer_note': note,
         }
 
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_verified_customer_can_create_order_for_active_meal(self, _mock_date):
+    def test_verified_customer_order_create_is_retired(self):
         self._auth()
         response = self.client.post(self.create_url, self._create_order_payload(note='After 1 PM'), format='json')
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['meal_name_snapshot'], 'Monthly Package')
-        self.assertEqual(response.data['order_status'], 'confirmed')
-        self.assertEqual(response.data['order_month'], '2026-07')
-        self.assertEqual(str(response.data['meal_public_id']), str(self.active_meal.public_id))
-        self.assertNotIn('meal', response.data)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['error_code'], 'SUBSCRIBE_REQUIRED')
+        self.assertEqual(Order.objects.count(), 0)
 
     def test_unauthenticated_user_cannot_create_order(self):
         response = self.client.post(self.create_url, self._create_order_payload(), format='json')
@@ -143,106 +141,9 @@ class OrderAPITestCase(APITestCase):
         response = self.client.post(self.create_url, self._create_order_payload(), format='json')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_cannot_order_inactive_meal(self):
-        self._auth()
-        response = self.client.post(
-            self.create_url,
-            self._create_order_payload(meal_public_id=self.inactive_meal.public_id),
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('meal_public_id', response.data)
-
-    def test_cannot_order_unpriced_meal(self):
-        unpriced = MealCategory.objects.create(
-            meal_name='Unpriced Package',
-            total_price=None,
-            meal_type=MealCategory.MealType.MONTHLY,
-            meal_thumbnail=make_test_image('unpriced.jpg'),
-            is_active=True,
-        )
-        self._auth()
-        response = self.client.post(
-            self.create_url,
-            self._create_order_payload(meal_public_id=unpriced.public_id),
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('meal_public_id', response.data)
-
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_order_stores_meal_snapshot_data(self, _mock_date):
-        self._auth()
-        response = self.client.post(self.create_url, self._create_order_payload(), format='json')
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        order = Order.objects.get(public_id=response.data['public_id'])
-        self.assertEqual(order.meal_name_snapshot, self.active_meal.meal_name)
-        self.assertEqual(order.meal_type_snapshot, self.active_meal.meal_type)
-        self.assertEqual(order.total_price_snapshot, self.active_meal.total_price)
-        self.assertIsNotNone(order.per_meal_price_snapshot)
-
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_customer_cannot_create_second_non_cancelled_order_in_same_month(self, _mock_date):
-        self._auth()
-        first = self.client.post(self.create_url, self._create_order_payload(), format='json')
-        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
-
-        weekly_meal = MealCategory.objects.create(
-            meal_name='Weekly Package',
-            total_price=Decimal('700.00'),
-            meal_thumbnail=make_test_image('weekly.jpg'),
-            meal_type=MealCategory.MealType.WEEKLY,
-            is_active=True,
-        )
-        second = self.client.post(
-            self.create_url,
-            self._create_order_payload(meal_public_id=weekly_meal.public_id),
-            format='json',
-        )
-        self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn(
-            'You already have a meal package for this month.',
-            str(second.data),
-        )
-
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_customer_can_create_new_order_if_previous_one_is_cancelled(self, _mock_date):
-        daily_meal = MealCategory.objects.create(
-            meal_name='Daily Package',
-            total_price=Decimal('180.00'),
-            meal_thumbnail=make_test_image('daily.jpg'),
-            meal_type=MealCategory.MealType.DAILY,
-            is_active=True,
-        )
-        self._auth()
-        first = self.client.post(
-            self.create_url,
-            self._create_order_payload(meal_public_id=daily_meal.public_id),
-            format='json',
-        )
-        order_id = first.data['public_id']
-        cancel_url = reverse('orders:order-cancel', kwargs={'public_id': order_id})
-        cancel_response = self.client.post(cancel_url, {}, format='json')
-        self.assertEqual(cancel_response.status_code, status.HTTP_200_OK)
-
-        weekly_meal = MealCategory.objects.create(
-            meal_name='Weekly Package',
-            total_price=Decimal('700.00'),
-            meal_thumbnail=make_test_image('weekly2.jpg'),
-            meal_type=MealCategory.MealType.WEEKLY,
-            is_active=True,
-        )
-        second = self.client.post(
-            self.create_url,
-            self._create_order_payload(meal_public_id=weekly_meal.public_id),
-            format='json',
-        )
-        self.assertEqual(second.status_code, status.HTTP_201_CREATED)
-
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
     def test_my_orders_returns_only_own_orders(self, _mock_date):
-        self._auth()
-        self.client.post(self.create_url, self._create_order_payload(), format='json')
+        create_meal_order(self.customer_profile, self.active_meal)
 
         self._auth(self.other_token)
         response = self.client.get(self.my_orders_url)
@@ -255,12 +156,10 @@ class OrderAPITestCase(APITestCase):
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
     def test_order_detail_cannot_be_accessed_by_another_customer(self, _mock_date):
-        self._auth()
-        create_response = self.client.post(self.create_url, self._create_order_payload(), format='json')
-        order_id = create_response.data['public_id']
+        order = create_meal_order(self.customer_profile, self.active_meal)
 
         self._auth(self.other_token)
-        detail_url = reverse('orders:order-detail', kwargs={'public_id': order_id})
+        detail_url = reverse('orders:order-detail', kwargs={'public_id': order.public_id})
         response = self.client.get(detail_url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -274,38 +173,40 @@ class OrderAPITestCase(APITestCase):
             meal_type=MealCategory.MealType.DAILY,
             is_active=True,
         )
+        order = create_meal_order(self.customer_profile, daily_meal)
         self._auth()
-        create_response = self.client.post(
-            self.create_url,
-            self._create_order_payload(meal_public_id=daily_meal.public_id),
-            format='json',
-        )
-        order_id = create_response.data['public_id']
-        cancel_url = reverse('orders:order-cancel', kwargs={'public_id': order_id})
+        cancel_url = reverse('orders:order-cancel', kwargs={'public_id': order.public_id})
         response = self.client.post(cancel_url, {'note': 'Changed mind'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['order_status'], 'cancelled')
-        order = Order.objects.get(public_id=order_id)
+        order.refresh_from_db()
         self.assertEqual(order.status_history.count(), 1)
 
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_current_package_endpoint_returns_active_current_month_order(self, _mock_date):
+    @patch('orders.services.subscription_service.business_today', return_value=date(2026, 7, 10))
+    @patch('orders.services.subscription_service.published_schedule_for_meal', return_value=object())
+    def test_current_package_endpoint_returns_active_subscription(self, _pub, _today):
+        self.active_meal.is_subscribable = True
+        self.active_meal.save(update_fields=['is_subscribable'])
+        subscription = subscribe_customer(self.customer_profile, self.active_meal, today=date(2026, 7, 10))
         self._auth()
-        create_response = self.client.post(self.create_url, self._create_order_payload(), format='json')
-        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
-
         response = self.client.get(self.current_package_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsNotNone(response.data['current_package'])
-        self.assertEqual(response.data['current_package']['public_id'], create_response.data['public_id'])
+        self.assertEqual(
+            response.data['current_package']['public_id'],
+            str(subscription.public_id),
+        )
+        self.assertEqual(
+            response.data['current_subscription']['public_id'],
+            str(subscription.public_id),
+        )
 
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_current_package_returns_null_when_no_order(self, _mock_date):
+    def test_current_package_returns_null_when_no_subscription(self):
         self._auth()
         response = self.client.get(self.current_package_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsNone(response.data['current_package'])
-        self.assertIn('No active meal package found', response.data['message'])
+        self.assertIn('No active meal subscription', response.data['message'])
 
 
 class OrderDurationTestCase(APITestCase):

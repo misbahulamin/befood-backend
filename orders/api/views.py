@@ -28,7 +28,13 @@ from orders.services.meal_off import (
     update_meal_off_settings,
 )
 from orders.services.order_delivery import DeliveryError, mark_delivery
-from orders.services.order_service import get_current_package
+from orders.services.subscription_parent import live_delivery_q
+from orders.services.order_service import SUBSCRIBE_REQUIRED_ERROR, get_current_package
+from orders.services.subscription_service import (
+    SUBSCRIBE_REQUIRED_CODE,
+    ensure_subscription_deliveries,
+)
+from orders.api.subscription_serializers import CustomerSubscriptionDetailSerializer
 from orders.services.order_status import OrderStatusError, change_order_status
 from orders.services.order_wallet_settings import (
     get_order_wallet_settings,
@@ -82,12 +88,9 @@ def _today_board_queryset(request):
     qs = OrderDelivery.objects.select_related(
         'order',
         'order__customer__user',
-    ).filter(
-        order__order_status__in={
-            Order.OrderStatus.CONFIRMED,
-            Order.OrderStatus.ACTIVE,
-        }
-    )
+        'subscription',
+        'subscription__customer__user',
+    ).filter(live_delivery_q(service_date))
 
     week_of_month = request.query_params.get('week_of_month')
     if week_of_month:
@@ -112,6 +115,8 @@ def _today_board_queryset(request):
         qs = OrderDelivery.objects.select_related(
             'order',
             'order__customer__user',
+            'subscription',
+            'subscription__customer__user',
         ).filter(pk__in=matching_ids)
     else:
         qs = qs.filter(service_date=service_date)
@@ -123,7 +128,7 @@ def _today_board_queryset(request):
     if delivery_status:
         qs = qs.filter(status=delivery_status)
 
-    return qs.order_by('service_date', 'meal_period', 'order_id'), None
+    return qs.order_by('service_date', 'meal_period', 'id'), None
 
 
 def _mark_order_delivery(request, order, delivery_id):
@@ -231,66 +236,29 @@ class AdminDeliveryActionsMixin:
     ),
     create=extend_schema(
         tags=['Order Management'],
-        summary='Create meal order',
+        summary='Create meal order (retired)',
         description=(
-            'Creates a meal package order for the authenticated verified customer. '
-            'Optional year/month selects the meal month (current through +12 months; '
-            'default = current local month). Eligibility gates (in order): meal active/priced, '
-            'month in window, published monthly menu for that meal+month, same-month package lock, '
-            'wallet balance >= admin-configured minimum. Wallet is NOT debited on create.'
+            'Monthly meal-package create is retired. Clients must POST /api/v1/subscriptions/ '
+            'with plan_public_id. This endpoint always returns 409 SUBSCRIBE_REQUIRED and '
+            'does not persist an Order.'
         ),
         request=OrderCreateSerializer,
         responses={
-            201: OrderDetailSerializer,
-            400: OpenApiResponse(
-                description=(
-                    'Validation error, invalid month, menu not published, month lock, '
-                    'insufficient wallet, or frozen wallet'
-                )
-            ),
+            409: OpenApiResponse(description='Subscribe required; monthly order create retired'),
             401: OpenApiResponse(description='Authentication required'),
             403: OpenApiResponse(description='Verified customer required'),
         },
         examples=[
             OpenApiExample(
-                'Create order (current month)',
+                'Subscribe required',
                 value={
-                    'meal_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-                    'customer_note': 'Please deliver after 1 PM',
-                },
-                request_only=True,
-            ),
-            OpenApiExample(
-                'Create order for a future month',
-                value={
-                    'meal_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-                    'year': 2026,
-                    'month': 8,
-                    'customer_note': '',
-                },
-                request_only=True,
-            ),
-            OpenApiExample(
-                'Menu not published',
-                value={
-                    'non_field_errors': [
-                        "This month's menu has not been published yet. "
-                        'Once the menu is published, you will be able to place your order.'
-                    ]
+                    'detail': (
+                        'Monthly meal orders are retired. Subscribe to a meal plan instead.'
+                    ),
+                    'error_code': 'SUBSCRIBE_REQUIRED',
                 },
                 response_only=True,
-                status_codes=['400'],
-            ),
-            OpenApiExample(
-                'Insufficient wallet balance',
-                value={
-                    'non_field_errors': [
-                        'Insufficient wallet balance to place an order. '
-                        'Minimum required is 500.00, current balance is 100.00.'
-                    ]
-                },
-                response_only=True,
-                status_codes=['400'],
+                status_codes=['409'],
             ),
         ],
     ),
@@ -362,19 +330,20 @@ class MealOrderViewSet(
         return queryset.none()
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        order = serializer.save()
-        output = OrderDetailSerializer(order, context={'request': request})
-        return Response(output.data, status=status.HTTP_201_CREATED)
+        return Response(
+            {
+                'detail': SUBSCRIBE_REQUIRED_ERROR,
+                'error_code': SUBSCRIBE_REQUIRED_CODE,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
 
     @extend_schema(
         tags=['Order Management'],
         summary='List orderable meal months for a package',
         description=(
-            'Returns the current local month through the next 12 months (13 entries) '
-            'with publish and existing-order flags for the given meal package. '
-            'Use for the Order Now month picker (default = entry with is_current true).'
+            'Retired. The 13-month Order Now picker is no longer the purchase path. '
+            'List plans at GET /api/v1/subscription-plans/ and subscribe instead.'
         ),
         parameters=[
             OpenApiParameter(
@@ -386,11 +355,9 @@ class MealOrderViewSet(
             ),
         ],
         responses={
-            200: OpenApiResponse(description='Meal identity and months list'),
-            400: OpenApiResponse(description='Missing meal_public_id'),
+            409: OpenApiResponse(description='Subscribe required; orderable-months retired'),
             401: OpenApiResponse(description='Authentication required'),
             403: OpenApiResponse(description='Verified customer required'),
-            404: OpenApiResponse(description='Meal not found'),
         },
         examples=[
             OpenApiExample(
@@ -425,17 +392,13 @@ class MealOrderViewSet(
     )
     @action(detail=False, methods=['get'], url_path='orderable-months')
     def orderable_months(self, request):
-        query = OrderableMonthsQuerySerializer(data=request.query_params)
-        query.is_valid(raise_exception=True)
-        meal_public_id = query.validated_data['meal_public_id']
-        try:
-            meal = MealCategory.objects.get(public_id=meal_public_id)
-        except MealCategory.DoesNotExist:
-            return Response({'detail': 'Meal not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        profile = request.user.customer_profile
-        payload = build_orderable_months_for_meal(profile, meal)
-        return Response(payload)
+        return Response(
+            {
+                'detail': SUBSCRIBE_REQUIRED_ERROR,
+                'error_code': SUBSCRIBE_REQUIRED_CODE,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
 
     @extend_schema(
         tags=['Order Management'],
@@ -455,7 +418,11 @@ class MealOrderViewSet(
 
     @extend_schema(
         tags=['Order Management'],
-        summary='Get current month package',
+        summary='Get current meal subscription',
+        description=(
+            'Returns the caller’s active subscription (same payload as '
+            'GET /api/v1/subscriptions/current/). Null when none.'
+        ),
         responses={
             200: OpenApiResponse(description='Current package or null'),
             401: OpenApiResponse(description='Authentication required'),
@@ -464,26 +431,26 @@ class MealOrderViewSet(
     @action(detail=False, methods=['get'], url_path='current-package')
     def current_package(self, request):
         profile = getattr(request.user, 'customer_profile', None)
+        empty = {
+            'current_package': None,
+            'current_subscription': None,
+            'message': 'No active meal subscription.',
+        }
         if profile is None:
-            return Response(
-                {
-                    'current_package': None,
-                    'message': 'No active meal package found for this month.',
-                }
-            )
+            return Response(empty)
 
-        order = get_current_package(profile)
-        if order is None:
-            return Response(
-                {
-                    'current_package': None,
-                    'message': 'No active meal package found for this month.',
-                }
-            )
+        subscription = get_current_package(profile)
+        if subscription is None:
+            return Response(empty)
 
+        ensure_subscription_deliveries(subscription)
+        payload = CustomerSubscriptionDetailSerializer(
+            subscription, context={'request': request}
+        ).data
         return Response(
             {
-                'current_package': OrderDetailSerializer(order, context={'request': request}).data,
+                'current_package': payload,
+                'current_subscription': payload,
                 'message': None,
             }
         )

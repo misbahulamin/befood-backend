@@ -50,6 +50,13 @@ class MealCategory(models.Model):
     )
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
+    is_subscribable = models.BooleanField(
+        default=False,
+        help_text=(
+            'When true, verified customers may subscribe to this package as an '
+            'open-ended meal plan (Student/Regular/Premium style).'
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

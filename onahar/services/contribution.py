@@ -140,13 +140,20 @@ def credit_for_delivery(delivery, actor=None) -> OnaharPointEvent | None:
 
     locked = (
         OrderDelivery.objects.select_for_update()
-        .select_related('order__customer__user')
+        .select_related(
+            'order__customer__user',
+            'subscription__customer__user',
+        )
         .get(pk=delivery.pk)
     )
     if locked.status != OrderDelivery.DeliveryStatus.DELIVERED:
         return None
 
-    customer = locked.order.customer
+    from orders.services.subscription_parent import delivery_customer
+
+    customer = delivery_customer(locked)
+    if customer is None:
+        return None
     # Attribute points to the meal service date's calendar month (project TZ dates).
     year_month = locked.service_date.strftime('%Y-%m')
 

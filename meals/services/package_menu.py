@@ -5,7 +5,7 @@ from django.utils import timezone
 
 from meals.models import MonthlyMenuSchedule
 from meals.services.menu_schedule import serialize_schedule_assignments
-from orders.models import Order
+from orders.models import CustomerSubscription, Order
 
 
 def resolve_target_year_month(
@@ -56,6 +56,7 @@ def resolve_target_year_month(
 
 
 def orders_for_customer_month(customer_profile, year: int, month: int):
+    """Historical monthly orders (read-only). Prefer active subscription for live menus."""
     order_month = f'{year:04d}-{month:02d}'
     return (
         Order.objects.filter(
@@ -65,6 +66,17 @@ def orders_for_customer_month(customer_profile, year: int, month: int):
         .exclude(order_status=Order.OrderStatus.CANCELLED)
         .select_related('meal')
         .order_by('-created_at')
+    )
+
+
+def active_subscription_for_customer(customer_profile):
+    return (
+        CustomerSubscription.objects.filter(
+            customer=customer_profile,
+            status=CustomerSubscription.Status.ACTIVE,
+        )
+        .select_related('meal')
+        .first()
     )
 
 
@@ -94,11 +106,12 @@ def build_package_menu_for_customer(
         month=month,
         reference_date=reference_date,
     )
-    orders = list(orders_for_customer_month(customer_profile, target_year, target_month))
-
+    subscription = active_subscription_for_customer(customer_profile)
     packages = []
-    for order in orders:
-        schedule = published_schedule_for_meal(order.meal_id, target_year, target_month)
+    if subscription is not None:
+        schedule = published_schedule_for_meal(
+            subscription.meal_id, target_year, target_month
+        )
         days = (
             serialize_schedule_assignments(schedule, customer_visible_only=True)
             if schedule is not None
@@ -106,9 +119,10 @@ def build_package_menu_for_customer(
         )
         packages.append(
             {
-                'meal_public_id': str(order.meal.public_id),
-                'meal_name': order.meal.meal_name,
-                'order_public_id': str(order.public_id),
+                'meal_public_id': str(subscription.meal.public_id),
+                'meal_name': subscription.meal.meal_name,
+                'subscription_public_id': str(subscription.public_id),
+                'order_public_id': None,
                 'schedule_published': schedule is not None,
                 'days': days,
             }

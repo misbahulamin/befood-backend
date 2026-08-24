@@ -1,22 +1,21 @@
-# Order eligibility: month lock + wallet minimum
+# Order eligibility: wallet minimum to subscribe
 
 ## Quick summary
 
-Before a verified customer can create a meal package order, the backend applies two eligibility gates (in order):
+Verified customers **subscribe** to a meal plan (not monthly `POST /orders/`). Before subscribe, the backend requires wallet `balance` `>=` admin-configured `min_wallet_balance_to_order` (default `500.00` BDT). Missing wallet → `0`. Frozen wallet → reject even if balance is enough.
 
-1. **Same-month package lock** — at most one non-cancelled package per `order_month` (`YYYY-MM`).
-2. **Wallet minimum balance** — wallet `balance` must be `>=` admin-configured `min_wallet_balance_to_order` (default `500.00` BDT).
+The gate lives in `subscribe_customer` (`orders/services/subscription_service.py`) and reuses `check_wallet_min_balance`. Passing does **not** debit the wallet.
 
-Both gates live in `create_meal_order` (`orders/services/order_service.py`). Passing the wallet gate does **not** debit the wallet and does **not** create a `payment` ledger row.
+Customer `POST /orders/` is retired (`409` `SUBSCRIBE_REQUIRED`). Same-month package lock still applies only to the internal `create_meal_order()` helper (historical tests / migration), not to HTTP checkout.
 
 | Method | Path | Why |
 |--------|------|-----|
-| `POST` | `/orders/` | Customer creates package order (gates applied) |
+| `POST` | `/api/v1/subscriptions/` | Customer subscribe (wallet gate) |
 | `GET` | `/api/v1/web/orders/order-wallet-settings/` | Admin reads minimum |
 | `PATCH` | `/api/v1/web/orders/order-wallet-settings/` | Admin updates minimum |
 | `GET` | `/wallet/` | Customer sees `min_wallet_balance_to_order` |
 
-Also mounted at `/orders/order-wallet-settings/` (same view; web path is preferred for admin UI).
+Also mounted at `/orders/order-wallet-settings/` (web path preferred for admin UI).
 
 ## Permissions matrix
 

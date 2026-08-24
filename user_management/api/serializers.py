@@ -13,19 +13,39 @@ class CustomerProfileSerializer(serializers.ModelSerializer):
 
 class CustomerRegistrationSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    first_name = serializers.CharField(max_length=150)
-    last_name = serializers.CharField(max_length=150)
-    phone = serializers.CharField(max_length=10)
-    occupation = serializers.ChoiceField(choices=CustomerProfile.Occupation.choices)
-    is_bachelor = serializers.BooleanField()
     password = serializers.CharField(write_only=True)
+    # Optional legacy fields (compatibility window) — not required for signup.
+    first_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
+    last_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
+    phone = serializers.CharField(max_length=10, required=False, allow_null=True, allow_blank=True, default=None)
+    occupation = serializers.ChoiceField(
+        choices=CustomerProfile.Occupation.choices,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        default=None,
+    )
+    is_bachelor = serializers.BooleanField(required=False, allow_null=True, default=None)
 
     def validate_phone(self, value):
+        if value in (None, ''):
+            return None
         if not value.isdigit() or len(value) != 10:
             raise serializers.ValidationError('Phone must be exactly 10 digits and digits only.')
         if CustomerProfile.objects.filter(phone=value).exists():
             raise serializers.ValidationError('Phone already exists.')
         return value
+
+    def validate_occupation(self, value):
+        if value in (None, ''):
+            return None
+        return value
+
+    def validate_first_name(self, value):
+        return value.strip() if value else ''
+
+    def validate_last_name(self, value):
+        return value.strip() if value else ''
 
     def validate_email(self, value):
         value = value.lower()
@@ -127,6 +147,7 @@ class CurrentUserSerializer(serializers.Serializer):
     user = serializers.SerializerMethodField()
     groups = serializers.SerializerMethodField()
     customer_profile = serializers.SerializerMethodField()
+    onboarding_completion = serializers.SerializerMethodField()
     is_authenticated = serializers.SerializerMethodField()
 
     def get_user(self, obj):
@@ -143,9 +164,15 @@ class CurrentUserSerializer(serializers.Serializer):
             'occupation': profile.occupation,
             'is_bachelor': profile.is_bachelor,
             'is_email_verified': profile.is_email_verified,
+            'gender': profile.gender,
             'profile_completion_percentage': profile.profile_completion_percentage,
             'profile_completed': profile.profile_completed,
         }
+
+    def get_onboarding_completion(self, obj):
+        from ..services.profile_onboarding import get_onboarding_completion
+
+        return get_onboarding_completion(obj)
 
     def get_is_authenticated(self, obj):
         return obj.is_authenticated

@@ -143,3 +143,84 @@ class CustomerAuthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['message'], 'Logged out successfully.')
         self.assertFalse(Token.objects.filter(user=user).exists())
+
+    def test_minimal_registration_email_password_only(self):
+        response = self.client.post(
+            self.register_url,
+            {'email': 'minimal@example.com', 'password': 'StrongPassword123'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        user = User.objects.get(email='minimal@example.com')
+        self.assertFalse(user.is_active)
+        self.assertEqual(user.first_name, '')
+        self.assertEqual(user.last_name, '')
+        profile = user.customer_profile
+        self.assertIsNone(profile.phone)
+        self.assertIsNone(profile.occupation)
+        self.assertIsNone(profile.is_bachelor)
+        self.assertTrue(user.groups.filter(name='CUSTOMER').exists())
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_verified_incomplete_profile_can_login(self):
+        self.client.post(
+            self.register_url,
+            {'email': 'incomplete@example.com', 'password': 'StrongPassword123'},
+            format='json',
+        )
+        user = User.objects.get(email='incomplete@example.com')
+        self.verify_customer(user)
+        response = self.login_customer(email='incomplete@example.com')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('token', response.data)
+        self.assertIn('onboarding_completion', response.data)
+        self.assertFalse(response.data['onboarding_completion']['completed'])
+        self.assertIn('phone', response.data['onboarding_completion']['missing_fields'])
+
+    def test_me_includes_onboarding_completion(self):
+        self.client.post(
+            self.register_url,
+            {'email': 'meuser@example.com', 'password': 'StrongPassword123'},
+            format='json',
+        )
+        user = User.objects.get(email='meuser@example.com')
+        self.verify_customer(user)
+        login = self.login_customer(email='meuser@example.com')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {login.data["token"]}')
+        response = self.client.get(self.me_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('onboarding_completion', response.data)
+        self.assertFalse(response.data['onboarding_completion']['completed'])
+        self.assertIn('first_name', response.data['onboarding_completion']['missing_fields'])
+
+    def test_multiple_customers_without_phone_allowed(self):
+        self.client.post(
+            self.register_url,
+            {'email': 'nophone1@example.com', 'password': 'StrongPassword123'},
+            format='json',
+        )
+        response = self.client.post(
+            self.register_url,
+            {'email': 'nophone2@example.com', 'password': 'StrongPassword123'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(CustomerProfile.objects.filter(phone__isnull=True).count(), 2)
+
+    def test_privileged_fields_ignored_at_registration(self):
+        response = self.client.post(
+            self.register_url,
+            {
+                'email': 'priv@example.com',
+                'password': 'StrongPassword123',
+                'is_email_verified': True,
+                'is_active': True,
+                'profile_completed': True,
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        user = User.objects.get(email='priv@example.com')
+        self.assertFalse(user.is_active)
+        self.assertFalse(user.customer_profile.is_email_verified)
+        self.assertFalse(user.customer_profile.profile_completed)

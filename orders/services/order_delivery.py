@@ -235,14 +235,19 @@ def mark_delivery(
 
     locked = (
         OrderDelivery.objects.select_for_update()
-        .select_related('order')
+        .select_related(
+            'order',
+            'subscription',
+            'subscription__customer',
+            'order__customer',
+        )
         .get(pk=delivery.pk)
     )
-    order = locked.order
+    from orders.services.subscription_parent import delivery_parent_is_cancelled
 
-    if order.order_status == Order.OrderStatus.CANCELLED:
+    if delivery_parent_is_cancelled(locked):
         raise DeliveryError('Cannot mark delivery on a cancelled order.')
-    if order.order_status == Order.OrderStatus.COMPLETED and locked.status != to_status:
+    if locked.order_id and locked.order.order_status == Order.OrderStatus.COMPLETED and locked.status != to_status:
         raise DeliveryError('Cannot mark delivery on a completed order.')
 
     # Idempotent: same terminal status already set
@@ -254,8 +259,9 @@ def mark_delivery(
             f'Delivery is already {locked.status} and cannot change to {to_status}.'
         )
 
-    activate_order_if_due(order, changed_by=marked_by)
-    order.refresh_from_db()
+    if locked.order_id:
+        activate_order_if_due(locked.order, changed_by=marked_by)
+        locked.order.refresh_from_db()
 
     locked.status = to_status
     locked.marked_by = marked_by
@@ -287,11 +293,12 @@ def mark_delivery(
                 'Onahar credit_for_delivery failed for delivery_id=%s', locked.pk
             )
 
-    order.refresh_from_db()
-    try:
-        complete_order_if_done(order, changed_by=marked_by)
-    except OrderStatusError as exc:
-        raise DeliveryError(str(exc)) from exc
+    if locked.order_id:
+        locked.order.refresh_from_db()
+        try:
+            complete_order_if_done(locked.order, changed_by=marked_by)
+        except OrderStatusError as exc:
+            raise DeliveryError(str(exc)) from exc
 
     locked.refresh_from_db()
     return locked

@@ -44,7 +44,22 @@ class CustomerProfileView(APIView):
         responses={200: CustomerExtendedProfileSerializer},
         examples=[
             OpenApiExample(
-                'Update profile',
+                'Update names only',
+                value={'first_name': 'John', 'last_name': 'Doe'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Update phone only',
+                value={'phone': '1712345678'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Update demographics',
+                value={'gender': 'male', 'is_bachelor': True, 'occupation': 'student'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Update extended profile',
                 value={
                     'birth_date': '2000-05-15',
                     'gender': 'male',
@@ -64,9 +79,12 @@ class CustomerProfileView(APIView):
                     'preferred_delivery_time': '13:30',
                 },
                 request_only=True,
-            )
+            ),
         ],
-        description='Partially update extended customer profile fields.',
+        description=(
+            'Partially update customer onboarding and extended profile fields. '
+            'Submitted fields are validated and persisted immediately.'
+        ),
     )
     def patch(self, request):
         profile = self._get_profile(request)

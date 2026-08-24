@@ -13,6 +13,7 @@ class MealPaymentInfoSerializer(serializers.Serializer):
     service_date = serializers.CharField(allow_null=True)
     meal_period = serializers.CharField(allow_null=True)
     order_public_id = serializers.CharField(allow_null=True)
+    subscription_public_id = serializers.CharField(allow_null=True, required=False)
     delivery_public_id = serializers.CharField(allow_null=True)
     final_meal_price = serializers.CharField(allow_null=True, required=False)
     charge_source = serializers.CharField(allow_null=True, required=False)
@@ -70,6 +71,7 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
             'service_date': metadata.get('service_date'),
             'meal_period': metadata.get('meal_period'),
             'order_public_id': metadata.get('order_public_id'),
+            'subscription_public_id': metadata.get('subscription_public_id'),
             'delivery_public_id': metadata.get('delivery_public_id'),
             'final_meal_price': metadata.get('final_meal_price'),
             'charge_source': metadata.get('charge_source'),

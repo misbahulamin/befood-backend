@@ -87,8 +87,9 @@ def can_meal_off(
 ) -> bool:
     if delivery.status != OrderDelivery.DeliveryStatus.SCHEDULED:
         return False
-    order = delivery.order
-    if order.order_status == Order.OrderStatus.CANCELLED:
+    from orders.services.subscription_parent import delivery_parent_is_cancelled
+
+    if delivery_parent_is_cancelled(delivery):
         return False
     return _before_or_at_deadline(delivery, now=now, settings_obj=settings_obj)
 
@@ -103,8 +104,9 @@ def can_meal_on(
         return False
     if delivery.skip_source != OrderDelivery.SkipSource.CUSTOMER:
         return False
-    order = delivery.order
-    if order.order_status == Order.OrderStatus.CANCELLED:
+    from orders.services.subscription_parent import delivery_parent_is_cancelled
+
+    if delivery_parent_is_cancelled(delivery):
         return False
     return _before_or_at_deadline(delivery, now=now, settings_obj=settings_obj)
 
@@ -117,15 +119,25 @@ class MealOffError(Exception):
 def customer_meal_off(delivery: OrderDelivery, user, note: str = '') -> OrderDelivery:
     locked = (
         OrderDelivery.objects.select_for_update()
-        .select_related('order', 'order__customer')
+        .select_related(
+            'order',
+            'order__customer',
+            'subscription',
+            'subscription__customer',
+        )
         .get(pk=delivery.pk)
     )
-    order = locked.order
+    from orders.services.subscription_parent import (
+        delivery_customer,
+        delivery_parent_is_cancelled,
+    )
+
     profile = getattr(user, 'customer_profile', None)
-    if profile is None or order.customer_id != profile.pk:
+    owner = delivery_customer(locked)
+    if profile is None or owner is None or owner.pk != profile.pk:
         raise MealOffError('Delivery not found for this order.')
 
-    if order.order_status == Order.OrderStatus.CANCELLED:
+    if delivery_parent_is_cancelled(locked):
         raise MealOffError('Cannot meal-off on a cancelled order.')
 
     if locked.status != OrderDelivery.DeliveryStatus.SCHEDULED:
@@ -156,14 +168,15 @@ def customer_meal_off(delivery: OrderDelivery, user, note: str = '') -> OrderDel
         ]
     )
 
-    try:
-        complete_order_if_done(
-            order,
-            changed_by=user,
-            note='Completed after customer meal-off.',
-        )
-    except OrderStatusError as exc:
-        raise MealOffError(str(exc)) from exc
+    if locked.order_id:
+        try:
+            complete_order_if_done(
+                locked.order,
+                changed_by=user,
+                note='Completed after customer meal-off.',
+            )
+        except OrderStatusError as exc:
+            raise MealOffError(str(exc)) from exc
 
     locked.refresh_from_db()
     return locked
@@ -178,15 +191,25 @@ def customer_meal_on(delivery: OrderDelivery, user, note: str = '') -> OrderDeli
     """
     locked = (
         OrderDelivery.objects.select_for_update()
-        .select_related('order', 'order__customer')
+        .select_related(
+            'order',
+            'order__customer',
+            'subscription',
+            'subscription__customer',
+        )
         .get(pk=delivery.pk)
     )
-    order = locked.order
+    from orders.services.subscription_parent import (
+        delivery_customer,
+        delivery_parent_is_cancelled,
+    )
+
     profile = getattr(user, 'customer_profile', None)
-    if profile is None or order.customer_id != profile.pk:
+    owner = delivery_customer(locked)
+    if profile is None or owner is None or owner.pk != profile.pk:
         raise MealOffError('Delivery not found for this order.')
 
-    if order.order_status == Order.OrderStatus.CANCELLED:
+    if delivery_parent_is_cancelled(locked):
         raise MealOffError('Cannot meal-on on a cancelled order.')
 
     if locked.status != OrderDelivery.DeliveryStatus.SKIPPED:
@@ -218,10 +241,11 @@ def customer_meal_on(delivery: OrderDelivery, user, note: str = '') -> OrderDeli
         update_fields.append('note')
     locked.save(update_fields=update_fields)
 
-    try:
-        reopen_order_after_meal_on(order, changed_by=user)
-    except OrderStatusError as exc:
-        raise MealOffError(str(exc)) from exc
+    if locked.order_id:
+        try:
+            reopen_order_after_meal_on(locked.order, changed_by=user)
+        except OrderStatusError as exc:
+            raise MealOffError(str(exc)) from exc
 
     locked.refresh_from_db()
     return locked

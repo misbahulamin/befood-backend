@@ -107,6 +107,67 @@ class OrderReview(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class CustomerSubscription(PublicIdMixin, models.Model):
+    """Open-ended meal entitlement: active until the customer (or admin) cancels."""
+
+    class Status(models.TextChoices):
+        ACTIVE = 'active', 'Active'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    customer = models.ForeignKey(
+        'user_management.CustomerProfile',
+        on_delete=models.CASCADE,
+        related_name='meal_subscriptions',
+    )
+    meal = models.ForeignKey(
+        'meals.MealCategory',
+        on_delete=models.PROTECT,
+        related_name='subscriptions',
+    )
+    meal_name_snapshot = models.CharField(max_length=255)
+    meal_period_snapshot = models.CharField(
+        max_length=10,
+        help_text='lunch | dinner | both at subscribe time.',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
+    )
+    started_on = models.DateField(
+        help_text='Local business date when service starts (meal-off timezone).',
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancel_effective_on = models.DateField(
+        null=True,
+        blank=True,
+        help_text='Last local date slots may still be served after cancel.',
+    )
+    customer_note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['customer'],
+                condition=Q(status='active'),
+                name='unique_active_subscription_per_customer',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['status', 'started_on']),
+        ]
+
+    def __str__(self):
+        return (
+            f'Subscription #{self.pk} - {self.meal_name_snapshot} '
+            f'({self.status})'
+        )
+
+
 class OrderDelivery(PublicIdMixin, models.Model):
     class MealPeriod(models.TextChoices):
         LUNCH = 'lunch', 'Lunch'
@@ -121,13 +182,29 @@ class OrderDelivery(PublicIdMixin, models.Model):
     class SkipSource(models.TextChoices):
         CUSTOMER = 'customer', 'Customer'
         ADMIN = 'admin', 'Admin'
+        SYSTEM = 'system', 'System'
 
     class PaymentStatus(models.TextChoices):
         NOT_APPLICABLE = 'not_applicable', 'Not applicable'
         CHARGED = 'charged', 'Charged'
         FAILED = 'failed', 'Failed'
 
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='deliveries')
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.CASCADE,
+        related_name='deliveries',
+        null=True,
+        blank=True,
+        help_text='Historical monthly order parent; null for subscription-owned slots.',
+    )
+    subscription = models.ForeignKey(
+        CustomerSubscription,
+        on_delete=models.CASCADE,
+        related_name='deliveries',
+        null=True,
+        blank=True,
+        help_text='Active (or cancelled) subscription owning this slot.',
+    )
     service_date = models.DateField()
     meal_period = models.CharField(max_length=20, choices=MealPeriod.choices)
     status = models.CharField(
@@ -140,7 +217,7 @@ class OrderDelivery(PublicIdMixin, models.Model):
         choices=SkipSource.choices,
         null=True,
         blank=True,
-        help_text='Who initiated a skip: customer meal-off or admin mark.',
+        help_text='Who initiated a skip: customer, admin, or system (e.g. cancel).',
     )
     payment_status = models.CharField(
         max_length=20,
@@ -199,16 +276,36 @@ class OrderDelivery(PublicIdMixin, models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=['order', 'service_date', 'meal_period'],
+                condition=Q(order__isnull=False),
                 name='unique_order_delivery_slot',
+            ),
+            models.UniqueConstraint(
+                fields=['subscription', 'service_date', 'meal_period'],
+                condition=Q(subscription__isnull=False),
+                name='unique_subscription_delivery_slot',
+            ),
+            models.CheckConstraint(
+                check=(
+                    Q(order__isnull=False, subscription__isnull=True)
+                    | Q(order__isnull=True, subscription__isnull=False)
+                    | Q(order__isnull=False, subscription__isnull=False)
+                ),
+                name='order_delivery_requires_order_or_subscription',
             ),
         ]
         indexes = [
             models.Index(fields=['service_date', 'status']),
             models.Index(fields=['order', 'status']),
+            models.Index(fields=['subscription', 'status']),
         ]
 
     def __str__(self):
-        return f'Delivery #{self.pk} order={self.order_id} {self.service_date} {self.meal_period}'
+        parent = (
+            f'sub={self.subscription_id}'
+            if self.subscription_id
+            else f'order={self.order_id}'
+        )
+        return f'Delivery #{self.pk} {parent} {self.service_date} {self.meal_period}'
 
 
 class MealOffSettings(models.Model):
@@ -249,14 +346,14 @@ class MealOffSettings(models.Model):
 
 
 class OrderWalletSettings(models.Model):
-    """Singleton: minimum wallet balance required before placing a meal package order."""
+    """Singleton: minimum wallet balance required to subscribe to a meal plan."""
 
     min_wallet_balance_to_order = models.DecimalField(
         max_digits=12,
         decimal_places=2,
         default=Decimal('500.00'),
         validators=[MinValueValidator(Decimal('0.00'))],
-        help_text='Minimum wallet balance (BDT) required to place a meal package order.',
+        help_text='Minimum wallet balance (BDT) required to subscribe to a meal plan.',
     )
     updated_at = models.DateTimeField(auto_now=True)
 

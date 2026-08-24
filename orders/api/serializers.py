@@ -13,15 +13,8 @@ from orders.models import (
 from orders.services.meal_off import can_meal_off, can_meal_on, meal_off_deadline
 from orders.services.order_delivery import get_order_progress
 from orders.services.order_service import (
-    FrozenWalletOrderError,
-    InactiveMealError,
-    InsufficientWalletBalanceError,
-    InvalidMealMonthError,
-    MenuNotPublishedError,
-    MonthLockError,
-    ServiceAreaOrderError,
-    UnpricedMealError,
-    create_meal_order,
+    SUBSCRIBE_REQUIRED_ERROR,
+    SubscribeRequiredError,
 )
 
 
@@ -67,36 +60,7 @@ class OrderCreateSerializer(serializers.Serializer):
         return attrs
 
     def create(self, validated_data):
-        user = self.context['request'].user
-        customer = user.customer_profile
-        meal = self.context['meal']
-        try:
-            return create_meal_order(
-                customer=customer,
-                meal=meal,
-                customer_note=validated_data.get('customer_note', ''),
-                year=validated_data.get('year'),
-                month=validated_data.get('month'),
-            )
-        except MonthLockError as exc:
-            raise serializers.ValidationError({'non_field_errors': [str(exc)]})
-        except MenuNotPublishedError as exc:
-            raise serializers.ValidationError({'non_field_errors': [str(exc)]})
-        except InvalidMealMonthError as exc:
-            raise serializers.ValidationError({'month': [str(exc)]})
-        except (InsufficientWalletBalanceError, FrozenWalletOrderError) as exc:
-            raise serializers.ValidationError({'non_field_errors': [str(exc)]})
-        except ServiceAreaOrderError as exc:
-            raise serializers.ValidationError(
-                {
-                    'non_field_errors': [str(exc)],
-                    'error_code': [exc.code],
-                }
-            )
-        except InactiveMealError as exc:
-            raise serializers.ValidationError({'meal_public_id': [str(exc)]})
-        except UnpricedMealError as exc:
-            raise serializers.ValidationError({'meal_public_id': [str(exc)]})
+        raise SubscribeRequiredError(SUBSCRIBE_REQUIRED_ERROR)
 
 
 class OrderableMonthsQuerySerializer(serializers.Serializer):
@@ -334,17 +298,19 @@ class MarkDeliverySerializer(serializers.Serializer):
 
 
 class TodayBoardDeliverySerializer(serializers.ModelSerializer):
-    order_public_id = serializers.UUIDField(source='order.public_id', read_only=True)
-    customer_email = serializers.EmailField(source='order.customer.user.email', read_only=True)
-    meal_name_snapshot = serializers.CharField(source='order.meal_name_snapshot', read_only=True)
-    meal_type_snapshot = serializers.CharField(source='order.meal_type_snapshot', read_only=True)
-    order_status = serializers.CharField(source='order.order_status', read_only=True)
+    order_public_id = serializers.SerializerMethodField()
+    subscription_public_id = serializers.SerializerMethodField()
+    customer_email = serializers.SerializerMethodField()
+    meal_name_snapshot = serializers.SerializerMethodField()
+    meal_type_snapshot = serializers.SerializerMethodField()
+    order_status = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderDelivery
         fields = (
             'public_id',
             'order_public_id',
+            'subscription_public_id',
             'customer_email',
             'meal_name_snapshot',
             'meal_type_snapshot',
@@ -360,6 +326,38 @@ class TodayBoardDeliverySerializer(serializers.ModelSerializer):
             'delivery_area_snapshot',
             'delivery_city_snapshot',
         )
+        read_only_fields = fields
+
+    def get_order_public_id(self, obj):
+        return str(obj.order.public_id) if obj.order_id else None
+
+    def get_subscription_public_id(self, obj):
+        return str(obj.subscription.public_id) if obj.subscription_id else None
+
+    def get_customer_email(self, obj):
+        from orders.services.subscription_parent import delivery_customer
+
+        customer = delivery_customer(obj)
+        if customer is None:
+            return None
+        return customer.user.email
+
+    def get_meal_name_snapshot(self, obj):
+        from orders.services.subscription_parent import delivery_meal_name
+
+        return delivery_meal_name(obj)
+
+    def get_meal_type_snapshot(self, obj):
+        if obj.order_id:
+            return obj.order.meal_type_snapshot
+        return None
+
+    def get_order_status(self, obj):
+        if obj.order_id:
+            return obj.order.order_status
+        if obj.subscription_id:
+            return obj.subscription.status
+        return None
 
 
 class MealDemandPackageSerializer(serializers.Serializer):

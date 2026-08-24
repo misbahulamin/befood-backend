@@ -22,7 +22,7 @@ from orders.services.order_service import (
     create_meal_order,
 )
 from user_management.models import AdminProfile, CustomerProfile
-from wallet.models import Wallet, WalletTransaction
+from wallet.models import Wallet
 from wallet.services.ledger import credit_wallet, get_or_create_wallet
 
 
@@ -240,92 +240,17 @@ class OrderWalletEligibilityTests(APITestCase):
         response = self.client.get(self.settings_url)
         self.assertIn(response.status_code, {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN})
 
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_balance_at_minimum_allows_order_without_debit(self, _mock_date):
-        wallet = self._fund(Decimal('500.00'))
+    def test_customer_order_create_is_retired(self):
+        self._fund(Decimal('500.00'))
         self._auth()
         response = self.client.post(
             self.create_url,
             {'meal_public_id': str(self.meal.public_id)},
             format='json',
         )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        wallet.refresh_from_db()
-        self.assertEqual(wallet.balance, Decimal('500.00'))
-        self.assertEqual(
-            WalletTransaction.objects.filter(
-                wallet=wallet,
-                type=WalletTransaction.Type.PAYMENT,
-            ).count(),
-            0,
-        )
-
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_balance_below_minimum_rejected(self, _mock_date):
-        self._fund(Decimal('499.99'))
-        self._auth()
-        response = self.client.post(
-            self.create_url,
-            {'meal_public_id': str(self.meal.public_id)},
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('Insufficient wallet balance', str(response.data))
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['error_code'], 'SUBSCRIBE_REQUIRED')
         self.assertEqual(Order.objects.filter(customer=self.customer_profile).count(), 0)
-
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_missing_wallet_treated_as_zero(self, _mock_date):
-        self.assertFalse(Wallet.objects.filter(customer=self.customer_profile).exists())
-        self._auth()
-        response = self.client.post(
-            self.create_url,
-            {'meal_public_id': str(self.meal.public_id)},
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('Insufficient wallet balance', str(response.data))
-
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_frozen_wallet_rejected(self, _mock_date):
-        wallet = self._fund(Decimal('1000.00'))
-        wallet.status = Wallet.Status.FROZEN
-        wallet.save(update_fields=['status'])
-        self._auth()
-        response = self.client.post(
-            self.create_url,
-            {'meal_public_id': str(self.meal.public_id)},
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('frozen', str(response.data).lower())
-        self.assertEqual(Order.objects.filter(customer=self.customer_profile).count(), 0)
-
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_month_lock_wins_over_low_balance(self, _mock_date):
-        _set_wallet_min(Decimal('0.00'))
-        create_meal_order(self.customer_profile, self.meal)
-        _set_wallet_min(Decimal('500.00'))
-        # No wallet / low balance, but month lock should surface first
-        self._auth()
-        response = self.client.post(
-            self.create_url,
-            {'meal_public_id': str(self.meal.public_id)},
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('already have a meal package for this month', str(response.data))
-
-    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
-    def test_admin_lowered_minimum_allows_order(self, _mock_date):
-        _set_wallet_min(Decimal('300.00'))
-        self._fund(Decimal('300.00'))
-        self._auth()
-        response = self.client.post(
-            self.create_url,
-            {'meal_public_id': str(self.meal.public_id)},
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
     def test_service_insufficient_and_frozen_errors(self, _mock_date):

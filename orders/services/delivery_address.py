@@ -1,6 +1,7 @@
 from datetime import date
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from orders.models import OrderDelivery
@@ -41,7 +42,11 @@ def resolve_and_apply_snapshot(
     delivery: OrderDelivery,
     customer_profile: CustomerProfile | None = None,
 ) -> OrderDelivery:
-    profile = customer_profile or delivery.order.customer
+    profile = customer_profile
+    if profile is None and delivery.subscription_id:
+        profile = delivery.subscription.customer
+    if profile is None and delivery.order_id:
+        profile = delivery.order.customer
     place = resolve_delivery_address(profile, delivery.service_date, delivery.meal_period)
     apply_delivery_snapshot(delivery, place)
     return delivery
@@ -59,11 +64,14 @@ def resync_future_scheduled_deliveries(
     """
     today = reference_date or today_in_meal_tz()
     qs = (
-        OrderDelivery.objects.select_related('order')
+        OrderDelivery.objects.select_related('order', 'subscription')
         .filter(
-            order__customer=customer_profile,
             status=OrderDelivery.DeliveryStatus.SCHEDULED,
             service_date__gte=today,
+        )
+        .filter(
+            Q(order__customer=customer_profile)
+            | Q(subscription__customer=customer_profile)
         )
         .select_for_update()
     )

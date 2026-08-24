@@ -42,22 +42,22 @@ def _use_order_average_fallback() -> bool:
     return bool(getattr(settings, 'MEAL_DELIVERY_CHARGE_USE_ORDER_AVERAGE', False))
 
 
-def _resolve_charge_amount(delivery: OrderDelivery, order) -> tuple[Decimal, dict]:
+def _resolve_charge_amount(delivery: OrderDelivery, meal_id: int, average_price) -> tuple[Decimal, dict]:
     """
     Return (amount, extra_metadata) for the delivery debit.
 
     Default: published menu slot final_meal_price_snapshot.
-    Emergency flag: order average per_meal_price_snapshot.
+    Emergency flag: order/subscription average per-meal snapshot.
     """
     if _use_order_average_fallback():
-        amount = Decimal(order.per_meal_price_snapshot).quantize(Decimal('0.01'))
+        amount = Decimal(average_price).quantize(Decimal('0.01'))
         return amount, {
             'charge_source': 'order_average',
             'final_meal_price': str(amount),
         }
 
     slot = resolve_published_slot_for_delivery(
-        meal_id=order.meal_id,
+        meal_id=meal_id,
         service_date=delivery.service_date,
         meal_period=delivery.meal_period,
     )
@@ -85,15 +85,22 @@ def _resolve_charge_amount(delivery: OrderDelivery, order) -> tuple[Decimal, dic
     }
 
 
-def _build_metadata(delivery: OrderDelivery, order, extra: dict | None = None) -> dict:
+def _build_metadata(delivery: OrderDelivery, extra: dict | None = None) -> dict:
+    from orders.services.subscription_parent import delivery_meal_name
+
     metadata = {
         'purpose': MEAL_DELIVERY_PURPOSE,
-        'order_public_id': str(order.public_id),
         'delivery_public_id': str(delivery.public_id),
         'service_date': delivery.service_date.isoformat(),
         'meal_period': delivery.meal_period,
-        'meal_name': order.meal_name_snapshot,
+        'meal_name': delivery_meal_name(delivery),
     }
+    if delivery.subscription_id:
+        metadata['subscription_public_id'] = str(delivery.subscription.public_id)
+        metadata['order_public_id'] = None
+    elif delivery.order_id:
+        metadata['order_public_id'] = str(delivery.order.public_id)
+        metadata['subscription_public_id'] = None
     if extra:
         metadata.update(extra)
     return metadata
@@ -138,7 +145,13 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
 
     locked = (
         OrderDelivery.objects.select_for_update()
-        .select_related('order', 'order__customer', 'wallet_transaction')
+        .select_related(
+            'order',
+            'order__customer',
+            'subscription',
+            'subscription__customer',
+            'wallet_transaction',
+        )
         .get(pk=delivery.pk)
     )
 
@@ -148,9 +161,20 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
     if locked.payment_status == OrderDelivery.PaymentStatus.CHARGED and locked.wallet_transaction_id:
         return locked
 
-    order = locked.order
-    amount, price_meta = _resolve_charge_amount(locked, order)
-    wallet = get_or_create_wallet(order.customer)
+    from orders.services.subscription_parent import delivery_customer, delivery_meal
+
+    customer = delivery_customer(locked)
+    meal = delivery_meal(locked)
+    if customer is None or meal is None:
+        raise MealPaymentError(
+            'Delivery is missing a customer or meal package; cannot charge wallet.',
+            code='MEAL_PAYMENT_FAILED',
+        )
+    average_price = Decimal('0.00')
+    if locked.order_id:
+        average_price = locked.order.per_meal_price_snapshot
+    amount, price_meta = _resolve_charge_amount(locked, meal.id, average_price)
+    wallet = get_or_create_wallet(customer)
     idempotency_key = meal_delivery_idempotency_key(locked)
 
     existing = (
@@ -169,9 +193,10 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
             )
         return _attach_charged_transaction(locked, existing, charged_amount=amount)
 
-    metadata = _build_metadata(locked, order, extra=price_meta)
+    metadata = _build_metadata(locked, extra=price_meta)
+    meal_name = (locked.subscription.meal_name_snapshot if locked.subscription_id else locked.order.meal_name_snapshot)
     note = (
-        f'Meal payment: {order.meal_name_snapshot} '
+        f'Meal payment: {meal_name} '
         f'{locked.meal_period} on {locked.service_date.isoformat()}'
     )
 

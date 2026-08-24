@@ -30,9 +30,38 @@ class CustomerRegistrationView(APIView):
         request=CustomerRegistrationSerializer,
         responses={201: OpenApiResponse(response=None, description='Registration successful')},
         examples=[
-            OpenApiExample('Success', value={'message': 'Registration successful. Please check your email to verify your account.', 'email': 'customer@example.com'})
+            OpenApiExample(
+                'Minimal registration',
+                value={'email': 'customer@example.com', 'password': 'StrongPassword123'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Legacy registration fields (optional)',
+                value={
+                    'email': 'customer@example.com',
+                    'password': 'StrongPassword123',
+                    'first_name': 'Rahim',
+                    'last_name': 'Uddin',
+                    'phone': '1712345678',
+                    'occupation': 'student',
+                    'is_bachelor': True,
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Success',
+                value={
+                    'message': 'Registration successful. Please check your email to verify your account.',
+                    'email': 'customer@example.com',
+                },
+                response_only=True,
+            ),
         ],
-        description='Register a new customer account and send verification email.',
+        description=(
+            'Register a new customer with email and password. '
+            'Profile fields are optional during the compatibility window. '
+            'Sends the existing verification email.'
+        ),
     )
     def post(self, request):
         serializer = CustomerRegistrationSerializer(data=request.data)

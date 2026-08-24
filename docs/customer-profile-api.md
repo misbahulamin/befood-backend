@@ -2,23 +2,27 @@
 
 ## 1. Feature overview
 
-This feature lets a logged-in customer view and update extended profile information **after registration**. Basic registration still collects only:
+This feature lets a logged-in customer view and update profile information **after registration**.
+
+**Initial registration** only requires:
 
 - email
-- first_name
-- last_name
-- phone
-- occupation
-- is_bachelor
 - password
 
-Extended profile data is collected separately through profile and address APIs so the frontend can show a **Complete Profile** flow after login.
+Optional at signup (compatibility window): `first_name`, `last_name`, `phone`, `occupation`, `is_bachelor`.
 
-All new profile fields are optional/nullable for existing users. Registration and login APIs are unchanged.
+After login, clients collect onboarding fields progressively via `PATCH /user_management/customer/profile/` (immediate persistence per step). Extended food/delivery fields continue to use the same endpoint.
 
 **Authentication:** Token auth (`Authorization: Token <token>`), same as customer auth.
 
 **Base prefix:** `/user_management/`
+
+### Completion concepts
+
+| Key | Meaning |
+| --- | --- |
+| `onboarding_completion` | Derived name/phone/occupation/`is_bachelor`/gender status |
+| `profile_completed` / `profile_completion_percentage` | Extended food/delivery completion (≥ 80%) |
 
 ---
 
@@ -35,14 +39,26 @@ All new profile fields are optional/nullable for existing users. Registration an
 
 ---
 
-## 3. CustomerProfile extended fields
+## 3. CustomerProfile fields (PATCH)
 
-These fields live on `CustomerProfile` and can be updated via `PATCH /user_management/customer/profile/`.
+These fields live on `CustomerProfile` / related `User` and can be updated via `PATCH /user_management/customer/profile/`.
+
+### Onboarding fields (progressive)
+
+| Field | Type | Required on update | Notes |
+| --- | --- | --- | --- |
+| `first_name` | string | No | Stored on `User`; trimmed |
+| `last_name` | string | No | Stored on `User`; trimmed |
+| `phone` | string (10 digits) | No | Unique when set; nullable |
+| `occupation` | string (choice) | No | See occupation choices; nullable |
+| `is_bachelor` | boolean / null | No | Bachelor/marital proxy; nullable when unset |
+| `gender` | string (choice) | No | See gender choices |
+
+### Extended fields
 
 | Field | Type | Required on update | Notes |
 | --- | --- | --- | --- |
 | `birth_date` | date (`YYYY-MM-DD`) | No | Cannot be a future date |
-| `gender` | string (choice) | No | See choice values |
 | `height_cm` | decimal | No | Centimeters, must be positive if provided. Example: `170.50` |
 | `weight_kg` | decimal | No | Kilograms, must be positive if provided. Example: `65.50` |
 | `emergency_contact_name` | string (max 100) | No | |
@@ -59,13 +75,11 @@ These fields live on `CustomerProfile` and can be updated via `PATCH /user_manag
 | `preferred_delivery_time` | time (`HH:MM` or `HH:MM:SS`) | No | Example: `13:30` |
 | `profile_completed` | boolean | Read-only | Auto-calculated, `true` when completion >= 80% |
 | `profile_completion_percentage` | integer (0–100) | Read-only | Auto-calculated |
+| `is_email_verified` | boolean | Read-only | Set only by email verification |
 
-**Registration fields (read-only in profile update):**
+GET/PATCH responses also include `onboarding_completion` (`completed`, `missing_fields`, `completion_percentage`).
 
-- `phone`
-- `occupation`
-- `is_bachelor`
-- `is_email_verified`
+Frontend guide: `user_management/docs/frontend/progressive-customer-onboarding.md`.
 
 ---
 

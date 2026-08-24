@@ -220,7 +220,7 @@ class FutureMonthOrderAPITests(APITestCase):
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 15))
     @patch('orders.services.order_service.timezone.localdate', return_value=date(2026, 7, 15))
     @patch('orders.services.meal_month.timezone.localdate', return_value=date(2026, 7, 15))
-    def test_create_future_published_month(self, *_mocks):
+    def test_create_future_published_month_is_retired(self, *_mocks):
         self._create_published_schedule(2026, 8)
         self._auth()
         response = self.client.post(
@@ -232,15 +232,14 @@ class FutureMonthOrderAPITests(APITestCase):
             },
             format='json',
         )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
-        self.assertEqual(response.data['order_month'], '2026-08')
-        self.assertEqual(response.data['order_start_date'], '2026-08-01')
-        self.assertEqual(response.data['order_end_date'], '2026-08-31')
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['error_code'], 'SUBSCRIBE_REQUIRED')
+        self.assertEqual(Order.objects.count(), 0)
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 15))
     @patch('orders.services.order_service.timezone.localdate', return_value=date(2026, 7, 15))
     @patch('orders.services.meal_month.timezone.localdate', return_value=date(2026, 7, 15))
-    def test_create_omit_year_month_current(self, *_mocks):
+    def test_create_omit_year_month_is_retired(self, *_mocks):
         self._create_published_schedule(2026, 7)
         self._auth()
         response = self.client.post(
@@ -248,8 +247,8 @@ class FutureMonthOrderAPITests(APITestCase):
             {'meal_public_id': str(self.meal.public_id)},
             format='json',
         )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
-        self.assertEqual(response.data['order_month'], '2026-07')
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['error_code'], 'SUBSCRIBE_REQUIRED')
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 15))
     @patch('orders.services.order_service.timezone.localdate', return_value=date(2026, 7, 15))
@@ -261,14 +260,14 @@ class FutureMonthOrderAPITests(APITestCase):
             {'meal_public_id': str(self.meal.public_id), 'year': 2026, 'month': 6},
             format='json',
         )
-        self.assertEqual(past.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(past.status_code, status.HTTP_409_CONFLICT)
 
         far = self.client.post(
             self.create_url,
             {'meal_public_id': str(self.meal.public_id), 'year': 2027, 'month': 8},
             format='json',
         )
-        self.assertEqual(far.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(far.status_code, status.HTTP_409_CONFLICT)
 
     def test_reject_partial_year_month(self):
         self._auth()
@@ -277,20 +276,19 @@ class FutureMonthOrderAPITests(APITestCase):
             {'meal_public_id': str(self.meal.public_id), 'year': 2026},
             format='json',
         )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 15))
     @patch('orders.services.order_service.timezone.localdate', return_value=date(2026, 7, 15))
     @patch('orders.services.meal_month.timezone.localdate', return_value=date(2026, 7, 15))
-    def test_unpublished_rejects_create(self, *_mocks):
+    def test_unpublished_create_is_retired(self, *_mocks):
         self._auth()
         response = self.client.post(
             self.create_url,
             {'meal_public_id': str(self.meal.public_id), 'year': 2026, 'month': 8},
             format='json',
         )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('not been published', str(response.data))
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertEqual(Order.objects.count(), 0)
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 15))
@@ -314,42 +312,20 @@ class FutureMonthOrderAPITests(APITestCase):
             create_meal_order(self.profile, self.meal, year=2026, month=9)
 
     @patch('orders.services.meal_month.timezone.localdate', return_value=date(2026, 7, 15))
-    def test_orderable_months(self, _mock):
+    def test_orderable_months_retired(self, _mock):
         self._create_published_schedule(2026, 7)
-        Order.objects.create(
-            customer=self.profile,
-            meal=self.meal,
-            meal_name_snapshot=self.meal.meal_name,
-            meal_type_snapshot=self.meal.meal_type,
-            meal_period_snapshot=self.meal.meal_period,
-            total_price_snapshot=self.meal.total_price,
-            per_meal_price_snapshot=Decimal('50.00'),
-            order_status=Order.OrderStatus.CONFIRMED,
-            order_start_date=date(2026, 7, 1),
-            order_end_date=date(2026, 7, 31),
-            service_days_count=31,
-            order_month='2026-07',
-        )
         self._auth()
         response = self.client.get(
             self.orderable_url,
             {'meal_public_id': str(self.meal.public_id)},
         )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['months']), 13)
-        self.assertTrue(response.data['months'][0]['is_current'])
-        self.assertTrue(response.data['months'][0]['is_published'])
-        self.assertTrue(response.data['months'][0]['has_order'])
-        self.assertFalse(response.data['months'][1]['is_published'])
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['error_code'], 'SUBSCRIBE_REQUIRED')
 
         unauth = self.client
         unauth.credentials()
         bare = unauth.get(self.orderable_url, {'meal_public_id': str(self.meal.public_id)})
         self.assertEqual(bare.status_code, status.HTTP_401_UNAUTHORIZED)
-
-        self._auth()
-        missing = self.client.get(self.orderable_url, {'meal_public_id': str(uuid4())})
-        self.assertEqual(missing.status_code, status.HTTP_404_NOT_FOUND)
 
     @patch('django.utils.timezone.localdate', return_value=date(2026, 7, 15))
     def test_order_menu_preview(self, _mock):

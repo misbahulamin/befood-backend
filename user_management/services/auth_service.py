@@ -23,11 +23,13 @@ def build_username(email):
 def register_customer(validated_data, request):
     password = validated_data.pop('password')
     email = validated_data['email'].lower()
+    first_name = validated_data.get('first_name') or ''
+    last_name = validated_data.get('last_name') or ''
     user = User(
         username=build_username(email),
         email=email,
-        first_name=validated_data['first_name'],
-        last_name=validated_data['last_name'],
+        first_name=first_name,
+        last_name=last_name,
         is_active=False,
     )
     user.set_password(password)
@@ -35,9 +37,9 @@ def register_customer(validated_data, request):
     user.save()
     profile = CustomerProfile.objects.create(
         user=user,
-        phone=validated_data['phone'],
-        occupation=validated_data['occupation'],
-        is_bachelor=validated_data['is_bachelor'],
+        phone=validated_data.get('phone'),
+        occupation=validated_data.get('occupation'),
+        is_bachelor=validated_data.get('is_bachelor'),
     )
     group, _ = Group.objects.get_or_create(name='CUSTOMER')
     user.groups.add(group)
@@ -46,6 +48,8 @@ def register_customer(validated_data, request):
 
 
 def get_login_response(user):
+    from .profile_onboarding import get_onboarding_completion
+
     token, _ = Token.objects.get_or_create(user=user)
     profile = user.customer_profile
     return {
@@ -58,6 +62,7 @@ def get_login_response(user):
             'is_bachelor': profile.is_bachelor,
             'is_email_verified': profile.is_email_verified,
         },
+        'onboarding_completion': get_onboarding_completion(user, profile),
     }
 
 

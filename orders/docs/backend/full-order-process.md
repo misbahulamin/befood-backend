@@ -2,22 +2,22 @@
 
 ## Quick summary
 
-Customers place a meal-package order. The system snapshots price/type, generates expected **delivery slots**, and lets admins list/filter orders and mark lunch/dinner (or daily one-shot) deliveries until the package completes.
+**New service** is `CustomerSubscription` + rolling `OrderDelivery` slots. See [`customer-meal-subscription.md`](customer-meal-subscription.md).
+
+Historical `Order` rows remain for past monthly packages. Customer `POST /orders/` is retired (`409 SUBSCRIBE_REQUIRED`). Admins still list historical orders and mark deliveries.
 
 | Client | Method | Path | Why |
 |--------|--------|------|-----|
-| Customer | `POST` | `/orders/` | Create package order |
-| Customer / Admin | `GET` | `/orders/` | List orders (own for customer; **all** for verified admin) |
+| Customer | `POST` | `/api/v1/subscriptions/` | Subscribe to a plan |
+| Customer | `POST` | `/orders/` | Retired (`409 SUBSCRIBE_REQUIRED`) |
+| Customer / Admin | `GET` | `/orders/` | List historical orders (own for customer; **all** for verified admin) |
 | Customer | `GET` | `/orders/my-orders/` | Alias list of own orders + progress |
 | Customer / Admin | `GET` | `/orders/{id}/` | Order detail + deliveries (scoped by role) |
-| Customer | `GET` | `/orders/current-package/` | Current month package |
-| Customer | `POST` | `/orders/{id}/cancel/` | Cancel before start |
+| Customer | `GET` | `/orders/current-package/` | Active **subscription** (or null) |
+| Customer | `POST` | `/orders/{id}/cancel/` | Cancel historical order before start |
 | Admin | `GET` | `/orders/today-board/` | Kitchen board (also `/api/v1/web/orders/today-board/`) |
-| Admin | `POST` | `/orders/{id}/deliveries/{delivery_id}/mark` (trailing `/` optional) | Mark delivered/skipped |
-| Admin | `GET` | `/api/v1/web/orders/` | Dedicated admin list (filters) |
-| Admin | `GET` | `/api/v1/web/orders/{id}/` | Detail + deliveries |
-| Admin | `POST` | `/api/v1/web/orders/{id}/deliveries/{delivery_id}/mark` | Mark delivered/skipped |
-| Admin | `GET` | `/api/v1/web/orders/today-board/` | Kitchen board for a date/week |
+| Admin | `POST` | `/api/v1/web/subscriptions/{id}/deliveries/{delivery_id}/mark` | Mark subscription slot |
+| Admin | `POST` | `/orders/{id}/deliveries/{delivery_id}/mark` | Mark historical order slot |
 
 Auth: `Authorization: Token <key>`.
 

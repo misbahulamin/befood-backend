@@ -1,8 +1,25 @@
-# Frontend: future-month meal ordering
+# Frontend: future-month meal ordering (retired)
 
 ## What changed
 
-Customers can order a meal package for the **current month or any of the next 12 months** (13 options). On Order Now / Order Confirm:
+The 13-month **Order Now** picker (`GET /orders/orderable-months/`, `POST /orders/` with `year`/`month`) is **retired**. Customers subscribe once; see [`customer-meal-subscription.md`](customer-meal-subscription.md).
+
+Stale clients that still call those endpoints receive `409` with `error_code: SUBSCRIBE_REQUIRED`.
+
+Menu **preview** without a subscription is unchanged:
+
+```http
+GET /meals/order-menu-preview/?meal_public_id=<uuid>&year=2026&month=8
+```
+
+After subscribe, the ownership-scoped calendar is:
+
+```http
+GET /meals/my-package-menu/?year=2026&month=8
+```
+
+Unpublished months return `schedule_published: false` and empty `days` — do not ask the customer to re-order; slots appear when the menu is published and the daily ensure job (or a current/detail fetch) runs.
+
 
 1. Show a **month picker** (default = current month).
 2. Check whether that month’s menu is **published**.

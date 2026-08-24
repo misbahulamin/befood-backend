@@ -153,6 +153,15 @@ def resolve_order_target_month(
     return target_year, target_month
 
 
+class SubscribeRequiredError(OrderServiceError):
+    code = 'SUBSCRIBE_REQUIRED'
+
+
+SUBSCRIBE_REQUIRED_ERROR = (
+    'Monthly meal orders are retired. Subscribe to a meal plan instead.'
+)
+
+
 @transaction.atomic
 def create_meal_order(
     customer,
@@ -204,14 +213,7 @@ def create_meal_order(
 
 
 def get_current_package(customer, reference_date=None):
-    today = reference_date or timezone.localdate()
-    current_month = today.strftime('%Y-%m')
-    return (
-        Order.objects.filter(
-            customer=customer,
-            order_month=current_month,
-        )
-        .exclude(order_status=Order.OrderStatus.CANCELLED)
-        .order_by('-created_at')
-        .first()
-    )
+    """Return the active subscription, or None. Historical monthly orders are not current service."""
+    from orders.services.subscription_service import get_active_subscription
+
+    return get_active_subscription(customer)

@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from meals.models import MenuRevealSettings, MonthlyMenuSchedule, MonthlyMenuSlot
 from meals.services.plan_roles import plan_ingredient_role_map
-from orders.models import Order
+from orders.models import CustomerSubscription, Order
 
 
 def get_reveal_settings() -> MenuRevealSettings:
@@ -66,16 +66,47 @@ def active_orders_for_customer_on_date(customer_profile, service_date: date):
     )
 
 
+def active_subscription_for_customer_on_date(customer_profile, service_date: date):
+    return (
+        CustomerSubscription.objects.filter(
+            customer=customer_profile,
+            status=CustomerSubscription.Status.ACTIVE,
+            started_on__lte=service_date,
+        )
+        .select_related('meal')
+        .first()
+    )
+
+
 def build_today_menu_for_customer(customer_profile, now: datetime | None = None) -> dict:
     settings_obj = get_reveal_settings()
     today, visible_periods = visible_periods_for_now(settings_obj, now=now)
-    orders = list(active_orders_for_customer_on_date(customer_profile, today))
+    subscription = active_subscription_for_customer_on_date(customer_profile, today)
+    meal_rows = []
+    if subscription is not None:
+        meal_rows.append(
+            {
+                'meal': subscription.meal,
+                'subscription_public_id': str(subscription.public_id),
+                'order_public_id': None,
+            }
+        )
+    else:
+        for order in active_orders_for_customer_on_date(customer_profile, today):
+            meal_rows.append(
+                {
+                    'meal': order.meal,
+                    'subscription_public_id': None,
+                    'order_public_id': str(order.public_id),
+                }
+            )
 
     packages = []
-    for order in orders:
+    for row in meal_rows:
+        meal = row['meal']
         schedule = (
             MonthlyMenuSchedule.objects.filter(
-                plan__meal_category_id=order.meal_id,
+                plan__meal_category_id=meal.id,
                 plan__cycle__year=today.year,
                 plan__cycle__month=today.month,
                 status=MonthlyMenuSchedule.Status.PUBLISHED,
@@ -115,9 +146,10 @@ def build_today_menu_for_customer(customer_profile, now: datetime | None = None)
 
         packages.append(
             {
-                'meal_public_id': str(order.meal.public_id),
-                'meal_name': order.meal.meal_name,
-                'order_public_id': str(order.public_id),
+                'meal_public_id': str(meal.public_id),
+                'meal_name': meal.meal_name,
+                'subscription_public_id': row['subscription_public_id'],
+                'order_public_id': row['order_public_id'],
                 'service_date': today.isoformat(),
                 'periods': periods_payload,
                 'schedule_published': schedule is not None,

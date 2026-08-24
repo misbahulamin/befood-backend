@@ -141,9 +141,25 @@ class CustomerProfileFieldsSerializer(serializers.ModelSerializer):
 
 
 class CustomerExtendedProfileUpdateSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    last_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    phone = serializers.CharField(max_length=10, required=False, allow_null=True, allow_blank=True)
+    occupation = serializers.ChoiceField(
+        choices=CustomerProfile.Occupation.choices,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    is_bachelor = serializers.BooleanField(required=False, allow_null=True)
+
     class Meta:
         model = CustomerProfile
         fields = (
+            'first_name',
+            'last_name',
+            'phone',
+            'occupation',
+            'is_bachelor',
             'birth_date',
             'gender',
             'height_cm',
@@ -161,6 +177,28 @@ class CustomerExtendedProfileUpdateSerializer(serializers.ModelSerializer):
             'delivery_instruction',
             'preferred_delivery_time',
         )
+
+    def validate_first_name(self, value):
+        return value.strip() if value is not None else value
+
+    def validate_last_name(self, value):
+        return value.strip() if value is not None else value
+
+    def validate_phone(self, value):
+        if value in (None, ''):
+            return None
+        value = validate_bangladesh_phone(value, 'phone')
+        qs = CustomerProfile.objects.filter(phone=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('Phone already exists.')
+        return value
+
+    def validate_occupation(self, value):
+        if value in (None, ''):
+            return None
+        return value
 
     def validate_birth_date(self, value):
         if value and value > date.today():
@@ -190,9 +228,10 @@ class CustomerExtendedProfileUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
     def update(self, instance, validated_data):
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        instance.save()
+        from ..services.profile_onboarding import update_customer_onboarding_profile
+
+        update_customer_onboarding_profile(instance, validated_data)
+        instance.refresh_from_db()
         update_profile_completion(instance)
         return instance
 
@@ -203,6 +242,7 @@ class CustomerExtendedProfileSerializer(serializers.Serializer):
     addresses = CustomerAddressSerializer(many=True, read_only=True)
     profile_completion_percentage = serializers.IntegerField(read_only=True)
     profile_completed = serializers.BooleanField(read_only=True)
+    onboarding_completion = serializers.SerializerMethodField()
 
     def get_user(self, profile):
         user = profile.user
@@ -215,6 +255,11 @@ class CustomerExtendedProfileSerializer(serializers.Serializer):
 
     def get_customer_profile(self, profile):
         return CustomerProfileFieldsSerializer(profile).data
+
+    def get_onboarding_completion(self, profile):
+        from ..services.profile_onboarding import get_onboarding_completion
+
+        return get_onboarding_completion(profile.user, profile)
 
 
 class CustomerProfileCompletionSerializer(serializers.Serializer):

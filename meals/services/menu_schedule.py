@@ -372,6 +372,10 @@ def publish_schedule(schedule: MonthlyMenuSchedule) -> MonthlyMenuSchedule:
     schedule.status = MonthlyMenuSchedule.Status.PUBLISHED
     schedule.published_at = timezone.now()
     schedule.save(update_fields=['status', 'published_at', 'updated_at'])
+
+    from orders.services.subscription_service import ensure_all_active_subscription_deliveries
+
+    ensure_all_active_subscription_deliveries()
     return schedule
 
 

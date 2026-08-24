@@ -16,6 +16,18 @@ Lunch and dinner on the same day can charge **different** amounts.
 
 ## Mark delivered
 
+Subscription-owned slots:
+
+```http
+POST /api/v1/web/subscriptions/{subscription_public_id}/deliveries/{delivery_public_id}/mark
+Authorization: Token <admin>
+Content-Type: application/json
+
+{ "status": "delivered" }
+```
+
+Historical order slots:
+
 ```http
 POST /api/v1/web/orders/{order_public_id}/deliveries/{delivery_public_id}/mark
 Authorization: Token <admin>

@@ -2,7 +2,7 @@ import django_filters
 from django.db.models import Q
 from django.utils import timezone
 
-from .models import Order
+from .models import CustomerSubscription, Order
 
 
 class OrderFilter(django_filters.FilterSet):
@@ -46,3 +46,27 @@ class OrderFilter(django_filters.FilterSet):
                 | Q(order_start_date__gt=today)
             )
         return queryset
+
+
+class CustomerSubscriptionFilter(django_filters.FilterSet):
+    status = django_filters.ChoiceFilter(choices=CustomerSubscription.Status.choices)
+    plan_public_id = django_filters.UUIDFilter(field_name='meal__public_id')
+    started_after = django_filters.DateFilter(field_name='started_on', lookup_expr='gte')
+    started_before = django_filters.DateFilter(field_name='started_on', lookup_expr='lte')
+    cancelled_after = django_filters.IsoDateTimeFilter(
+        field_name='cancelled_at', lookup_expr='gte'
+    )
+    cancelled_before = django_filters.IsoDateTimeFilter(
+        field_name='cancelled_at', lookup_expr='lte'
+    )
+
+    class Meta:
+        model = CustomerSubscription
+        fields = [
+            'status',
+            'plan_public_id',
+            'started_after',
+            'started_before',
+            'cancelled_after',
+            'cancelled_before',
+        ]

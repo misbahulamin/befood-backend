@@ -6,11 +6,11 @@ Show **Meal Off** when `can_meal_off` is true, and **Meal On** when `can_meal_on
 
 **New:** `can_meal_on` on delivery objects; `POST .../meal-on` endpoint.
 
-**Identifiers:** use order/delivery UUID `public_id` in paths (not integer ids). See [`order-public-uuid.md`](order-public-uuid.md).
+**Identifiers:** use subscription/order/delivery UUID `public_id` in paths (not integer ids). See [`order-public-uuid.md`](order-public-uuid.md) and [`customer-meal-subscription.md`](customer-meal-subscription.md).
 
 ## When to show buttons
 
-On order detail / current package, for each delivery:
+On **current subscription** (preferred) or historical order detail, for each delivery:
 
 1. Show **Meal Off** only if `can_meal_off === true`.
 2. Show **Meal On** only if `can_meal_on === true` (customer-skipped, before deadline).
@@ -28,11 +28,17 @@ On order detail / current package, for each delivery:
 ### Meal Off
 
 ```http
-POST /orders/{order_public_id}/deliveries/{delivery_public_id}/meal-off
+POST /api/v1/subscriptions/{subscription_public_id}/deliveries/{delivery_public_id}/meal-off
 Authorization: Token <customer-token>
 Content-Type: application/json
 
 { "note": "optional" }
+```
+
+Historical order slots (read-only packages) still use:
+
+```http
+POST /orders/{order_public_id}/deliveries/{delivery_public_id}/meal-off
 ```
 
 Success: `200` with `status: skipped`, `skip_source: customer`, `can_meal_on: true` (if still before deadline).
