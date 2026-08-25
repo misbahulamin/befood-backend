@@ -212,6 +212,26 @@ class CustomerPackageMenuAPITestCase(APITestCase):
             [d['meal_period'] for d in first_date_slots],
             sorted(d['meal_period'] for d in first_date_slots),
         )
+        meta = package['meta']
+        self.assertEqual(meta['cycle_days'], 31)
+        self.assertEqual(meta['total_meals'], 62)
+        self.assertEqual(meta['meal_period'], 'both')
+        self.assertEqual(meta['meal_period_display'], 'Both')
+
+    def test_order_menu_preview_includes_meta(self):
+        self._create_published_schedule(2026, 7)
+        preview_url = reverse('meals:order-menu-preview')
+        self._auth_customer()
+        response = self.client.get(
+            preview_url,
+            {'meal_public_id': str(self.meal.public_id), 'year': 2026, 'month': 7},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['schedule_published'])
+        meta = response.data['meta']
+        self.assertEqual(meta['cycle_days'], 31)
+        self.assertEqual(meta['total_meals'], 62)
+        self.assertEqual(meta['meal_period'], 'both')
 
     def test_unpublished_schedule_returns_empty_days(self):
         self._create_draft_schedule(2026, 7)

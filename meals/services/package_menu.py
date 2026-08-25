@@ -3,8 +3,9 @@ from __future__ import annotations
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
-from meals.models import MonthlyMenuSchedule
+from meals.models import MealCycle, MonthlyMenuSchedule
 from meals.services.menu_schedule import serialize_schedule_assignments
+from meals.services.pricing import expected_servings, get_month_days
 from orders.models import CustomerSubscription, Order
 
 
@@ -80,6 +81,24 @@ def active_subscription_for_customer(customer_profile):
     )
 
 
+def build_menu_meta(meal, year: int, month: int) -> dict:
+    """
+    Package metadata for calendar/list UIs (duration, meal option).
+
+    cycle_days comes from MealCycle when present, otherwise calendar month length.
+    total_meals is package-scoped expected servings (service days × periods per day).
+    """
+    cycle = MealCycle.objects.filter(year=year, month=month).first()
+    cycle_days = cycle.cycle_days if cycle is not None else get_month_days(year, month)
+    total_meals = expected_servings(meal.meal_type, meal.meal_period, year, month)
+    return {
+        'cycle_days': cycle_days,
+        'total_meals': total_meals,
+        'meal_period': meal.meal_period,
+        'meal_period_display': meal.get_meal_period_display(),
+    }
+
+
 def published_schedule_for_meal(meal_id: int, year: int, month: int):
     return (
         MonthlyMenuSchedule.objects.filter(
@@ -124,6 +143,7 @@ def build_package_menu_for_customer(
                 'subscription_public_id': str(subscription.public_id),
                 'order_public_id': None,
                 'schedule_published': schedule is not None,
+                'meta': build_menu_meta(subscription.meal, target_year, target_month),
                 'days': days,
             }
         )
@@ -165,5 +185,40 @@ def build_order_menu_preview_for_meal(
         'meal_public_id': str(meal.public_id),
         'meal_name': meal.meal_name,
         'schedule_published': schedule is not None,
+        'meta': build_menu_meta(meal, target_year, target_month),
+        'days': days,
+    }
+
+
+def build_public_package_menu_for_meal(
+    meal,
+    *,
+    year: int | str | None = None,
+    month: int | str | None = None,
+    reference_date=None,
+) -> dict:
+    """
+    Unauthenticated marketing-page menu read.
+
+    Returns only published schedule slots; no customer/order/subscription data.
+    """
+    target_year, target_month = resolve_target_year_month(
+        year=year,
+        month=month,
+        reference_date=reference_date,
+    )
+    schedule = published_schedule_for_meal(meal.id, target_year, target_month)
+    days = (
+        serialize_schedule_assignments(schedule, customer_visible_only=True)
+        if schedule is not None
+        else []
+    )
+    return {
+        'year': target_year,
+        'month': target_month,
+        'meal_public_id': str(meal.public_id),
+        'meal_name': meal.meal_name,
+        'schedule_published': schedule is not None,
+        'meta': build_menu_meta(meal, target_year, target_month),
         'days': days,
     }

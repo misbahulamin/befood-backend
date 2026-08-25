@@ -3,6 +3,7 @@ from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_sche
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -22,6 +23,7 @@ from meals.services.menu_sync import apply_sync_suggestion, sync_suggestion_resp
 from meals.services.package_menu import (
     build_order_menu_preview_for_meal,
     build_package_menu_for_customer,
+    build_public_package_menu_for_meal,
 )
 from meals.services.today_menu import (
     build_today_menu_for_customer,
@@ -430,6 +432,76 @@ class CustomerOrderMenuPreviewView(APIView):
 
         try:
             payload = build_order_menu_preview_for_meal(
+                meal,
+                year=request.query_params.get('year'),
+                month=request.query_params.get('month'),
+            )
+        except DjangoValidationError as exc:
+            return _django_validation_to_response(exc)
+        return Response(payload)
+
+
+class PublicPackageMenuView(APIView):
+    """Public published monthly menu for marketing package pages (no auth)."""
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=['Public Package Menu'],
+        summary='Read published monthly menu for an active package',
+        description=(
+            'Returns the published lunch/dinner menu for a meal package and calendar month '
+            'for unauthenticated marketing pages. Draft schedules are never returned. '
+            'When the menu is not published, responds 200 with schedule_published=false '
+            'and empty days.'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='meal_public_id',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='Meal package public UUID',
+            ),
+            OpenApiParameter(
+                name='year',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Calendar year (required together with month; default = current month)',
+            ),
+            OpenApiParameter(
+                name='month',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Calendar month 1-12 (required together with year)',
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                description='Published menu payload with meta and schedule_published flag'
+            ),
+            400: OpenApiResponse(description='Invalid year/month or missing meal_public_id'),
+            404: OpenApiResponse(description='Meal not found or inactive'),
+        },
+    )
+    def get(self, request):
+        meal_public_id = request.query_params.get('meal_public_id')
+        if not meal_public_id:
+            return Response(
+                {'meal_public_id': ['This query parameter is required.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from meals.models import MealCategory
+
+        try:
+            meal = MealCategory.objects.get(public_id=meal_public_id, is_active=True)
+        except (MealCategory.DoesNotExist, ValueError):
+            return Response({'detail': 'Meal not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            payload = build_public_package_menu_for_meal(
                 meal,
                 year=request.query_params.get('year'),
                 month=request.query_params.get('month'),

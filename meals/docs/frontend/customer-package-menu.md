@@ -71,6 +71,12 @@ Authorization: Token <token>
       "meal_name": "Regular Package",
       "order_public_id": "11111111-2222-3333-4444-555555555555",
       "schedule_published": true,
+      "meta": {
+        "cycle_days": 31,
+        "total_meals": 62,
+        "meal_period": "both",
+        "meal_period_display": "Both"
+      },
       "days": [
         {
           "service_date": "2026-07-01",
@@ -176,7 +182,24 @@ To show a published monthly menu **before** the customer has an order for that m
 
 `GET /meals/order-menu-preview/?meal_public_id=&year=&month=`
 
+Response includes the same `meta` block as `my-package-menu` package entries (`cycle_days`, `total_meals`, `meal_period`, `meal_period_display`).
+
 `my-package-menu` remains ownership-scoped and returns empty `packages` when there is no order. Full Order Now month-picker flow: see `orders/docs/frontend/future-month-meal-ordering.md`.
+
+---
+
+## Public marketing menu (monthly-package pages)
+
+Unauthenticated marketing pages (`/monthly-package/:slug`) should use:
+
+`GET /meals/public-package-menu/?meal_public_id=&year=&month=`
+
+- **No auth** required.
+- Returns published slots only (`schedule_published: false` + empty `days` when draft).
+- Same `meta` + flat `days[]` shape as order-menu-preview.
+- Inactive meals → `404`.
+
+See `meals/docs/frontend/public-monthly-package-menu.md` for UI workflow.
 
 ---
 

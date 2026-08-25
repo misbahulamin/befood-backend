@@ -13,6 +13,7 @@ from .menu_schedule_views import (
     CustomerTodayMenuView,
     MenuRevealSettingsView,
     MonthlyMenuScheduleViewSet,
+    PublicPackageMenuView,
 )
 from .operational_cost_views import OperationalCostMonthViewSet
 from .views import MealCategoryViewSet
@@ -37,5 +38,6 @@ urlpatterns = [
     path('today-menu/', CustomerTodayMenuView.as_view(), name='today-menu'),
     path('my-package-menu/', CustomerPackageMenuView.as_view(), name='my-package-menu'),
     path('order-menu-preview/', CustomerOrderMenuPreviewView.as_view(), name='order-menu-preview'),
+    path('public-package-menu/', PublicPackageMenuView.as_view(), name='public-package-menu'),
     path('', include(router.urls)),
 ]
