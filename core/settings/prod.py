@@ -1,4 +1,6 @@
 from .base import *
+from .aws_media import PROD_STORAGES, validate_aws_media_settings
+
 DEBUG = False
 ALLOWED_HOSTS = config('DJANGO_ALLOWED_HOSTS', default='', cast=Csv())
 
@@ -16,7 +18,20 @@ DATABASES = {
     }
 }
 
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+validate_aws_media_settings(
+    bucket_name=AWS_STORAGE_BUCKET_NAME,
+    region_name=AWS_S3_REGION_NAME,
+)
+
+STORAGES = PROD_STORAGES
+
+_security_index = MIDDLEWARE.index('django.middleware.security.SecurityMiddleware')
+MIDDLEWARE = (
+    MIDDLEWARE[: _security_index + 1]
+    + ['whitenoise.middleware.WhiteNoiseMiddleware']
+    + MIDDLEWARE[_security_index + 1 :]
+)
+
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_BROWSER_XSS_FILTER = True

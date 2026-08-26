@@ -100,3 +100,13 @@ CSRF_TRUSTED_ORIGINS = [
 
 # Render HTTPS proxy
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# Optional: set USE_S3_MEDIA=true in .env to test S3 uploads locally.
+if USE_S3_MEDIA:
+    from .aws_media import LOCAL_S3_STORAGES, validate_aws_media_settings
+
+    validate_aws_media_settings(
+        bucket_name=AWS_STORAGE_BUCKET_NAME,
+        region_name=AWS_S3_REGION_NAME,
+    )
+    STORAGES = LOCAL_S3_STORAGES
