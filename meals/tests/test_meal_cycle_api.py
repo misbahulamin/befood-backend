@@ -372,7 +372,8 @@ class MealCycleAPITestCase(APITestCase):
             format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        self.assertEqual(len(response.data['lines']), 2)
+        self.assertIn('schedule_reconciliation', response.data)
 
         duplicate = self.client.post(
             self.lines_url,

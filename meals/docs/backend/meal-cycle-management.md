@@ -397,7 +397,9 @@ Success `200`: same summary shape with `"status": "finalized"`, `"using_snapshot
 
 `POST /meals/cycle-plans/1/reopen/`
 
-Returns the plan with `"status": "draft"` and cleared snapshots. **Keeps** `MealCategory.total_price` at the last published value until the next finalize.
+Returns the plan with `"status": "draft"` and cleared snapshots. **Keeps** `MealCategory.total_price` at the last published value until the next finalize. **Preserves** an existing **draft** monthly menu schedule and all slot assignments (reopen is rejected while the schedule is `published` — unpublish first).
+
+**Servings matrix save side effect:** `PUT /meals/cycle-plans/{public_id}/lines/` on a draft plan reconciles any linked **draft** menu schedule — trimming excess assignments when quotas shrink or removing assignments for ingredients dropped from the plan. Response includes `schedule_reconciliation` with `items_removed`. The schedule itself is never deleted.
 
 ### 9.9 Frontend integration (package summary UI)
 

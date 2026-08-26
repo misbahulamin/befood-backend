@@ -110,7 +110,8 @@ sequenceDiagram
 7. `POST .../publish/` when every date×period has exactly one main (locks per-slot `final_meal_price`).
 8. Optionally `PATCH /meals/menu-reveal-settings/` for reveal clocks.
 9. To edit again: `POST .../unpublish/` (clears slot price snapshots) → edit → publish.
-10. To reopen the **cycle plan**: unpublish/delete schedule first if published; draft schedule is **deleted** on reopen. Sibling packages are never mutated.
+10. To reopen the **cycle plan**: unpublish schedule first if published; draft schedule and assignments are **preserved** on reopen. Sibling packages are never mutated.
+11. When the **servings matrix** is saved on a draft plan (`PUT .../lines/`), excess draft schedule assignments are **auto-trimmed** to match lower quotas (latest dates/dinner first). Ingredients removed from the plan lose all schedule assignments. Increases do not auto-add slots.
 
 ---
 
@@ -275,7 +276,8 @@ After dinner reveal, `visible_periods` is `["lunch", "dinner"]` and both period 
 | Every slot has exactly 1 main | Publish |
 | Non-mains may under-fill | Publish allowed |
 | Published schedule blocks plan reopen | Reopen cycle plan |
-| Draft schedule deleted on plan reopen | Reopen cycle plan |
+| Draft schedule preserved on plan reopen | Reopen cycle plan |
+| Servings matrix save trims over-quota draft assignments | `PUT .../cycle-plans/{id}/lines/` on draft plan |
 | Published schedule not editable | Must unpublish first |
 
 ---
@@ -311,7 +313,7 @@ Manual checklist (Swagger `/api/docs/`):
 - [ ] Sync Student from Regular with unequal chicken quotas
 - [ ] Customer without order sees empty packages
 - [ ] Customer with order sees lunch only after 08:00, dinner after 16:00
-- [ ] Reopen blocked while schedule published; draft schedule deleted on reopen
+- [ ] Reopen blocked while schedule published; draft schedule preserved on reopen
 
 ---
 

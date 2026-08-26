@@ -200,10 +200,15 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
         serializer = MealCyclePlanLineBulkSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            lines = replace_plan_lines(plan, serializer.validated_data['lines'])
+            lines, reconciliation = replace_plan_lines(plan, serializer.validated_data['lines'])
         except DjangoValidationError as exc:
             return _django_validation_to_response(exc)
-        return Response(MealCyclePlanLineSerializer(lines, many=True).data)
+        return Response(
+            {
+                'lines': MealCyclePlanLineSerializer(lines, many=True).data,
+                'schedule_reconciliation': reconciliation,
+            }
+        )
 
     @extend_schema(
         tags=['Admin Meal Cycle'],

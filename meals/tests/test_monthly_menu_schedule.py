@@ -19,6 +19,7 @@ from meals.models import (
     MealCyclePlan,
     MealCyclePlanLine,
     MonthlyMenuSchedule,
+    MonthlyMenuSlotItem,
 )
 from meals.services.cycle_calculations import finalize_plan, reopen_plan
 from meals.services.menu_schedule import (
@@ -281,15 +282,320 @@ class MonthlyMenuScheduleAPITestCase(APITestCase):
         reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
         self.assertEqual(reopen.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_reopen_deletes_draft_schedule(self):
+    def test_reopen_preserves_draft_schedule(self):
         plan = self._finalize_plan(self.regular, 2026, 4, chicken_count=10, beef_count=50)
+        chicken_keys, beef_keys = self._split_keys(plan, 10)
+        assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
         self._auth_admin()
         create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
         schedule_id = create.data['public_id']
-        self.assertTrue(MonthlyMenuSchedule.objects.filter(public_id=schedule_id).exists())
+        self.client.put(
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
+            {'assignments': assignments},
+            format='json',
+        )
+        before = self.client.get(
+            reverse('meals:menu-schedules-detail', kwargs={'public_id': schedule_id})
+        )
         reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
         self.assertEqual(reopen.status_code, status.HTTP_200_OK)
-        self.assertFalse(MonthlyMenuSchedule.objects.filter(public_id=schedule_id).exists())
+        self.assertEqual(reopen.data['status'], 'draft')
+        self.assertTrue(MonthlyMenuSchedule.objects.filter(public_id=schedule_id).exists())
+        after = self.client.get(
+            reverse('meals:menu-schedules-detail', kwargs={'public_id': schedule_id})
+        )
+        self.assertEqual(after.status_code, status.HTTP_200_OK)
+        self.assertEqual(after.data['assignments'], before.data['assignments'])
+
+    def _count_ingredient_assignments(self, schedule_id, ingredient_id):
+        schedule = MonthlyMenuSchedule.objects.get(public_id=schedule_id)
+        return MonthlyMenuSlotItem.objects.filter(
+            slot__schedule=schedule,
+            ingredient_id=ingredient_id,
+        ).count()
+
+    def _quota_row(self, schedule_id, ingredient_id):
+        summary = self.client.get(
+            reverse('meals:menu-schedules-quota-summary', kwargs={'public_id': schedule_id})
+        )
+        self.assertEqual(summary.status_code, status.HTTP_200_OK)
+        for row in summary.data['items']:
+            if row['ingredient_id'] == ingredient_id:
+                return row
+        return None
+
+    def test_reopen_then_servings_change_preserves_schedule(self):
+        plan = self._finalize_plan(self.regular, 2026, 4, chicken_count=10, beef_count=50)
+        chicken_keys, beef_keys = self._split_keys(plan, 10)
+        assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
+        self._auth_admin()
+        create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
+        schedule_id = create.data['public_id']
+        self.client.put(
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
+            {'assignments': assignments},
+            format='json',
+        )
+        before = self.client.get(
+            reverse('meals:menu-schedules-detail', kwargs={'public_id': schedule_id})
+        )
+        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
+        self.assertEqual(reopen.status_code, status.HTTP_200_OK)
+        replace = self.client.put(
+            reverse('meals:cycle-plans-replace-lines', kwargs={'public_id': plan.public_id}),
+            {
+                'lines': [
+                    {'ingredient': self.chicken.id, 'servings_count': 12, 'product_role': 'main'},
+                    {'ingredient': self.beef.id, 'servings_count': 50, 'product_role': 'main'},
+                    {'ingredient': self.rice.id, 'servings_count': 60, 'product_role': 'staple'},
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(replace.status_code, status.HTTP_200_OK)
+        self.assertTrue(MonthlyMenuSchedule.objects.filter(public_id=schedule_id).exists())
+        after = self.client.get(
+            reverse('meals:menu-schedules-detail', kwargs={'public_id': schedule_id})
+        )
+        self.assertEqual(after.data['assignments'], before.data['assignments'])
+
+    def test_servings_decrease_trims_excess_assignments(self):
+        plan = self._finalize_plan(self.regular, 2026, 4, chicken_count=10, beef_count=50)
+        chicken_keys, beef_keys = self._split_keys(plan, 10)
+        assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
+        self._auth_admin()
+        create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
+        schedule_id = create.data['public_id']
+        self.client.put(
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
+            {'assignments': assignments},
+            format='json',
+        )
+        self.assertEqual(self._count_ingredient_assignments(schedule_id, self.chicken.id), 10)
+
+        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
+        self.assertEqual(reopen.status_code, status.HTTP_200_OK)
+        replace = self.client.put(
+            reverse('meals:cycle-plans-replace-lines', kwargs={'public_id': plan.public_id}),
+            {
+                'lines': [
+                    {'ingredient': self.chicken.id, 'servings_count': 9, 'product_role': 'main'},
+                    {'ingredient': self.beef.id, 'servings_count': 51, 'product_role': 'main'},
+                    {'ingredient': self.rice.id, 'servings_count': 60, 'product_role': 'staple'},
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(replace.status_code, status.HTTP_200_OK)
+        self.assertEqual(replace.data['schedule_reconciliation']['items_removed'], 1)
+        self.assertEqual(self._count_ingredient_assignments(schedule_id, self.chicken.id), 9)
+        chicken_quota = self._quota_row(schedule_id, self.chicken.id)
+        self.assertFalse(chicken_quota['over_quota'])
+
+    def test_ingredient_removed_from_plan_clears_schedule_usage(self):
+        egg = Ingredient.objects.create(
+            name='Regular Egg Fry',
+            price_per_kg=Decimal('100.00'),
+            customers_per_kg=Decimal('10.00'),
+        )
+        plan = self._finalize_plan(self.regular, 2026, 4, chicken_count=10, beef_count=50)
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=egg,
+            product_role=MealCyclePlanLine.ProductRole.OTHER,
+            servings_count=1,
+        )
+        chicken_keys, beef_keys = self._split_keys(plan, 10)
+        assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
+        first_key = chicken_keys[0]
+        for entry in assignments:
+            if entry['service_date'] == first_key[0].isoformat() and entry['meal_period'] == first_key[1]:
+                entry['ingredient_ids'].append(egg.id)
+                break
+
+        self._auth_admin()
+        create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
+        schedule_id = create.data['public_id']
+        self.client.put(
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
+            {'assignments': assignments},
+            format='json',
+        )
+        self.assertEqual(self._count_ingredient_assignments(schedule_id, egg.id), 1)
+
+        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
+        self.assertEqual(reopen.status_code, status.HTTP_200_OK)
+        replace = self.client.put(
+            reverse('meals:cycle-plans-replace-lines', kwargs={'public_id': plan.public_id}),
+            {
+                'lines': [
+                    {'ingredient': self.chicken.id, 'servings_count': 10, 'product_role': 'main'},
+                    {'ingredient': self.beef.id, 'servings_count': 50, 'product_role': 'main'},
+                    {'ingredient': self.rice.id, 'servings_count': 60, 'product_role': 'staple'},
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(replace.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._count_ingredient_assignments(schedule_id, egg.id), 0)
+        egg_quota = self._quota_row(schedule_id, egg.id)
+        self.assertIsNone(egg_quota)
+
+    def test_servings_increase_does_not_add_schedule_assignments(self):
+        plan = self._finalize_plan(self.regular, 2026, 4, chicken_count=10, beef_count=50)
+        chicken_keys, beef_keys = self._split_keys(plan, 10)
+        assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
+        self._auth_admin()
+        create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
+        schedule_id = create.data['public_id']
+        self.client.put(
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
+            {'assignments': assignments},
+            format='json',
+        )
+
+        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
+        self.assertEqual(reopen.status_code, status.HTTP_200_OK)
+        replace = self.client.put(
+            reverse('meals:cycle-plans-replace-lines', kwargs={'public_id': plan.public_id}),
+            {
+                'lines': [
+                    {'ingredient': self.chicken.id, 'servings_count': 12, 'product_role': 'main'},
+                    {'ingredient': self.beef.id, 'servings_count': 50, 'product_role': 'main'},
+                    {'ingredient': self.rice.id, 'servings_count': 60, 'product_role': 'staple'},
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(replace.status_code, status.HTTP_200_OK)
+        self.assertEqual(replace.data['schedule_reconciliation']['items_removed'], 0)
+        self.assertEqual(self._count_ingredient_assignments(schedule_id, self.chicken.id), 10)
+        chicken_quota = self._quota_row(schedule_id, self.chicken.id)
+        self.assertEqual(chicken_quota['remaining'], 2)
+
+    def test_assignment_save_succeeds_after_schedule_reconcile(self):
+        plan = self._finalize_plan(self.regular, 2026, 4, chicken_count=10, beef_count=50)
+        chicken_keys, beef_keys = self._split_keys(plan, 10)
+        assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
+        self._auth_admin()
+        create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
+        schedule_id = create.data['public_id']
+        self.client.put(
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
+            {'assignments': assignments},
+            format='json',
+        )
+
+        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
+        self.assertEqual(reopen.status_code, status.HTTP_200_OK)
+        self.client.put(
+            reverse('meals:cycle-plans-replace-lines', kwargs={'public_id': plan.public_id}),
+            {
+                'lines': [
+                    {'ingredient': self.chicken.id, 'servings_count': 9, 'product_role': 'main'},
+                    {'ingredient': self.beef.id, 'servings_count': 51, 'product_role': 'main'},
+                    {'ingredient': self.rice.id, 'servings_count': 60, 'product_role': 'staple'},
+                ]
+            },
+            format='json',
+        )
+
+        detail = self.client.get(
+            reverse('meals:menu-schedules-detail', kwargs={'public_id': schedule_id})
+        )
+        payload_assignments = [
+            {
+                'service_date': entry['service_date'],
+                'meal_period': entry['meal_period'],
+                'ingredient_ids': [ing['id'] for ing in entry['ingredients']],
+            }
+            for entry in detail.data['assignments']
+        ]
+        save = self.client.put(
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
+            {'assignments': payload_assignments},
+            format='json',
+        )
+        self.assertEqual(save.status_code, status.HTTP_200_OK)
+
+    def test_reconcile_does_not_touch_sibling_package_schedule(self):
+        regular_plan = self._finalize_plan(self.regular, 2026, 4, chicken_count=30, beef_count=30)
+        student_plan = self._finalize_plan(self.student, 2026, 4, chicken_count=30, beef_count=30)
+        r_keys = expected_slot_keys(2026, 4)
+        r_chicken, r_beef = r_keys[:30], r_keys[30:]
+        s_chicken, s_beef = r_keys[:30], r_keys[30:]
+        self._auth_admin()
+        r_create = self.client.post(
+            self.schedules_url, {'plan_id': regular_plan.pk}, format='json'
+        )
+        s_create = self.client.post(
+            self.schedules_url, {'plan_id': student_plan.pk}, format='json'
+        )
+        r_id = r_create.data['public_id']
+        s_id = s_create.data['public_id']
+        r_assignments = self._full_main_assignments(regular_plan, r_chicken, r_beef)
+        s_assignments = self._full_main_assignments(student_plan, s_chicken, s_beef)
+        self.client.put(
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': r_id}),
+            {'assignments': r_assignments},
+            format='json',
+        )
+        self.client.put(
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': s_id}),
+            {'assignments': s_assignments},
+            format='json',
+        )
+        student_before = self.client.get(
+            reverse('meals:menu-schedules-detail', kwargs={'public_id': s_id})
+        )
+
+        reopen = self.client.post(
+            reverse('meals:cycle-plans-reopen', kwargs={'public_id': regular_plan.public_id})
+        )
+        self.assertEqual(reopen.status_code, status.HTTP_200_OK)
+        self.client.put(
+            reverse('meals:cycle-plans-replace-lines', kwargs={'public_id': regular_plan.public_id}),
+            {
+                'lines': [
+                    {'ingredient': self.chicken.id, 'servings_count': 28, 'product_role': 'main'},
+                    {'ingredient': self.beef.id, 'servings_count': 32, 'product_role': 'main'},
+                    {'ingredient': self.rice.id, 'servings_count': 60, 'product_role': 'staple'},
+                ]
+            },
+            format='json',
+        )
+
+        student_after = self.client.get(
+            reverse('meals:menu-schedules-detail', kwargs={'public_id': s_id})
+        )
+        self.assertEqual(student_after.data['assignments'], student_before.data['assignments'])
+
+    def test_reopen_then_finalize_keeps_single_schedule(self):
+        plan = self._finalize_plan(self.regular, 2026, 4, chicken_count=10, beef_count=50)
+        chicken_keys, beef_keys = self._split_keys(plan, 10)
+        assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
+        self._auth_admin()
+        create = self.client.post(self.schedules_url, {'plan_id': plan.pk}, format='json')
+        schedule_id = create.data['public_id']
+        self.client.put(
+            reverse('meals:menu-schedules-assignments', kwargs={'public_id': schedule_id}),
+            {'assignments': assignments},
+            format='json',
+        )
+        before = self.client.get(
+            reverse('meals:menu-schedules-detail', kwargs={'public_id': schedule_id})
+        )
+        reopen = self.client.post(reverse('meals:cycle-plans-reopen', kwargs={'public_id': plan.public_id}))
+        self.assertEqual(reopen.status_code, status.HTTP_200_OK)
+        finalize = self.client.post(
+            reverse('meals:cycle-plans-finalize', kwargs={'public_id': plan.public_id})
+        )
+        self.assertEqual(finalize.status_code, status.HTTP_200_OK)
+        self.assertEqual(MonthlyMenuSchedule.objects.filter(plan_id=plan.pk).count(), 1)
+        after = self.client.get(
+            reverse('meals:menu-schedules-detail', kwargs={'public_id': schedule_id})
+        )
+        self.assertEqual(after.data['assignments'], before.data['assignments'])
 
     # --- 6.3 sync ---
 

@@ -261,6 +261,64 @@ def create_schedule_for_plan(plan: MealCyclePlan, notes: str = '') -> MonthlyMen
     )
 
 
+def reconcile_draft_schedule_after_plan_line_change(plan: MealCyclePlan) -> dict:
+    """
+    Trim draft schedule slot items when plan-line servings shrink or ingredients drop off the plan.
+    Preserves the schedule row and all assignments within new quotas.
+    """
+    from django.db.models import Count
+
+    schedule = (
+        MonthlyMenuSchedule.objects.select_for_update()
+        .filter(plan_id=plan.pk, status=MonthlyMenuSchedule.Status.DRAFT)
+        .first()
+    )
+    if schedule is None:
+        return {
+            'schedule_public_id': None,
+            'items_removed': 0,
+            'ingredients_trimmed': [],
+        }
+
+    new_quotas = _plan_quota_map(plan)
+    ordered_items = list(
+        MonthlyMenuSlotItem.objects.filter(slot__schedule=schedule)
+        .select_related('slot')
+        .order_by('-slot__service_date', '-slot__meal_period', 'pk')
+    )
+
+    usage_by_ingredient: dict[int, list[MonthlyMenuSlotItem]] = defaultdict(list)
+    for item in ordered_items:
+        usage_by_ingredient[item.ingredient_id].append(item)
+
+    items_removed = 0
+    ingredients_trimmed: list[dict] = []
+    ingredient_ids = set(usage_by_ingredient.keys()) | set(new_quotas.keys())
+
+    for iid in sorted(ingredient_ids):
+        planned = new_quotas.get(iid, 0)
+        assigned = usage_by_ingredient.get(iid, [])
+        excess = len(assigned) - planned
+        if excess <= 0:
+            continue
+        to_remove = assigned[:excess]
+        remove_pks = [item.pk for item in to_remove]
+        MonthlyMenuSlotItem.objects.filter(pk__in=remove_pks).delete()
+        removed_count = len(remove_pks)
+        items_removed += removed_count
+        ingredients_trimmed.append({'ingredient_id': iid, 'removed': removed_count})
+
+    MonthlyMenuSlot.objects.filter(schedule=schedule).annotate(
+        item_count=Count('items')
+    ).filter(item_count=0).delete()
+
+    return {
+        'schedule_public_id': str(schedule.public_id),
+        'items_removed': items_removed,
+        'ingredients_trimmed': ingredients_trimmed,
+    }
+
+
 @transaction.atomic
 def replace_schedule_assignments(
     schedule: MonthlyMenuSchedule,
