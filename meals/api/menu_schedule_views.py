@@ -453,7 +453,8 @@ class PublicPackageMenuView(APIView):
             'Returns the published lunch/dinner menu for a meal package and calendar month '
             'for unauthenticated marketing pages. Draft schedules are never returned. '
             'When the menu is not published, responds 200 with schedule_published=false '
-            'and empty days.'
+            'and empty days. Also includes nearest_published_month and published_months '
+            'so clients can auto-navigate to a visible menu without guessing the cycle month.'
         ),
         parameters=[
             OpenApiParameter(

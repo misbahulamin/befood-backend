@@ -117,9 +117,16 @@ class PublicPackageMenuAPITestCase(APITestCase):
         return assignments
 
     def _create_published_schedule(self, year=2026, month=7):
-        plan = self._finalize_plan(year, month, chicken_count=20, beef_count=42)
+        from meals.tests.helpers import ensure_operational_cost_month
+
+        ensure_operational_cost_month(year, month, items=[])
+        cycle, _ = MealCycle.objects.get_or_create(year=year, month=month)
+        total = cycle.total_meals
+        chicken_count = total // 2
+        beef_count = total - chicken_count
+        plan = self._finalize_plan(year, month, chicken_count=chicken_count, beef_count=beef_count)
         keys = expected_slot_keys(year, month)
-        chicken_keys, beef_keys = keys[:20], keys[20:]
+        chicken_keys, beef_keys = keys[:chicken_count], keys[chicken_count:]
         assignments = self._full_main_assignments(plan, chicken_keys, beef_keys)
         schedule = MonthlyMenuSchedule.objects.create(plan=plan)
         replace_schedule_assignments(schedule, assignments)
@@ -148,6 +155,8 @@ class PublicPackageMenuAPITestCase(APITestCase):
         self.assertEqual(meta['total_meals'], 62)
         self.assertEqual(meta['meal_period'], 'both')
         self.assertEqual(meta['meal_period_display'], 'Both')
+        self.assertEqual(response.data['nearest_published_month'], {'year': 2026, 'month': 7})
+        self.assertEqual(response.data['published_months'], [{'year': 2026, 'month': 7}])
 
     def test_public_unpublished_returns_empty_days(self):
         self._create_draft_schedule(2026, 7)
@@ -162,6 +171,8 @@ class PublicPackageMenuAPITestCase(APITestCase):
         self.assertEqual(response.data['days'], [])
         self.assertEqual(response.data['meta']['cycle_days'], 31)
         self.assertEqual(response.data['meta']['meal_period'], 'both')
+        self.assertIsNone(response.data['nearest_published_month'])
+        self.assertEqual(response.data['published_months'], [])
 
     def test_missing_meal_public_id_returns_400(self):
         response = self.client.get(self.url, {'year': 2026, 'month': 7})
@@ -222,3 +233,36 @@ class PublicPackageMenuAPITestCase(APITestCase):
         self.assertEqual(response.data['meta']['meal_period_display'], 'Lunch')
         self.assertEqual(response.data['meta']['cycle_days'], 30)
         self.assertEqual(response.data['meta']['total_meals'], 30)
+        self.assertIsNone(response.data['nearest_published_month'])
+        self.assertEqual(response.data['published_months'], [])
+
+    def test_unpublished_month_points_to_future_published_month(self):
+        self._create_published_schedule(2026, 9)
+
+        response = self.client.get(
+            self.url,
+            {'meal_public_id': str(self.meal.public_id), 'year': 2026, 'month': 8},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['schedule_published'])
+        self.assertEqual(response.data['days'], [])
+        self.assertEqual(response.data['nearest_published_month'], {'year': 2026, 'month': 9})
+        self.assertEqual(response.data['published_months'], [{'year': 2026, 'month': 9}])
+
+    def test_multiple_published_months_nearest_future_tie_break(self):
+        self._create_published_schedule(2026, 7)
+        self._create_published_schedule(2026, 9)
+
+        response = self.client.get(
+            self.url,
+            {'meal_public_id': str(self.meal.public_id), 'year': 2026, 'month': 8},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['schedule_published'])
+        self.assertEqual(
+            response.data['published_months'],
+            [{'year': 2026, 'month': 7}, {'year': 2026, 'month': 9}],
+        )
+        self.assertEqual(response.data['nearest_published_month'], {'year': 2026, 'month': 9})

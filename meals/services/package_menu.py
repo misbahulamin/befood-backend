@@ -113,6 +113,58 @@ def published_schedule_for_meal(meal_id: int, year: int, month: int):
     )
 
 
+def _month_ordinal(year: int, month: int) -> int:
+    return year * 12 + month
+
+
+def list_published_months_for_meal(meal_id: int) -> list[dict]:
+    """Sorted ascending published cycle months for a meal package."""
+    rows = (
+        MonthlyMenuSchedule.objects.filter(
+            plan__meal_category_id=meal_id,
+            status=MonthlyMenuSchedule.Status.PUBLISHED,
+        )
+        .values_list('plan__cycle__year', 'plan__cycle__month')
+        .order_by('plan__cycle__year', 'plan__cycle__month')
+        .distinct()
+    )
+    return [{'year': year, 'month': month} for year, month in rows]
+
+
+def nearest_published_month(
+    meal_id: int,
+    year: int,
+    month: int,
+) -> dict | None:
+    """
+    Nearest published cycle month to the requested calendar month.
+
+    Tie-break toward the future month when distances are equal.
+    """
+    published = list_published_months_for_meal(meal_id)
+    if not published:
+        return None
+
+    requested = _month_ordinal(year, month)
+    for entry in published:
+        if entry['year'] == year and entry['month'] == month:
+            return {'year': year, 'month': month}
+
+    best = published[0]
+    best_distance = abs(_month_ordinal(best['year'], best['month']) - requested)
+    for entry in published[1:]:
+        candidate_ordinal = _month_ordinal(entry['year'], entry['month'])
+        distance = abs(candidate_ordinal - requested)
+        if distance < best_distance:
+            best = entry
+            best_distance = distance
+        elif distance == best_distance and candidate_ordinal > _month_ordinal(
+            best['year'], best['month']
+        ):
+            best = entry
+    return best
+
+
 def build_package_menu_for_customer(
     customer_profile,
     *,
@@ -213,12 +265,17 @@ def build_public_package_menu_for_meal(
         if schedule is not None
         else []
     )
+    published_months = list_published_months_for_meal(meal.id)
     return {
         'year': target_year,
         'month': target_month,
         'meal_public_id': str(meal.public_id),
         'meal_name': meal.meal_name,
         'schedule_published': schedule is not None,
+        'nearest_published_month': nearest_published_month(
+            meal.id, target_year, target_month
+        ),
+        'published_months': published_months,
         'meta': build_menu_meta(meal, target_year, target_month),
         'days': days,
     }
