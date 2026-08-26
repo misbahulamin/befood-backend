@@ -134,6 +134,14 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
     @extend_schema(
         tags=['Admin Meal Cycle'],
         summary='Get cycle plan cost summary',
+        description=(
+            'Returns package costing totals. Draft plans use live ingredient and '
+            'operational costs; finalized plans use snapshots. Includes '
+            '`published_meal_total_price` (last published `MealCategory.total_price`), '
+            '`published_price_status` (`in_sync` | `stale`), `published_price_delta` when '
+            'stale, `realized_profit_margin_percent` when stale, and '
+            '`suggested_package_price` equal to `total_cost`.'
+        ),
         responses={200: OpenApiResponse(description='Plan summary with line and package totals')},
     )
     @action(detail=True, methods=['get'], url_path='summary')
@@ -147,6 +155,11 @@ class MealCyclePlanViewSet(viewsets.ModelViewSet):
     @extend_schema(
         tags=['Admin Meal Cycle'],
         summary='Finalize cycle plan',
+        description=(
+            'Locks the plan, persists cost snapshots, publishes `snapshot_total_cost` to '
+            'the linked meal `total_price`, and returns the summary with '
+            '`published_price_status` `in_sync`.'
+        ),
         request=None,
         responses={200: OpenApiResponse(description='Finalized plan summary')},
     )

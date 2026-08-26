@@ -371,22 +371,39 @@ Each line **requires** `product_role`. Missing role → `400`.
 
 `GET /meals/cycle-plans/1/summary/`
 
-Returns `status`, cycle info, lines with `product_role` / `cost_per_customer` / `line_product_cost`, plus `product_cost`, `other_cost`, `operational_cost`, `operational_cost_total`, `operational_cost_lines`, `profit`, `total_cost`, `per_meal_rate`, and `suggested_package_price`.
+Returns `status`, cycle info, lines with `product_role` / `cost_per_customer` / `line_product_cost`, plus `product_cost`, `other_cost`, `profit`, `total_cost`, `per_meal_rate`, `suggested_package_price`, `published_meal_total_price`, `published_price_status`, `published_price_delta`, and (when stale) `realized_profit_margin_percent`.
 
-`suggested_package_price` is informational only — finalize does **not** auto-write `MealCategory.total_price`.
+| Field | Meaning |
+| --- | --- |
+| `total_cost` | Live-calculated on draft plans; snapshot on finalized plans |
+| `suggested_package_price` | Always equals `total_cost` (informational alias) |
+| `published_meal_total_price` | Current `MealCategory.total_price` — what customers pay until re-finalize |
+| `published_price_status` | `in_sync` when published equals `total_cost`; `stale` when they differ |
+| `published_price_delta` | `total_cost − published_meal_total_price` when stale; `null` when in sync |
+| `realized_profit_margin_percent` | Profit on product cost implied by the stale published price; `null` when in sync |
+
+**Profit margin:** `profit` is `product_cost × profit_percent / 100` — markup on ingredient cost only, not on operational `other_cost`.
+
+**Stale published price:** When operational cost ledger or ingredient prices change after the last finalize, draft summaries show a higher/lower `total_cost` while `published_meal_total_price` stays at the last published value. Reopen (if finalized) and **finalize again** to publish the new package price.
 
 ### 9.7 Finalize
 
 `POST /meals/cycle-plans/1/finalize/`  
 Body: empty / `{}`
 
-Success `200`: same summary shape with `"status": "finalized"` and `"using_snapshot": true`.
+Success `200`: same summary shape with `"status": "finalized"`, `"using_snapshot": true`, and `published_price_status` `in_sync`. Finalize persists snapshots and writes `snapshot_total_cost` to `MealCategory.total_price` via `publish_meal_price_from_plan`.
 
 ### 9.8 Reopen
 
 `POST /meals/cycle-plans/1/reopen/`
 
-Returns the plan with `"status": "draft"` and cleared snapshots.
+Returns the plan with `"status": "draft"` and cleared snapshots. **Keeps** `MealCategory.total_price` at the last published value until the next finalize.
+
+### 9.9 Frontend integration (package summary UI)
+
+- When `published_price_status` is `stale`, show a warning with `published_price_delta` and label `published_meal_total_price` as **Last published**.
+- Label profit margin as **15% on product cost** (not full package margin) to match backend `profit` calculation.
+- Use `total_cost` / `suggested_package_price` as the proposed selling price on draft plans; only `finalize` publishes to customers.
 
 ---
 

@@ -19,6 +19,35 @@ def _quantize(value: Decimal, places: Decimal = MONEY_PLACES) -> Decimal:
     return value.quantize(places, rounding=ROUND_HALF_UP)
 
 
+def _published_price_sync_status(
+    total_cost: Decimal,
+    published_price: Decimal | None,
+) -> tuple[str, str | None]:
+    if published_price is None:
+        return 'in_sync', None
+    total_q = _quantize(Decimal(total_cost))
+    published_q = _quantize(Decimal(published_price))
+    if total_q == published_q:
+        return 'in_sync', None
+    return 'stale', str(_quantize(total_q - published_q))
+
+
+def _realized_profit_margin_percent(
+    *,
+    published_price: Decimal,
+    product_cost: Decimal,
+    other_cost: Decimal,
+) -> str | None:
+    if product_cost <= 0:
+        return None
+    realized_profit = _quantize(published_price - product_cost - other_cost)
+    margin = (realized_profit / product_cost * Decimal('100')).quantize(
+        MONEY_PLACES,
+        rounding=ROUND_HALF_UP,
+    )
+    return str(margin)
+
+
 def plan_expected_servings(plan: MealCyclePlan) -> int:
     meal = plan.meal_category
     return expected_servings(
@@ -258,6 +287,19 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
         if line.product_role == MAIN_ROLE
     )
 
+    published_price = plan.meal_category.total_price
+    sync_status, sync_delta = _published_price_sync_status(
+        totals['total_cost'],
+        published_price,
+    )
+    realized_margin = None
+    if sync_status == 'stale' and published_price is not None:
+        realized_margin = _realized_profit_margin_percent(
+            published_price=Decimal(published_price),
+            product_cost=Decimal(totals['product_cost']),
+            other_cost=Decimal(totals['other_cost']),
+        )
+
     return {
         'plan_id': plan.id,
         'status': plan.status,
@@ -291,14 +333,13 @@ def build_plan_summary(plan: MealCyclePlan, *, use_snapshot: bool | None = None)
         'profit': str(totals['profit']),
         'total_cost': str(totals['total_cost']),
         'per_meal_rate': str(totals['per_meal_rate']),
-        'suggested_package_price': str(
-            _quantize(totals['per_meal_rate'] * Decimal(servings_expected))
-        ),
+        'suggested_package_price': str(totals['total_cost']),
         'published_meal_total_price': (
-            str(plan.meal_category.total_price)
-            if plan.meal_category.total_price is not None
-            else None
+            str(published_price) if published_price is not None else None
         ),
+        'published_price_status': sync_status,
+        'published_price_delta': sync_delta,
+        'realized_profit_margin_percent': realized_margin,
         'finalized_at': plan.finalized_at.isoformat().replace('+00:00', 'Z') if plan.finalized_at else None,
         'using_snapshot': bool(use_snapshot and plan.snapshot_total_cost is not None),
     }

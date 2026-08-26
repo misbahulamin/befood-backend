@@ -14,8 +14,10 @@ from meals.services.cycle_calculations import (
     calculate_package_totals,
     combined_unit_cost_per_customer,
     finalize_plan,
+    reopen_plan,
     resolved_kg_cost_per_customer,
     resolve_cost_per_customer,
+    _quantize,
 )
 from meals.services.operational_cost import (
     per_meal_operational_cost_for_month,
@@ -440,3 +442,122 @@ class CycleCostingFormulaTests(TestCase):
         expected_both = calculate_line_product_cost(Decimal('56.166667'), 10)
         expected_veg = calculate_line_product_cost(Decimal('6.000000'), 60)
         self.assertEqual(line_sum, expected_both + expected_veg)
+
+    def test_suggested_package_price_equals_total_cost(self):
+        totals = calculate_package_totals(
+            product_cost=Decimal('2533.29'),
+            per_meal_operational_cost=Decimal('4.13'),
+            profit_percent=Decimal('15'),
+            expected_servings_count=60,
+        )
+        self.assertEqual(totals['total_cost'], Decimal('3161.08'))
+        self.assertEqual(totals['per_meal_rate'], Decimal('52.68'))
+
+        meal = MealCategory.objects.create(
+            meal_name='Student Package Both',
+            total_price=None,
+            meal_type='monthly',
+            meal_period='both',
+            meal_thumbnail=make_test_image('student-both.jpg'),
+        )
+        cycle = MealCycle.objects.create(year=2026, month=4)
+        ensure_operational_cost_month(
+            2026,
+            4,
+            target_meal_quantity=10_000,
+            items=[('Operations', Decimal('41300.00'))],
+        )
+        plan = MealCyclePlan.objects.create(
+            cycle=cycle,
+            meal_category=meal,
+            profit_percent=Decimal('15'),
+        )
+        unit_cost = Decimal('2533.29') / Decimal('60')
+        ingredient = Ingredient.objects.create(
+            name='Main Combo',
+            cost_per_customer=unit_cost,
+        )
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=ingredient,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=60,
+        )
+        summary = build_plan_summary(plan)
+        self.assertEqual(summary['total_cost'], '3161.08')
+        self.assertEqual(summary['suggested_package_price'], summary['total_cost'])
+        self.assertNotEqual(
+            summary['suggested_package_price'],
+            str(totals['per_meal_rate'] * Decimal('60')),
+        )
+
+    def test_profit_base_is_product_cost_only(self):
+        totals = calculate_package_totals(
+            product_cost=Decimal('2533.29'),
+            per_meal_operational_cost=Decimal('4.13'),
+            profit_percent=Decimal('15'),
+            expected_servings_count=60,
+        )
+        self.assertEqual(totals['profit'], Decimal('379.99'))
+        full_cost_base = totals['product_cost'] + totals['other_cost']
+        self.assertNotEqual(
+            totals['profit'],
+            _quantize(full_cost_base * Decimal('0.15')),
+        )
+
+    def test_draft_summary_stale_published_after_op_cost_change(self):
+        ensure_operational_cost_month(
+            2026,
+            4,
+            target_meal_quantity=10_000,
+            items=[('Operations', Decimal('33400.00'))],
+        )
+        meal = MealCategory.objects.create(
+            meal_name='Stale Published',
+            total_price=Decimal('3000.00'),
+            meal_type='monthly',
+            meal_period='both',
+            meal_thumbnail=make_test_image('stale-published.jpg'),
+        )
+        cycle = MealCycle.objects.create(year=2026, month=4)
+        plan = MealCyclePlan.objects.create(
+            cycle=cycle,
+            meal_category=meal,
+            profit_percent=Decimal('15'),
+        )
+        unit_cost = Decimal('2533.29') / Decimal('60')
+        ingredient = Ingredient.objects.create(
+            name='Main Combo',
+            cost_per_customer=unit_cost,
+        )
+        MealCyclePlanLine.objects.create(
+            plan=plan,
+            ingredient=ingredient,
+            product_role=MealCyclePlanLine.ProductRole.MAIN,
+            servings_count=60,
+        )
+        finalize_plan(plan)
+        meal.refresh_from_db()
+        published_price = meal.total_price
+
+        reopen_plan(plan)
+        ensure_operational_cost_month(
+            2026,
+            4,
+            target_meal_quantity=10_000,
+            items=[('Operations', Decimal('41300.00'))],
+        )
+        plan.refresh_from_db()
+        meal.refresh_from_db()
+
+        summary = build_plan_summary(plan)
+        self.assertEqual(summary['status'], MealCyclePlan.Status.DRAFT)
+        self.assertEqual(summary['published_meal_total_price'], str(published_price))
+        self.assertEqual(summary['total_cost'], '3161.08')
+        self.assertEqual(summary['published_price_status'], 'stale')
+        expected_delta = _quantize(
+            Decimal(summary['total_cost']) - Decimal(summary['published_meal_total_price'])
+        )
+        self.assertEqual(summary['published_price_delta'], str(expected_delta))
+        self.assertGreater(Decimal(summary['published_price_delta']), Decimal('0'))
+        self.assertIsNotNone(summary['realized_profit_margin_percent'])

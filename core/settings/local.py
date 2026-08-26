@@ -98,6 +98,5 @@ CSRF_TRUSTED_ORIGINS = [
     "https://befood-backend.onrender.com",
 ]
 
-
 # Render HTTPS proxy
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

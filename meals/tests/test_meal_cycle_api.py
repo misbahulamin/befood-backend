@@ -409,6 +409,12 @@ class MealCycleAPITestCase(APITestCase):
         self.meal.refresh_from_db()
         self.assertEqual(self.meal.total_price, Decimal(finalize.data['total_cost']))
         self.assertEqual(finalize.data['published_meal_total_price'], str(self.meal.total_price))
+        self.assertEqual(finalize.data['published_price_status'], 'in_sync')
+        self.assertIsNone(finalize.data['published_price_delta'])
+        self.assertEqual(
+            finalize.data['suggested_package_price'],
+            finalize.data['total_cost'],
+        )
 
         published_price = self.meal.total_price
 
