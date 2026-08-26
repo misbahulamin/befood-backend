@@ -92,6 +92,15 @@ SPECTACULAR_SETTINGS = {
     'VERSION': '1.0.0',
 }
 
+# --------------------------
+# Static files
+# --------------------------
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.qiye.aliyun.com'
 EMAIL_PORT = 465
