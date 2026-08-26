@@ -9,4 +9,5 @@ staticfiles/
 .idea/
 .vscode/
 credentials/
+notes.md
 
