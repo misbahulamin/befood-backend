@@ -1,0 +1,393 @@
+name: Deploy BeFood Backend to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+  # GitHub Actions থেকে manually deploy করার option
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: befood-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to AWS EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ------------------------------------------
+      # 1. Configure SSH
+      # ------------------------------------------
+      - name: Setup SSH Connection
+        env:
+          EC2_HOST: ${{ secrets.BEFOOD_EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.BEFOOD_EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+
+          printf '%s\n' "$EC2_SSH_KEY" | tr -d '\r' > ~/.ssh/befood_ec2_key
+
+          chmod 600 ~/.ssh/befood_ec2_key
+
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      # ------------------------------------------
+      # 2. Deploy
+      # ------------------------------------------
+      - name: Deploy BeFood Backend
+        env:
+          EC2_HOST: ${{ secrets.BEFOOD_EC2_HOST }}
+          EC2_USER: ${{ secrets.BEFOOD_EC2_USER }}
+        run: |
+          ssh \
+            -i ~/.ssh/befood_ec2_key \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
+            "$EC2_USER@$EC2_HOST" 'bash -se' << 'EOF'
+
+            set -Eeuo pipefail
+
+            PROJECT_DIR="/home/ubuntu/befood-backend"
+            VENV_DIR="/home/ubuntu/venv"
+
+            echo "=========================================="
+            echo " Starting BeFood Backend Deployment"
+            echo "=========================================="
+
+            # ----------------------------------
+            # Go to project
+            # ----------------------------------
+            echo "1. Opening project directory..."
+
+            cd "$PROJECT_DIR"
+
+
+            # ----------------------------------
+            # Update source code
+            # ----------------------------------
+            echo "2. Fetching latest code from GitHub..."
+
+            git fetch origin main
+
+            git checkout main
+
+            git pull --ff-only origin main
+
+
+            # ----------------------------------
+            # Activate virtual environment
+            # ----------------------------------
+            echo "3. Activating virtual environment..."
+
+            source "$VENV_DIR/bin/activate"
+
+
+            # ----------------------------------
+            # Production environment
+            # ----------------------------------
+            echo "4. Loading production Django environment..."
+
+            export DJANGO_ENV=prod
+            export DJANGO_SETTINGS_MODULE=core.settings
+
+
+            # ----------------------------------
+            # Dependencies
+            # ----------------------------------
+            echo "5. Installing/updating Python dependencies..."
+
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+
+
+            # ----------------------------------
+            # Django system check
+            # ----------------------------------
+            echo "6. Running Django system check..."
+
+            python manage.py check
+
+
+            # ----------------------------------
+            # Database migrations
+            # ----------------------------------
+            echo "7. Applying database migrations..."
+
+            python manage.py migrate --noinput
+
+
+            # ----------------------------------
+            # Static files
+            # ----------------------------------
+            echo "8. Collecting static files..."
+
+            python manage.py collectstatic --noinput
+
+
+            # ----------------------------------
+            # Cron jobs
+            # ----------------------------------
+            echo "9. Updating managed cron jobs..."
+
+            if [ -f "$PROJECT_DIR/scripts/cron/install_managed_cron.sh" ]; then
+              bash "$PROJECT_DIR/scripts/cron/install_managed_cron.sh"
+            else
+              echo "Cron installer not found. Skipping cron setup."
+            fi
+
+
+            # ----------------------------------
+            # Test nginx before touching service
+            # ----------------------------------
+            echo "10. Testing Nginx configuration..."
+
+            sudo nginx -t
+
+
+            # ----------------------------------
+            # Restart Gunicorn
+            # ----------------------------------
+            echo "11. Restarting Gunicorn..."
+
+            sudo supervisorctl restart 'guni:*'
+
+            sleep 3
+
+
+            # ----------------------------------
+            # Check Gunicorn
+            # ----------------------------------
+            echo "12. Checking Gunicorn status..."
+
+            sudo supervisorctl status
+
+
+            # ----------------------------------
+            # Reload nginx
+            # ----------------------------------
+            echo "13. Reloading Nginx..."
+
+            sudo systemctl reload nginx
+
+
+            # ----------------------------------
+            # Gunicorn socket check
+            # ----------------------------------
+            echo "14. Checking Gunicorn socket..."
+
+            test -S "$PROJECT_DIR/app.sock"
+
+            echo "Gunicorn socket exists."
+
+
+            # ----------------------------------
+            # Django internal health check
+            # ----------------------------------
+            echo "15. Testing Django through Gunicorn..."
+
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --unix-socket "$PROJECT_DIR/app.sock" \
+              http://localhost/admin/login/ \
+              > /dev/null
+
+
+            echo "=========================================="
+            echo " BeFood Backend Deployment Successful"
+            echo "=========================================="
+
+          EOF
+
+      # ------------------------------------------
+      # 3. Public production checks
+      # ------------------------------------------
+      - name: Verify Production API
+        env:
+          EC2_HOST: ${{ secrets.BEFOOD_EC2_HOST }}
+        run: |
+          echo "Checking public API..."
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --max-time 20 \
+            https://api.befood.com.bd/admin/login/ \
+            > /dev/null
+
+          echo "Production API is reachable."
+
+      # ------------------------------------------
+      # 4. Check Django admin static CSS
+      # ------------------------------------------
+      - name: Verify Django Admin Static Files
+        run: |
+          echo "Checking Django admin CSS..."
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --max-time 20 \
+            https://api.befood.com.bd/static/admin/css/base.css \
+            > /dev/null
+
+          echo "Django admin static files are working."
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# name: Deploy to Ubuntu Server
+
+# on:
+#   push:
+#     branches:
+#       - main  # Change this to your deployment branch if it's not 'main'
+
+# jobs:
+#   deploy:
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+
+#       - name: Setup SSH Connection
+#         run: |
+#           mkdir -p ~/.ssh
+#           echo "${{ secrets.EC2_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+#           chmod 600 ~/.ssh/id_rsa
+#           ssh-keyscan -H 15.207.110.127 >> ~/.ssh/known_hosts
+
+#       - name: Deploy to Server
+#         run: |
+#           ssh ubuntu@15.207.110.127 << 'EOF'
+#             set -e  # Exit if any command fails
+#             echo "Updating system packages..."
+#             sudo apt update && sudo apt upgrade -y
+            
+#             echo "Virtual environment activate..."
+#             source venv/bin/activate
+
+#             echo "Pulling latest code from GitHub..."
+#             cd ~/befood-backend
+#             git pull origin main
+
+#             echo "Checking if requirements.txt is updated..."
+#             if git diff --quiet HEAD^ HEAD -- requirements.txt; then
+#               echo "No changes in requirements.txt, skipping installation."
+#             else
+#               echo "requirements.txt updated, installing dependencies..."
+#               pip install -r requirements.txt
+#             fi
+            
+#             echo "Installing/updating managed production cron jobs..."
+#             bash ~/befood-backend/scripts/cron/install_managed_cron.sh
+
+#             echo "Running system update again..."
+#             sudo apt update && sudo apt upgrade -y
+            
+#             echo "Restarting server..."
+#             sudo reboot
+#           EOF
+
+
+
+
+
+
+
+# name: Deploy BeFood Backend
+
+# on:
+#   push:
+#     branches:
+#       - main
+
+# concurrency:
+#   group: befood-production-deploy
+#   cancel-in-progress: false
+
+# jobs:
+#   deploy:
+#     runs-on: self-hosted
+
+#     steps:
+#       - name: Deploy backend
+#         shell: bash
+#         run: |
+#           set -euo pipefail
+
+#           echo "================================="
+#           echo "Deploying BeFood Backend"
+#           echo "================================="
+
+#           cd /home/ubuntu/befood-backend
+
+#           echo "Fetching latest source..."
+#           git fetch origin main
+#           git reset --hard origin/main
+
+#           echo "Activating Python virtual environment..."
+#           source /home/ubuntu/venv/bin/activate
+
+#           echo "Installing/updating dependencies..."
+#           pip install -r requirements.txt
+
+#           echo "Using production Django settings..."
+#           export DJANGO_ENV=prod
+#           export DJANGO_SETTINGS_MODULE=core.settings
+
+#           echo "Running Django system check..."
+#           python manage.py check
+
+#           echo "Applying database migrations..."
+#           python manage.py migrate --noinput
+
+#           echo "Collecting static files..."
+#           python manage.py collectstatic --noinput
+
+#           echo "Installing/updating managed cron jobs..."
+#           if [ -f scripts/cron/install_managed_cron.sh ]; then
+#             bash scripts/cron/install_managed_cron.sh
+#           else
+#             echo "Cron installer not found, skipping."
+#           fi
+
+#           echo "Restarting Gunicorn..."
+#           sudo supervisorctl restart guni:*
+
+#           echo "Checking Gunicorn..."
+#           sudo supervisorctl status
+
+#           echo "Testing Nginx configuration..."
+#           sudo nginx -t
+
+#           echo "Reloading Nginx..."
+#           sudo systemctl reload nginx
+
+#           echo "================================="
+#           echo "Deployment completed successfully"
+#           echo "================================="
