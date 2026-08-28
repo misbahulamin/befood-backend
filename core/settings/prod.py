@@ -1,12 +1,12 @@
 from .base import *
+import os
 
 DEBUG = False
 # ALLOWED_HOSTS = config('DJANGO_ALLOWED_HOSTS', default='', cast=Csv())
 ALLOWED_HOSTS = [
-    "befood.com.bd,
+    "befood.com.bd",
     "api.befood.com.bd",
     "43.204.109.243",
-    # "your-ec2-public-ip",  # optional
 ]
 
 # Prefer host env / .env. Defaults match the last known production RDS wiring so
