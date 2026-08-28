@@ -34,7 +34,9 @@
 - [x] 6.1 Review `git status` / diff; ensure no `.env` or secrets are staged
 - [x] 6.2 Commit settings + OpenSpec change artifacts with a clear English message
 - [x] 6.3 Push branch to GitHub and merge/push to `main` as requested (no force-push); confirm remote `main` updated
-  - Pushed `a37855b` to `origin/main`. EC2 deploy via Actions failed at **Setup SSH Connection** (secrets `BEFOOD_EC2_*`). Laptop SSH to `15.207.110.127` → `Permission denied (publickey)`. Fix GitHub secrets / EC2 key, then re-run workflow.
+  - Code on `origin/main`: `a37855b`, `d8fc3b8`.
+  - Actions deploy still **blocked**: SSH to EC2 returns `Permission denied (publickey)` — `BEFOOD_EC2_SSH_KEY` does not match authorized keys on the instance (or wrong `BEFOOD_EC2_USER`/`BEFOOD_EC2_HOST`). Fix secrets, then re-run **Deploy BeFood Backend to EC2**.
+  - Latest failed run: https://github.com/misbahulamin/befood-backend/actions/runs/33155298182
 
 ## 7. Follow-ups (document only; not blocking)
 
