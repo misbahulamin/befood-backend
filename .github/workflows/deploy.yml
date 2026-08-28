@@ -198,6 +198,7 @@ jobs:
               --silent \
               --show-error \
               --unix-socket "$PROJECT_DIR/app.sock" \
+              -H "Host: api.befood.com.bd" \
               http://localhost/admin/login/ \
               > /dev/null
 

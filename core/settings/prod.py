@@ -7,6 +7,8 @@ ALLOWED_HOSTS = [
     "befood.com.bd",
     "api.befood.com.bd",
     "43.204.109.243",
+    "localhost",
+    "127.0.0.1",
 ]
 
 # Prefer host env / .env. Defaults match the last known production RDS wiring so
