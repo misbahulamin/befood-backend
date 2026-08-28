@@ -3,6 +3,7 @@ from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_sche
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -12,6 +13,11 @@ from user_management.api.permissions import IsVerifiedAdmin
 
 from meals.filters import MonthlyMenuScheduleFilter
 from meals.models import MonthlyMenuSchedule
+from meals.services.instant_meals import (
+    get_instant_meal_settings,
+    list_instant_meals,
+    update_instant_meal_settings,
+)
 from meals.services.menu_schedule import (
     build_quota_summary,
     publish_schedule,
@@ -31,6 +37,8 @@ from meals.services.today_menu import (
     update_reveal_settings,
 )
 from .menu_schedule_serializers import (
+    InstantMealCardSerializer,
+    InstantMealSettingsSerializer,
     MenuAssignmentBulkSerializer,
     MenuRevealSettingsSerializer,
     MenuSyncApplySerializer,
@@ -279,6 +287,106 @@ class MenuRevealSettingsView(APIView):
             dinner_reveal_time=serializer.validated_data.get('dinner_reveal_time'),
         )
         return Response(MenuRevealSettingsSerializer(updated).data)
+
+
+class InstantMealPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class InstantMealSettingsView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=['Admin Instant Meals'],
+        summary='Get Instant Meal settings',
+        description=(
+            'Verified admin only. Returns Instant Meal profit_percent (default 50) '
+            'and duration_days allowlist window (1=Today, 3, 7, 15, 25, 30).'
+        ),
+        responses={200: InstantMealSettingsSerializer},
+    )
+    def get(self, request):
+        settings_obj = get_instant_meal_settings()
+        return Response(InstantMealSettingsSerializer(settings_obj).data)
+
+    @extend_schema(
+        tags=['Admin Instant Meals'],
+        summary='Update Instant Meal settings',
+        request=InstantMealSettingsSerializer,
+        responses={
+            200: InstantMealSettingsSerializer,
+            400: OpenApiResponse(description='Invalid profit_percent or duration_days'),
+        },
+    )
+    def patch(self, request):
+        settings_obj = get_instant_meal_settings()
+        serializer = InstantMealSettingsSerializer(
+            settings_obj,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        try:
+            updated = update_instant_meal_settings(
+                profit_percent=serializer.validated_data.get('profit_percent'),
+                duration_days=serializer.validated_data.get('duration_days'),
+            )
+        except DjangoValidationError as exc:
+            return _django_validation_to_response(exc)
+        return Response(InstantMealSettingsSerializer(updated).data)
+
+
+class InstantMealListView(APIView):
+    """Public Instant Meal cards projected from published monthly menu slots."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    pagination_class = InstantMealPagination
+
+    @extend_schema(
+        tags=['Public Instant Meals'],
+        summary='List Instant Meals for the admin display window',
+        description=(
+            'Unauthenticated. Returns Instant Meal cards derived from published lunch/dinner '
+            'menu slots within Instant Meal settings duration_days from local today. '
+            'Ordered by service_date ascending, lunch before dinner, then package name. '
+            'Past dates are excluded. Instant price uses Instant profit_percent, not '
+            'subscription plan profit. No marketing copy — use subscriber_price on the client. '
+            'Instant order/checkout is not available yet.'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='page',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                description='Page number (1-based).',
+            ),
+            OpenApiParameter(
+                name='page_size',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                description='Page size (default 20, max 100).',
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                description='Paginated Instant Meal cards',
+                response=InstantMealCardSerializer(many=True),
+            ),
+        },
+    )
+    def get(self, request):
+        cards = list_instant_meals()
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(cards, request, view=self)
+        serializer = InstantMealCardSerializer(
+            page,
+            many=True,
+            context={'request': request},
+        )
+        return paginator.get_paginated_response(serializer.data)
 
 
 class CustomerTodayMenuView(APIView):

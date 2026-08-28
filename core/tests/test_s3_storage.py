@@ -13,6 +13,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from core.settings.aws_media import (
     LOCAL_S3_STORAGES,
     PROD_STORAGES,
+    build_s3_media_url,
     validate_aws_media_settings,
 )
 from core.storage import S3MediaStorage
@@ -59,11 +60,44 @@ class AwsMediaSettingsTests(SimpleTestCase):
             'django.contrib.staticfiles.storage.StaticFilesStorage',
         )
 
+    def test_build_s3_media_url_uses_custom_domain(self):
+        self.assertEqual(
+            build_s3_media_url(
+                bucket_name='test-bucket',
+                region_name='ap-south-1',
+                custom_domain='cdn.example.com',
+            ),
+            'https://cdn.example.com/',
+        )
+
+    def test_build_s3_media_url_accepts_full_custom_domain_url(self):
+        self.assertEqual(
+            build_s3_media_url(
+                bucket_name='test-bucket',
+                region_name='ap-south-1',
+                custom_domain='https://cdn.example.com',
+            ),
+            'https://cdn.example.com/',
+        )
+
+    def test_build_s3_media_url_uses_bucket_endpoint_without_custom_domain(self):
+        self.assertEqual(
+            build_s3_media_url(
+                bucket_name='befood-production-media',
+                region_name='ap-south-1',
+                custom_domain='',
+            ),
+            'https://befood-production-media.s3.ap-south-1.amazonaws.com/',
+        )
+
 
 class LocalFilesystemStorageTests(TestCase):
-    def test_default_local_storage_is_filesystem(self):
+    def test_default_local_storage_is_filesystem_when_s3_disabled(self):
+        from django.conf import settings
         from django.core.files.storage import default_storage
 
+        if settings.USE_S3_MEDIA:
+            self.skipTest('USE_S3_MEDIA is enabled in the current environment')
         self.assertIsInstance(default_storage, FileSystemStorage)
 
 

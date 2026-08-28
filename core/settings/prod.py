@@ -40,18 +40,29 @@ DATABASES = {
 # }
 
 # ---------------------------------------------------------------------------
-# AWS S3 media — deferred until credentials are verified.
-# Re-enable after S3 check: uncomment the import, validate_*, and STORAGES.
+# AWS S3 media — opt-in via USE_S3_MEDIA (same flag as local).
+# When False, default filesystem MEDIA_ROOT is used. Static stays on WhiteNoise.
+# Access keys optional when EC2 has an IAM instance role for the bucket.
 # ---------------------------------------------------------------------------
-# from .aws_media import PROD_STORAGES, validate_aws_media_settings
-#
-# validate_aws_media_settings(
-#     bucket_name=AWS_STORAGE_BUCKET_NAME,
-#     region_name=AWS_S3_REGION_NAME,
-# )
-#
-# STORAGES = PROD_STORAGES
+if USE_S3_MEDIA:
+    from .aws_media import (
+        PROD_STORAGES,
+        build_s3_media_url,
+        validate_aws_media_settings,
+    )
 
+    validate_aws_media_settings(
+        bucket_name=AWS_STORAGE_BUCKET_NAME,
+        region_name=AWS_S3_REGION_NAME,
+    )
+    STORAGES = PROD_STORAGES
+    MEDIA_URL = build_s3_media_url(
+        bucket_name=AWS_STORAGE_BUCKET_NAME,
+        region_name=AWS_S3_REGION_NAME,
+        custom_domain=AWS_S3_CUSTOM_DOMAIN,
+    )
+
+# WhiteNoise for static files — independent of the media S3 toggle.
 _security_index = MIDDLEWARE.index('django.middleware.security.SecurityMiddleware')
 MIDDLEWARE = (
     MIDDLEWARE[: _security_index + 1]

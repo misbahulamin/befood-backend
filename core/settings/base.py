@@ -75,9 +75,6 @@ LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'Asia/Dhaka'
 USE_I18N = True
 USE_TZ = True
-STATIC_URL = 'static/'
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
@@ -94,16 +91,19 @@ SPECTACULAR_SETTINGS = {
 }
 
 # --------------------------
-# Static files
+# Static files (never on S3 media backend)
 # --------------------------
-STATIC_URL = "/static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
-
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # --------------------------
-# AWS S3 (media) — values from environment only
+# Media files (local filesystem by default; S3 when USE_S3_MEDIA=True)
+# --------------------------
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# --------------------------
+# AWS S3 (media) — values from environment only; never hardcode secrets
 # --------------------------
 AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')
 AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default='')
@@ -184,6 +184,7 @@ MEAL_DELIVERY_CHARGE_USE_ORDER_AVERAGE = config(
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'http://localhost:5174',
     # Your frontend domain should be here
     'http://befood.com.bd',
     'https://befood.com.bd',

@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     Ingredient,
+    InstantMealSettings,
     MealCategory,
     MealCycle,
     MealCyclePlan,
@@ -162,3 +163,15 @@ class MonthlyMenuSlotItemAdmin(admin.ModelAdmin):
 class MenuRevealSettingsAdmin(admin.ModelAdmin):
     list_display = ('timezone', 'lunch_reveal_time', 'dinner_reveal_time', 'updated_at')
     readonly_fields = ('updated_at',)
+
+
+@admin.register(InstantMealSettings)
+class InstantMealSettingsAdmin(admin.ModelAdmin):
+    list_display = ('profit_percent', 'duration_days', 'updated_at')
+    readonly_fields = ('updated_at',)
+
+    def has_add_permission(self, request):
+        return not InstantMealSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False

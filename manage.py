@@ -4,6 +4,9 @@ import sys
 
 
 def main():
+    from core.load_env import load_project_env
+
+    load_project_env()
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
     from django.core.management import execute_from_command_line
     execute_from_command_line(sys.argv)

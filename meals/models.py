@@ -455,3 +455,77 @@ class MenuRevealSettings(models.Model):
     def load(cls) -> 'MenuRevealSettings':
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+
+class InstantMealSettings(models.Model):
+    """Singleton: Instant Meal profit margin and public display window."""
+
+    DURATION_TODAY = 1
+    ALLOWED_DURATION_DAYS = frozenset({1, 3, 7, 15, 25, 30})
+    DURATION_FIELD_CHOICES = (
+        (1, 'Today'),
+        (3, '3 Days'),
+        (7, '7 Days'),
+        (15, '15 Days'),
+        (25, '25 Days'),
+        (30, '30 Days'),
+    )
+    # Back-compat alias used by services/serializers
+    DURATION_CHOICES = (1, 3, 7, 15, 25, 30)
+
+    profit_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('50.00'),
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('1000'))],
+        help_text='Profit percent applied to Instant Meal ingredient cost only.',
+    )
+    duration_days = models.PositiveSmallIntegerField(
+        default=7,
+        choices=DURATION_FIELD_CHOICES,
+        help_text='Public Instant Meal window length in days from today (1=Today).',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Instant meal settings'
+        verbose_name_plural = 'Instant meal settings'
+
+    def __str__(self):
+        return (
+            f'Instant meals: profit={self.profit_percent}% '
+            f'duration={self.duration_days}d'
+        )
+
+    def clean(self):
+        super().clean()
+        if self.duration_days not in self.ALLOWED_DURATION_DAYS:
+            raise ValidationError(
+                {
+                    'duration_days': (
+                        'duration_days must be one of: '
+                        f'{", ".join(str(d) for d in sorted(self.ALLOWED_DURATION_DAYS))}.'
+                    )
+                }
+            )
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        if self.duration_days not in self.ALLOWED_DURATION_DAYS:
+            raise ValidationError(
+                {
+                    'duration_days': (
+                        'duration_days must be one of: '
+                        f'{", ".join(str(d) for d in sorted(self.ALLOWED_DURATION_DAYS))}.'
+                    )
+                }
+            )
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls) -> 'InstantMealSettings':
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj

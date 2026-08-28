@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from meals.models import (
     MealCyclePlan,
+    InstantMealSettings,
     MenuRevealSettings,
     MonthlyMenuSchedule,
     MonthlyMenuSlot,
@@ -131,3 +132,49 @@ class MenuRevealSettingsSerializer(serializers.ModelSerializer):
         except ZoneInfoNotFoundError as exc:
             raise serializers.ValidationError(f'Unknown timezone: {value}') from exc
         return value
+
+
+class InstantMealSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InstantMealSettings
+        fields = (
+            'profit_percent',
+            'duration_days',
+            'updated_at',
+        )
+        read_only_fields = ('updated_at',)
+
+    def validate_duration_days(self, value):
+        if value not in InstantMealSettings.ALLOWED_DURATION_DAYS:
+            raise serializers.ValidationError(
+                'duration_days must be one of: '
+                f'{", ".join(str(d) for d in sorted(InstantMealSettings.ALLOWED_DURATION_DAYS))}.'
+            )
+        return value
+
+
+class InstantMealCardSerializer(serializers.Serializer):
+    public_id = serializers.CharField()
+    name = serializers.CharField()
+    meal_period = serializers.CharField()
+    meal_type = serializers.CharField()
+    service_date = serializers.DateField()
+    package_public_id = serializers.UUIDField()
+    package_source = serializers.UUIDField()
+    package_name = serializers.CharField()
+    price = serializers.CharField()
+    ingredient_cost = serializers.CharField()
+    operational_cost = serializers.CharField()
+    profit_percent = serializers.CharField()
+    image = serializers.SerializerMethodField()
+    subscriber_price = serializers.CharField(allow_null=True)
+    ingredients = serializers.ListField(child=serializers.DictField(), required=False)
+
+    def get_image(self, obj):
+        image = obj.get('image') if isinstance(obj, dict) else None
+        if not image:
+            return None
+        request = self.context.get('request')
+        if request is not None and not str(image).startswith(('http://', 'https://')):
+            return request.build_absolute_uri(image)
+        return image

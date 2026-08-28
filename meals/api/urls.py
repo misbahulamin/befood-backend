@@ -11,6 +11,8 @@ from .menu_schedule_views import (
     CustomerOrderMenuPreviewView,
     CustomerPackageMenuView,
     CustomerTodayMenuView,
+    InstantMealListView,
+    InstantMealSettingsView,
     MenuRevealSettingsView,
     MonthlyMenuScheduleViewSet,
     PublicPackageMenuView,
@@ -35,6 +37,12 @@ router.register('', MealCategoryViewSet, basename='meals')
 
 urlpatterns = [
     path('menu-reveal-settings/', MenuRevealSettingsView.as_view(), name='menu-reveal-settings'),
+    path(
+        'instant-meal-settings/',
+        InstantMealSettingsView.as_view(),
+        name='instant-meal-settings',
+    ),
+    path('instant-meals/', InstantMealListView.as_view(), name='instant-meals'),
     path('today-menu/', CustomerTodayMenuView.as_view(), name='today-menu'),
     path('my-package-menu/', CustomerPackageMenuView.as_view(), name='my-package-menu'),
     path('order-menu-preview/', CustomerOrderMenuPreviewView.as_view(), name='order-menu-preview'),
