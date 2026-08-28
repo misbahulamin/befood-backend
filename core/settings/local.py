@@ -71,7 +71,10 @@ CORS_ALLOW_HEADERS = [
 
 # CSRF settings
 CSRF_TRUSTED_ORIGINS = [
-    "https://befood-backend.onrender.com",
+    "https://befood.com.bd",
+    "https://api.befood.com.bd",
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
 ]
 
 # Render HTTPS proxy

@@ -4,7 +4,7 @@ from decouple import Csv, config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-befood-development-key')
-DEBUG = False
+DEBUG = True
 ALLOWED_HOSTS = ["api.befood.com.bd",'localhost', '127.0.0.1']
 
 INSTALLED_APPS = [
