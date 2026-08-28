@@ -63,7 +63,10 @@ class CustomerAuthTests(TestCase):
     def test_registration_sends_verification_email(self):
         self.register_customer()
         self.assertEqual(len(mail.outbox), 1)
-        self.assertIn('Activate your Befood-Bachelors E-Food account', mail.outbox[0].subject)
+        self.assertIn('Welcome to Befood', mail.outbox[0].subject)
+        html = mail.outbox[0].alternatives[0][0]
+        self.assertIn('Verify Email Address', html)
+        self.assertNotIn('Your verification code', html)
 
     def test_duplicate_email_is_blocked(self):
         self.register_customer()

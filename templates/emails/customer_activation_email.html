@@ -1,10 +1,23 @@
-<html>
-  <body>
-    <p>Hi {{ first_name }},</p>
-    <p>Welcome to {{ brand_name }}.</p>
-    <p>Please activate your account by clicking the link below:</p>
-    <p><a href="{{ activation_link }}">Activate account</a></p>
-    <p>This link expires in 24 hours.</p>
-    <p>If you did not register, please ignore this email.</p>
-  </body>
-</html>
+{% extends "emails/base_branded_email.html" %}
+
+{% block title %}Verify your {{ brand_name }} account{% endblock %}
+
+{% block preheader %}Welcome to {{ brand_name }} — verify your email to start ordering homestyle meals.{% endblock %}
+
+{% block headline %}Welcome to {{ brand_name }}!{% endblock %}
+
+{% block subheadline %}Complete your account verification{% endblock %}
+
+{% block body %}
+Thanks for joining {{ brand_name }} — Bachelor's e-Food. Homestyle lunch and dinner, delivered for students, bachelors, and busy professionals. Click the button below to verify your email and activate your account. This link expires in 24 hours.
+{% endblock %}
+
+{% block cta_url %}{{ activation_link }}{% endblock %}
+
+{% block cta_label %}Verify Email Address{% endblock %}
+
+{% block cta_hint %}Or open this link in your browser to verify automatically.{% endblock %}
+
+{% block ignore_note %}
+If you didn't create a {{ brand_name }} account, you can safely ignore this email.
+{% endblock %}

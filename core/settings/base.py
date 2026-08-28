@@ -95,6 +95,7 @@ SPECTACULAR_SETTINGS = {
 # --------------------------
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_DIRS = [BASE_DIR / 'static']
 
 # --------------------------
 # Media files (local filesystem by default; S3 when USE_S3_MEDIA=True)
@@ -116,16 +117,79 @@ AWS_S3_OBJECT_PARAMETERS = {
 USE_S3_MEDIA = config('USE_S3_MEDIA', default=False, cast=bool)
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.qiye.aliyun.com'
-EMAIL_PORT = 465
-EMAIL_USE_SSL = True
-EMAIL_USE_TLS = False
-EMAIL_HOST_USER = 'misbahul@mypanaceatech.com'
-EMAIL_HOST_PASSWORD = 'Towaha459@'
-DEFAULT_FROM_EMAIL = 'Befood <misbahul@mypanaceatech.com>'
+EMAIL_HOST = config('EMAIL_HOST', default='smtp.qiye.aliyun.com')
+EMAIL_PORT = config('EMAIL_PORT', default=465, cast=int)
+EMAIL_USE_SSL = config('EMAIL_USE_SSL', default=True, cast=bool)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=False, cast=bool)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='support@befood.com.bd')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = config(
+    'DEFAULT_FROM_EMAIL',
+    default='Befood <noreply@befood.com.bd>',
+)
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 EMAIL_TIMEOUT = 30
-FRONTEND_URL = 'http://localhost:5173'
+FRONTEND_URL = config('FRONTEND_URL', default='https://www.befood.com.bd')
+
+# Branded auth emails (absolute logo URL required for email clients).
+EMAIL_LOGO_URL = config(
+    'EMAIL_LOGO_URL',
+    default=(
+        'https://befood-media-storage.s3.ap-south-1.amazonaws.com/'
+        'logo/befood_logo_for_template.png'
+    ),
+)
+EMAIL_FACEBOOK_ICON_URL = config(
+    'EMAIL_FACEBOOK_ICON_URL',
+    default=(
+        'https://befood-media-storage.s3.ap-south-1.amazonaws.com/'
+        'logo/icon-facebook.png'
+    ),
+)
+EMAIL_INSTAGRAM_ICON_URL = config(
+    'EMAIL_INSTAGRAM_ICON_URL',
+    default=(
+        'https://befood-media-storage.s3.ap-south-1.amazonaws.com/'
+        'logo/icon-instagram.png'
+    ),
+)
+EMAIL_WHATSAPP_ICON_URL = config(
+    'EMAIL_WHATSAPP_ICON_URL',
+    default=(
+        'https://befood-media-storage.s3.ap-south-1.amazonaws.com/'
+        'logo/icon-whatsapp.png'
+    ),
+)
+EMAIL_PLAY_STORE_URL = config(
+    'EMAIL_PLAY_STORE_URL',
+    default='https://play.google.com/store/apps/details?id=bd.com.befood',
+)
+EMAIL_PLAY_STORE_BADGE_URL = config(
+    'EMAIL_PLAY_STORE_BADGE_URL',
+    default='https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png',
+)
+EMAIL_SITE_URL = config('EMAIL_SITE_URL', default='https://befood.com.bd')
+EMAIL_PHONE = config('EMAIL_PHONE', default='+880 1751-678409')
+EMAIL_WHATSAPP = config('EMAIL_WHATSAPP', default='+880 1751-678409')
+EMAIL_FACEBOOK_URL = config(
+    'EMAIL_FACEBOOK_URL',
+    default='https://www.facebook.com/befoodbd',
+)
+EMAIL_INSTAGRAM_URL = config(
+    'EMAIL_INSTAGRAM_URL',
+    default='https://instagram.com/befoodbd',
+)
+EMAIL_ADDRESS = config(
+    'EMAIL_ADDRESS',
+    default=(
+        'K.B Aman Ali Road, Boro Mia Masjid Goli, Bakolia., '
+        'Chittagong, Bangladesh, 4203'
+    ),
+)
+PASSWORD_RESET_FRONTEND_PATH = config(
+    'PASSWORD_RESET_FRONTEND_PATH',
+    default='/reset-password',
+)
 
 # Customer wallet: manual recharge/withdraw path (replace with gateway-only when ready).
 WALLET_MANUAL_FUNDING_ENABLED = config(

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>{% block title %}{{ brand_name }}{% endblock %}</title>
+  <!--[if mso]><style type="text/css">body, table, td {font-family: Segoe UI, Tahoma, Arial, sans-serif !important;}</style><![endif]-->
+</head>
+<body style="margin:0;padding:0;background-color:#ffffff;color:{{ brand_deep_ink }};font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{% block preheader %}{% endblock %}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background-color:{{ brand_warm_white }};border-radius:12px;">
+          <tr>
+            <td align="center" style="padding:36px 28px 12px 28px;">
+              {% if logo_url %}
+              <img src="{{ logo_url }}" alt="{{ brand_name }}" width="200" style="display:block;max-width:200px;width:100%;height:auto;border:0;outline:none;text-decoration:none;">
+              {% else %}
+              <span style="display:inline-block;color:{{ brand_deep_ink }};font-size:28px;font-weight:700;line-height:1.2;">{{ brand_name }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:8px 28px 0 28px;font-size:16px;line-height:1.5;color:{{ brand_deep_ink }};">
+              {{ greeting }}
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:20px 28px 8px 28px;font-size:26px;font-weight:700;line-height:1.3;color:{{ brand_deep_ink }};">
+              {% block headline %}{% endblock %}
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:8px 28px 4px 28px;font-size:20px;font-weight:500;line-height:1.4;color:{{ brand_deep_ink }};">
+              {% block subheadline %}{% endblock %}
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:12px 28px 8px 28px;font-size:15px;line-height:1.6;color:{{ brand_deep_ink }};">
+              {% block body %}{% endblock %}
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:24px 28px 8px 28px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" bgcolor="{{ brand_deep_ink }}" style="border-radius:8px;background-color:{{ brand_deep_ink }};">
+                    <a href="{% block cta_url %}#{% endblock %}" target="_blank" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;">
+                      {% block cta_label %}Continue{% endblock %}
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:12px 28px 8px 28px;font-size:13px;line-height:1.5;color:{{ brand_deep_ink }};">
+              {% block cta_hint %}{% endblock %}
+            </td>
+          </tr>
+          {% if recipient_email %}
+          <tr>
+            <td align="center" style="padding:8px 28px;font-size:13px;line-height:1.5;color:{{ brand_deep_ink }};">
+              This email is for:
+              <a href="mailto:{{ recipient_email }}" style="color:#1A66FF;text-decoration:underline;">{{ recipient_email }}</a>
+            </td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td align="center" style="padding:16px 28px 8px 28px;font-size:12px;line-height:1.6;color:#5c574f;">
+              {% block security_note %}
+              For your security, never share this link with anyone. {{ brand_name }} will never ask for your password by email.
+              {% endblock %}
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:8px 28px 24px 28px;font-size:12px;line-height:1.6;color:#5c574f;">
+              {% block ignore_note %}{% endblock %}
+            </td>
+          </tr>
+
+          <!-- Brand footer -->
+          <tr>
+            <td align="center" style="padding:28px 28px 8px 28px;border-top:1px solid #ebe6dc;">
+              <div style="font-size:18px;font-weight:700;color:{{ brand_deep_ink }};margin-bottom:4px;">
+                Team {{ brand_name }}
+              </div>
+              <div style="font-family:'Segoe Script','Comic Sans MS',cursive;font-size:14px;color:#7a746a;margin-bottom:16px;">
+                {{ brand_tagline }}
+              </div>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 16px auto;">
+                <tr>
+                  <td align="center" style="padding:0 6px;">
+                    <a href="{{ facebook_url }}" target="_blank" style="text-decoration:none;">
+                      <img src="{{ facebook_icon_url }}" alt="Facebook" width="36" height="36" style="display:block;border:0;width:36px;height:36px;">
+                    </a>
+                  </td>
+                  <td align="center" style="padding:0 6px;">
+                    <a href="{{ instagram_url }}" target="_blank" style="text-decoration:none;">
+                      <img src="{{ instagram_icon_url }}" alt="Instagram" width="36" height="36" style="display:block;border:0;width:36px;height:36px;">
+                    </a>
+                  </td>
+                  <td align="center" style="padding:0 6px;">
+                    <a href="{{ whatsapp_url }}" target="_blank" style="text-decoration:none;">
+                      <img src="{{ whatsapp_icon_url }}" alt="WhatsApp" width="36" height="36" style="display:block;border:0;width:36px;height:36px;">
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <div style="font-size:13px;line-height:1.6;color:{{ brand_deep_ink }};">
+                Site:
+                <a href="{{ site_url }}" style="color:{{ brand_deep_ink }};text-decoration:none;">befood.com.bd</a>
+                &nbsp;|&nbsp; Phone: {{ phone }}
+              </div>
+              <div style="font-size:13px;line-height:1.6;color:{{ brand_deep_ink }};margin-top:4px;">
+                WhatsApp: {{ whatsapp }}
+              </div>
+              <div style="font-size:12px;line-height:1.5;color:#5c574f;margin-top:8px;max-width:420px;">
+                Address: {{ address }}
+              </div>
+              {% if play_store_url %}
+              <div style="margin-top:18px;">
+                <a href="{{ play_store_url }}" target="_blank" style="text-decoration:none;">
+                  {% if play_store_badge_url %}
+                  <img src="{{ play_store_badge_url }}" alt="Get it on Google Play" width="156" style="display:inline-block;border:0;max-width:156px;height:auto;">
+                  {% else %}
+                  <span style="display:inline-block;background-color:#000000;color:#ffffff;padding:10px 16px;border-radius:6px;font-size:13px;font-weight:600;">Get it on Google Play</span>
+                  {% endif %}
+                </a>
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td style="height:28px;line-height:28px;font-size:0;">&nbsp;</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

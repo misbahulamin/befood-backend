@@ -1,10 +1,18 @@
-Hi {{ first_name }},
+{{ greeting }}
 
-Welcome to {{ brand_name }}.
+Welcome to {{ brand_name }}!
 
-Please activate your account by clicking the link below:
+Complete your account verification
+
+Thanks for joining {{ brand_name }} — Bachelor's e-Food. Homestyle lunch and dinner, delivered for students, bachelors, and busy professionals.
+
+Verify your email (expires in 24 hours):
 {{ activation_link }}
 
-This link expires in 24 hours.
+This email is for: {{ recipient_email }}
 
-If you did not register, please ignore this email.
+For your security, never share this link with anyone. {{ brand_name }} will never ask for your password by email.
+
+If you didn't create a {{ brand_name }} account, you can safely ignore this email.
+
+{% include "emails/_branded_email_footer.txt" %}

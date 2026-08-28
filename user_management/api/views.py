@@ -12,12 +12,14 @@ from rest_framework.views import APIView
 from ..services.admin_access import is_verified_admin
 from ..services.auth_service import get_admin_login_response, get_login_response, register_customer
 from ..services.email_verification import get_user_from_uid, mark_email_verified, send_activation_email, verify_token
+from ..services.password_reset import request_password_reset
 from .serializers import (
     AdminCurrentUserSerializer,
     AdminLoginSerializer,
     CurrentUserSerializer,
     CustomerLoginSerializer,
     CustomerRegistrationSerializer,
+    PasswordResetRequestSerializer,
     ResendVerificationSerializer,
 )
 
@@ -100,6 +102,47 @@ class ResendVerificationView(APIView):
             return Response({'message': 'This email is already verified.'})
         send_activation_email(request, user)
         return Response({'message': 'Verification email has been sent again.'})
+
+
+class PasswordResetRequestView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        tags=['Customer Auth'],
+        request=PasswordResetRequestSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=None,
+                description='Generic success (does not reveal whether the account exists).',
+            ),
+        },
+        examples=[
+            OpenApiExample(
+                'Request reset',
+                value={'email': 'customer@example.com'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Success',
+                value={
+                    'message': (
+                        'If an account exists for this email, '
+                        'password reset instructions will be sent.'
+                    ),
+                },
+                response_only=True,
+            ),
+        ],
+        description=(
+            'Request a branded password-reset email. '
+            'Always returns a generic success message (anti-enumeration).'
+        ),
+    )
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message = request_password_reset(serializer.validated_data['email'])
+        return Response({'message': message})
 
 
 class CustomerLoginView(APIView):

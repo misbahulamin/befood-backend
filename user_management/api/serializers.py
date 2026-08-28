@@ -183,3 +183,10 @@ class ResendVerificationSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         return value.lower()
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.lower()

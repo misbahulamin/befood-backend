@@ -10,6 +10,8 @@ from django.utils.encoding import force_bytes, force_str
 from django.utils.http import base36_to_int, urlsafe_base64_decode, urlsafe_base64_encode
 from django.utils import timezone
 
+from .email_branding import build_brand_email_context
+
 
 class EmailVerificationTokenGenerator(PasswordResetTokenGenerator):
     def _make_hash_value(self, user, timestamp):
@@ -38,13 +40,10 @@ def build_activation_link(request, user):
 
 def send_activation_email(request, user):
     activation_link, _, _ = build_activation_link(request, user)
-    context = {
-        'user': user,
-        'first_name': user.first_name,
-        'brand_name': 'Befood-Bachelors E-Food',
-        'activation_link': activation_link,
-        'frontend_url': getattr(settings, 'FRONTEND_URL', ''),
-    }
+    context = build_brand_email_context(
+        user,
+        extra={'activation_link': activation_link},
+    )
     subject = render_to_string('emails/customer_activation_subject.txt', context).strip()
     text_body = render_to_string('emails/customer_activation_email.txt', context)
     html_body = render_to_string('emails/customer_activation_email.html', context)

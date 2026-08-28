@@ -1,0 +1,11 @@
+---
+Team {{ brand_name }}
+{{ brand_tagline }}
+
+Site: {{ site_url }}
+Phone: {{ phone }}
+WhatsApp: {{ whatsapp }}
+Facebook: {{ facebook_url }}
+Instagram: {{ instagram_url }}
+Address: {{ address }}
+Google Play: {{ play_store_url }}
