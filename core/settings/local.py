@@ -44,38 +44,7 @@ DATABASES = {
 
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    # Your frontend domain should be here
-    'http://befood.com.bd',
-    'https://befood.com.bd',
-]
 
-CORS_ALLOW_CREDENTIALS = True
-
-# Default corsheaders list + wallet funding / multi-client headers.
-# Without these, browsers complete OPTIONS then block POST (axios "Network Error").
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'authorization',
-    'content-type',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-    'idempotency-key',
-    'x-client-type',
-    'x-guest-session-id',
-]
-
-
-# CSRF settings
-CSRF_TRUSTED_ORIGINS = [
-    "https://befood.com.bd",
-    "https://api.befood.com.bd",
-    "http://127.0.0.1:8000",
-    "http://localhost:8000",
-]
 
 # Render HTTPS proxy
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
