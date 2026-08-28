@@ -14,18 +14,33 @@ ALLOWED_HOSTS = [
 ]
 
 # Local Postgres via environment (see .env.example). Do not point at production RDS.
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='befood'),
-        'USER': config('DB_USER', default='postgres'),
-        'PASSWORD': config('DB_PASSWORD', default='postgres'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
+        'NAME': 'postgres',       # Database name you created on RDS
+        'USER': 'befood_postgres',   # The username you set for RDS
+        'PASSWORD': 'Befood459',  # The password you set for RDS
+        'HOST': 'befood.czais0km2ult.ap-south-1.rds.amazonaws.com',  # RDS endpoint
+        'PORT': '5432',  # Default PostgreSQL port
     }
 }
 
-INTERNAL_IPS = ['127.0.0.1']
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': config('DB_NAME', default='befood_db'),
+#         'USER': config('DB_USER', default='befood_postgres'),
+#         'PASSWORD': config('DB_PASSWORD', default='Befood459'),
+#         'HOST': config(
+#             'DB_HOST',
+#             default='befood-postgres-prod.c56oegiikk4d.ap-south-1.rds.amazonaws.com',
+#         ),
+#         'PORT': config('DB_PORT', default='5432'),
+#     }
+# }
+
+# INTERNAL_IPS = ['127.0.0.1']
 
 
 # CORS settings

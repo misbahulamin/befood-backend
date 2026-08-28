@@ -4,20 +4,32 @@ DEBUG = False
 ALLOWED_HOSTS = config('DJANGO_ALLOWED_HOSTS', default='', cast=Csv())
 
 # Prefer host env / .env. Defaults match the last known production RDS wiring so
-# EC2 keeps working until DB_* are set explicitly on the server (then rotate).
+# # EC2 keeps working until DB_* are set explicitly on the server (then rotate).
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='befood_db'),
-        'USER': config('DB_USER', default='befood_postgres'),
-        'PASSWORD': config('DB_PASSWORD', default='Befood459'),
-        'HOST': config(
-            'DB_HOST',
-            default='befood-postgres-prod.c56oegiikk4d.ap-south-1.rds.amazonaws.com',
-        ),
-        'PORT': config('DB_PORT', default='5432'),
+        'NAME': 'postgres',       # Database name you created on RDS
+        'USER': 'befood_postgres',   # The username you set for RDS
+        'PASSWORD': 'Befood459',  # The password you set for RDS
+        'HOST': 'befood.czais0km2ult.ap-south-1.rds.amazonaws.com',  # RDS endpoint
+        'PORT': '5432',  # Default PostgreSQL port
     }
 }
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': config('DB_NAME', default='befood_db'),
+#         'USER': config('DB_USER', default='befood_postgres'),
+#         'PASSWORD': config('DB_PASSWORD', default='Befood459'),
+#         'HOST': config(
+#             'DB_HOST',
+#             default='befood-postgres-prod.c56oegiikk4d.ap-south-1.rds.amazonaws.com',
+#         ),
+#         'PORT': config('DB_PORT', default='5432'),
+#     }
+# }
 
 # ---------------------------------------------------------------------------
 # AWS S3 media — deferred until credentials are verified.
