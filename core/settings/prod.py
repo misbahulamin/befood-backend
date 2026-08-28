@@ -1,29 +1,36 @@
 from .base import *
-from .aws_media import PROD_STORAGES, validate_aws_media_settings
 
 DEBUG = False
 ALLOWED_HOSTS = config('DJANGO_ALLOWED_HOSTS', default='', cast=Csv())
 
-
-# DATABASES = {'default': {'ENGINE': 'django.db.backends.postgresql', 'NAME': config('DB_NAME'), 'USER': config('DB_USER'), 'PASSWORD': config('DB_PASSWORD'), 'HOST': config('DB_HOST', default='localhost'), 'PORT': config('DB_PORT', default='5432')}}
-
+# Prefer host env / .env. Defaults match the last known production RDS wiring so
+# EC2 keeps working until DB_* are set explicitly on the server (then rotate).
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'befood_db',       # Database name you created on RDS
-        'USER': 'befood_postgres',   # The username you set for RDS
-        'PASSWORD': 'Befood459',  # The password you set for RDS
-        'HOST': 'befood-postgres-prod.c56oegiikk4d.ap-south-1.rds.amazonaws.com',  # RDS endpoint
-        'PORT': '5432',  # Default PostgreSQL port
+        'NAME': config('DB_NAME', default='befood_db'),
+        'USER': config('DB_USER', default='befood_postgres'),
+        'PASSWORD': config('DB_PASSWORD', default='Befood459'),
+        'HOST': config(
+            'DB_HOST',
+            default='befood-postgres-prod.c56oegiikk4d.ap-south-1.rds.amazonaws.com',
+        ),
+        'PORT': config('DB_PORT', default='5432'),
     }
 }
 
-validate_aws_media_settings(
-    bucket_name=AWS_STORAGE_BUCKET_NAME,
-    region_name=AWS_S3_REGION_NAME,
-)
-
-STORAGES = PROD_STORAGES
+# ---------------------------------------------------------------------------
+# AWS S3 media — deferred until credentials are verified.
+# Re-enable after S3 check: uncomment the import, validate_*, and STORAGES.
+# ---------------------------------------------------------------------------
+# from .aws_media import PROD_STORAGES, validate_aws_media_settings
+#
+# validate_aws_media_settings(
+#     bucket_name=AWS_STORAGE_BUCKET_NAME,
+#     region_name=AWS_S3_REGION_NAME,
+# )
+#
+# STORAGES = PROD_STORAGES
 
 _security_index = MIDDLEWARE.index('django.middleware.security.SecurityMiddleware')
 MIDDLEWARE = (

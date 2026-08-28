@@ -1,6 +1,6 @@
 import os
 
-env = os.getenv('DJANGO_ENV', 'local').lower()
+env = os.getenv('DJANGO_ENV', 'prod').lower()
 if env == 'prod':
     from .prod import *  # noqa
 else:
