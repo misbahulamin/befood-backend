@@ -30,13 +30,30 @@ jobs:
           EC2_HOST: ${{ secrets.BEFOOD_EC2_HOST }}
           EC2_SSH_KEY: ${{ secrets.BEFOOD_EC2_SSH_KEY }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
 
+          if [ -z "${EC2_HOST:-}" ]; then
+            echo "Missing GitHub Actions secret: BEFOOD_EC2_HOST"
+            exit 1
+          fi
+          if [ -z "${EC2_SSH_KEY:-}" ]; then
+            echo "Missing GitHub Actions secret: BEFOOD_EC2_SSH_KEY"
+            exit 1
+          fi
+
+          # Write key; strip CR; ensure trailing newline (required by OpenSSH).
           printf '%s\n' "$EC2_SSH_KEY" | tr -d '\r' > ~/.ssh/befood_ec2_key
-
           chmod 600 ~/.ssh/befood_ec2_key
 
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+          if ! grep -q "BEGIN .*PRIVATE KEY" ~/.ssh/befood_ec2_key; then
+            echo "BEFOOD_EC2_SSH_KEY is set but does not look like a PEM private key"
+            exit 1
+          fi
+
+          echo "Fetching host keys for ${EC2_HOST} ..."
+          ssh-keyscan -T 15 -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
       # ------------------------------------------
       # 2. Deploy
@@ -46,6 +63,16 @@ jobs:
           EC2_HOST: ${{ secrets.BEFOOD_EC2_HOST }}
           EC2_USER: ${{ secrets.BEFOOD_EC2_USER }}
         run: |
+          set -euo pipefail
+          if [ -z "${EC2_USER:-}" ]; then
+            echo "Missing GitHub Actions secret: BEFOOD_EC2_USER"
+            exit 1
+          fi
+          if [ -z "${EC2_HOST:-}" ]; then
+            echo "Missing GitHub Actions secret: BEFOOD_EC2_HOST"
+            exit 1
+          fi
+
           ssh \
             -i ~/.ssh/befood_ec2_key \
             -o IdentitiesOnly=yes \

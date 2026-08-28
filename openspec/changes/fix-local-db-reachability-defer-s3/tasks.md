@@ -31,9 +31,10 @@
 
 ## 6. Ship to GitHub main
 
-- [ ] 6.1 Review `git status` / diff; ensure no `.env` or secrets are staged
-- [ ] 6.2 Commit settings + OpenSpec change artifacts with a clear English message
-- [ ] 6.3 Push branch to GitHub and merge/push to `main` as requested (no force-push); confirm remote `main` updated
+- [x] 6.1 Review `git status` / diff; ensure no `.env` or secrets are staged
+- [x] 6.2 Commit settings + OpenSpec change artifacts with a clear English message
+- [x] 6.3 Push branch to GitHub and merge/push to `main` as requested (no force-push); confirm remote `main` updated
+  - Pushed `a37855b` to `origin/main`. EC2 deploy via Actions failed at **Setup SSH Connection** (secrets `BEFOOD_EC2_*`). Laptop SSH to `15.207.110.127` → `Permission denied (publickey)`. Fix GitHub secrets / EC2 key, then re-run workflow.
 
 ## 7. Follow-ups (document only; not blocking)
 
