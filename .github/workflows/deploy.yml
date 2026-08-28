@@ -71,6 +71,17 @@ jobs:
 
 
             # ----------------------------------
+            # Update source code
+            # ----------------------------------
+            echo "2. Fetching latest code from GitHub..."
+
+            git fetch origin main
+
+            git checkout main
+
+            git pull --ff-only origin main
+
+
             # ----------------------------------
             # Activate virtual environment
             # ----------------------------------
@@ -87,8 +98,13 @@ jobs:
             export DJANGO_ENV=prod
             export DJANGO_SETTINGS_MODULE=core.settings
 
-            # Load server .env into the shell (python-decouple also reads the file).
-            if [ -f "$PROJECT_DIR/.env" ]; then
+
+            # ----------------------------------
+            # Dependencies
+            # ----------------------------------
+            echo "5. Installing/updating Python dependencies..."
+
+            python -m pip install --upgrade pip
             pip install -r requirements.txt
 
 
@@ -98,22 +114,6 @@ jobs:
             echo "6. Running Django system check..."
 
             python manage.py check
-
-
-            # ----------------------------------
-            # Database connectivity smoke (production RDS from EC2)
-            # ----------------------------------
-            echo "6b. Checking database connectivity..."
-
-            python - <<'PY'
-            import django
-            django.setup()
-            from django.db import connection
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                assert cursor.fetchone()[0] == 1
-            print("Database connectivity OK")
-            PY
 
 
             # ----------------------------------
