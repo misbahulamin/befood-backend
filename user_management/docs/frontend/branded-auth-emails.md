@@ -35,10 +35,17 @@ Path is configurable via backend `PASSWORD_RESET_FRONTEND_PATH` (default `/reset
 
 Confirm-reset API (set new password) may be a follow-up; this change ships request + branded email only.
 
-### Activation (unchanged contract)
+### Activation (frontend deep link)
 
 - Register / resend → branded “Verify Email Address” email
-- Link hits `GET /user_management/verify-email/<uidb64>/<token>/`
+- Email CTA opens the **website** SPA route (never the API host):
+
+`{FRONTEND_URL}/verify-email/<uidb64>/<token>/`
+
+Path is configurable via `EMAIL_VERIFICATION_FRONTEND_PATH` (default `/verify-email`).
+`FRONTEND_URL` must be the public site origin (e.g. `https://befood.com.bd`), not `https://api.befood.com.bd`.
+
+- SPA page then calls `GET /user_management/verify-email/<uidb64>/<token>/`
 - No OTP code UI in the email
 
 ## Headers

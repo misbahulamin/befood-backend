@@ -32,6 +32,8 @@ from user_management.services.password_reset import (
     EMAIL_PLAY_STORE_URL='https://play.google.com/store/apps/details?id=bd.com.befood',
     FRONTEND_URL='https://www.befood.com.bd',
     PASSWORD_RESET_FRONTEND_PATH='/reset-password',
+    EMAIL_VERIFICATION_FRONTEND_PATH='/verify-email',
+    DELIVERYMAN_EMAIL_VERIFICATION_FRONTEND_PATH='/deliveryman/verify-email',
 )
 class BrandedAuthEmailTests(TestCase):
     def setUp(self):
@@ -83,7 +85,7 @@ class BrandedAuthEmailTests(TestCase):
     def test_activation_email_html_is_branded_without_otp_boxes(self):
         user, _ = self._make_customer()
         request = self.factory.get('/')
-        request.META['HTTP_HOST'] = 'testserver'
+        request.META['HTTP_HOST'] = 'api.example.test'
         send_activation_email(request, user)
         self.assertEqual(len(mail.outbox), 1)
         message = mail.outbox[0]
@@ -106,6 +108,22 @@ class BrandedAuthEmailTests(TestCase):
         self.assertNotIn('The Befood Team', html)
         self.assertNotIn('background-color:#FFD100', html)
         self.assertNotIn("background-color:{{ brand_yellow }}", html)
+
+    def test_activation_email_uses_frontend_url_not_request_host(self):
+        user, _ = self._make_customer(email='linkcheck@example.com')
+        request = self.factory.get('/')
+        request.META['HTTP_HOST'] = 'api.example.test'
+        send_activation_email(request, user)
+        self.assertEqual(len(mail.outbox), 1)
+        body = mail.outbox[0].body
+        html = mail.outbox[0].alternatives[0][0]
+        expected_prefix = 'https://www.befood.com.bd/verify-email/'
+        self.assertIn(expected_prefix, body)
+        self.assertIn(expected_prefix, html)
+        self.assertNotIn('api.example.test', body)
+        self.assertNotIn('api.example.test', html)
+        self.assertNotIn('/user_management/verify-email/', body)
+        self.assertNotIn('/user_management/verify-email/', html)
 
     def test_password_reset_request_sends_mail_for_existing_customer(self):
         user, _ = self._make_customer(email='reset@example.com')

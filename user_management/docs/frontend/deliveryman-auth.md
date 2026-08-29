@@ -46,7 +46,13 @@ Show: “Check your email to verify.”
 
 ### 2. Email verification
 
-User opens link from email:
+User opens link from email (frontend SPA deep link):
+
+`{FRONTEND_URL}/deliveryman/verify-email/<uidb64>/<token>/`
+
+Configurable via `DELIVERYMAN_EMAIL_VERIFICATION_FRONTEND_PATH` (default `/deliveryman/verify-email`). Do not put `api.*` in the email href.
+
+SPA page then calls:
 
 `GET /user_management/deliveryman/verify-email/<uidb64>/<token>/`
 

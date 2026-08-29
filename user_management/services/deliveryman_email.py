@@ -1,9 +1,9 @@
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.urls import reverse
 from django.utils import timezone
 
+from .email_branding import build_deliveryman_activation_frontend_link
 from .email_verification import generate_token, generate_uid, verify_token
 
 
@@ -14,13 +14,10 @@ PENDING_APPROVAL_MESSAGE = (
 
 
 def build_deliveryman_activation_link(request, user):
+    """Build SPA activation URL from FRONTEND_URL (request host is ignored)."""
     uidb64 = generate_uid(user)
     token = generate_token(user)
-    path = reverse(
-        'user_management:deliveryman-verify-email',
-        kwargs={'uidb64': uidb64, 'token': token},
-    )
-    return request.build_absolute_uri(path), uidb64, token
+    return build_deliveryman_activation_frontend_link(uidb64, token), uidb64, token
 
 
 def send_deliveryman_activation_email(request, user):

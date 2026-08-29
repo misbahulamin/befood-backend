@@ -21,7 +21,9 @@ Customer **activation** and **password-reset** emails use a shared Befood-brande
 | `EMAIL_PLAY_STORE_BADGE_URL` | Play badge image |
 | `EMAIL_SITE_URL` / `EMAIL_PHONE` / `EMAIL_WHATSAPP` / `EMAIL_FACEBOOK_URL` / `EMAIL_INSTAGRAM_URL` / `EMAIL_ADDRESS` | Footer contact |
 | `PASSWORD_RESET_FRONTEND_PATH` | Frontend path for reset CTA (default `/reset-password`) |
-| `FRONTEND_URL` | Base URL for reset link |
+| `EMAIL_VERIFICATION_FRONTEND_PATH` | Frontend SPA path for customer activation CTA (default `/verify-email`) |
+| `DELIVERYMAN_EMAIL_VERIFICATION_FRONTEND_PATH` | Frontend SPA path for Delivery Man activation CTA (default `/deliveryman/verify-email`) |
+| `FRONTEND_URL` | Public website origin for activation + reset links (must not be the API host) |
 
 Logo default:
 `https://befood-media-storage.s3.ap-south-1.amazonaws.com/logo/befood_logo_for_template.png`
@@ -56,6 +58,8 @@ Content-Type: application/json
 ```
 
 Reset CTA opens `{FRONTEND_URL}{PASSWORD_RESET_FRONTEND_PATH}?uid=...&token=...`.
+
+Activation CTA opens `{FRONTEND_URL}{EMAIL_VERIFICATION_FRONTEND_PATH}/<uidb64>/<token>/` (SPA). The SPA then calls `GET /user_management/verify-email/<uidb64>/<token>/`. Activation emails MUST NOT use the API request host.
 
 Activation verify **rejects** password-reset tokens (different token generators).
 

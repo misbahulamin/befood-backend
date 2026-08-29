@@ -10,4 +10,5 @@ staticfiles/
 .vscode/
 credentials/
 notes.md
+.env.example
 

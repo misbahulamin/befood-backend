@@ -10,7 +10,11 @@ from user_management.services.deliveryman_email import PENDING_APPROVAL_MESSAGE
 from user_management.services.email_verification import generate_token, generate_uid
 
 
-@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+@override_settings(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    FRONTEND_URL='https://www.befood.com.bd',
+    DELIVERYMAN_EMAIL_VERIFICATION_FRONTEND_PATH='/deliveryman/verify-email',
+)
 class DeliverymanAuthTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -81,6 +85,13 @@ class DeliverymanAuthTests(TestCase):
         self.register_deliveryman()
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn('Activate your Befood Delivery Man account', mail.outbox[0].subject)
+        body = mail.outbox[0].body
+        html = mail.outbox[0].alternatives[0][0]
+        expected_prefix = 'https://www.befood.com.bd/deliveryman/verify-email/'
+        self.assertIn(expected_prefix, body)
+        self.assertIn(expected_prefix, html)
+        self.assertNotIn('/user_management/deliveryman/verify-email/', body)
+        self.assertNotIn('/user_management/deliveryman/verify-email/', html)
 
     def test_duplicate_email_is_blocked(self):
         self.register_deliveryman()

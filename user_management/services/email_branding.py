@@ -78,9 +78,31 @@ def build_brand_email_context(user, *, extra=None):
     return context
 
 
-def build_password_reset_link(uidb64, token):
-    frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')
-    path = getattr(settings, 'PASSWORD_RESET_FRONTEND_PATH', '/reset-password')
+def _frontend_path(setting_name, default):
+    path = getattr(settings, setting_name, default) or default
     if not path.startswith('/'):
         path = f'/{path}'
+    return path.rstrip('/')
+
+
+def build_password_reset_link(uidb64, token):
+    frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')
+    path = _frontend_path('PASSWORD_RESET_FRONTEND_PATH', '/reset-password')
     return f'{frontend_url}{path}?uid={uidb64}&token={token}'
+
+
+def build_activation_frontend_link(uidb64, token):
+    """Customer email verification deep link (SPA), not the API absolute URI."""
+    frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')
+    path = _frontend_path('EMAIL_VERIFICATION_FRONTEND_PATH', '/verify-email')
+    return f'{frontend_url}{path}/{uidb64}/{token}/'
+
+
+def build_deliveryman_activation_frontend_link(uidb64, token):
+    """Delivery Man email verification deep link (SPA), not the API absolute URI."""
+    frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')
+    path = _frontend_path(
+        'DELIVERYMAN_EMAIL_VERIFICATION_FRONTEND_PATH',
+        '/deliveryman/verify-email',
+    )
+    return f'{frontend_url}{path}/{uidb64}/{token}/'

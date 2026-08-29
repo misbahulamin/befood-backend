@@ -190,6 +190,14 @@ PASSWORD_RESET_FRONTEND_PATH = config(
     'PASSWORD_RESET_FRONTEND_PATH',
     default='/reset-password',
 )
+EMAIL_VERIFICATION_FRONTEND_PATH = config(
+    'EMAIL_VERIFICATION_FRONTEND_PATH',
+    default='/verify-email',
+)
+DELIVERYMAN_EMAIL_VERIFICATION_FRONTEND_PATH = config(
+    'DELIVERYMAN_EMAIL_VERIFICATION_FRONTEND_PATH',
+    default='/deliveryman/verify-email',
+)
 
 # Customer wallet: manual recharge/withdraw path (replace with gateway-only when ready).
 WALLET_MANUAL_FUNDING_ENABLED = config(

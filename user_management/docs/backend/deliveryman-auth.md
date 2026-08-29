@@ -7,7 +7,7 @@ Delivery partners register as **Delivery Men** (`RiderProfile` + `DELIVERY_MAN` 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | POST | `/user_management/deliveryman/register/` | Public | Create inactive account + send verify email |
-| GET | `/user_management/deliveryman/verify-email/<uidb64>/<token>/` | Public | Mark email verified (does **not** unlock login) |
+| GET | `/user_management/deliveryman/verify-email/<uidb64>/<token>/` | Public | Mark email verified (does **not** unlock login). Email CTA uses `{FRONTEND_URL}/deliveryman/verify-email/...` (SPA); SPA calls this API. |
 | POST | `/user_management/deliveryman/resend-verification/` | Public | Resend verify email |
 | POST | `/user_management/deliveryman/login/` | Public | Login only if email verified **and** admin approved |
 | GET | `/user_management/deliveryman/me/` | Token + verified DM | Current session profile |
