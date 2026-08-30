@@ -27,10 +27,14 @@ Admin can change times via meal-off settings. Configured times gate **both** mea
 |--------|------|-----|
 | POST | `/orders/{public_id}/deliveries/{delivery_public_id}/meal-off` | Verified customer (owner) |
 | POST | `/orders/{public_id}/deliveries/{delivery_public_id}/meal-on` | Verified customer (owner) |
+| POST | `/api/v1/subscriptions/{public_id}/deliveries/{delivery_public_id}/meal-off` | Verified customer (subscription owner) |
+| POST | `/api/v1/subscriptions/{public_id}/deliveries/{delivery_public_id}/meal-on` | Verified customer (subscription owner) |
 | GET/PATCH | `/api/v1/web/orders/meal-off-settings/` | Verified admin |
 | GET/PATCH | `/orders/meal-off-settings/` | Verified admin (shared) |
 
 Trailing slash optional for meal-off / meal-on POSTs.
+
+Works for both **order-owned** and **subscription-owned** delivery slots (`order` / `subscription` may be null). On PostgreSQL, meal-off/on lock the delivery row only (`SELECT FOR UPDATE OF` the delivery table) so nullable parent outer joins do not raise `FOR UPDATE cannot be applied to the nullable side of an outer join`.
 
 ## Customer meal-off
 

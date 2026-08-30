@@ -12,6 +12,7 @@ from rest_framework.exceptions import ValidationError
 
 from orders.models import Order, OrderDelivery, OrderStatusHistory
 from user_management.models import CustomerAddress, CustomerProfile
+from user_management.services.profile_picture import get_profile_picture_url
 from wallet.models import Wallet, WalletTransaction
 
 LIST_QUERY_ALLOWLIST = frozenset(
@@ -248,7 +249,7 @@ def build_overview_metrics(customer: CustomerProfile) -> dict[str, Any]:
         'wallet_currency': wallet.currency if wallet is not None else None,
         'last_order_at': last_order_at,
         'last_activity_at': last_activity_at,
-        'profile_picture_url': None,
+        'profile_picture_url': get_profile_picture_url(customer),
     }
 
 

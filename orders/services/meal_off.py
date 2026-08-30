@@ -115,18 +115,28 @@ class MealOffError(Exception):
     pass
 
 
-@transaction.atomic
-def customer_meal_off(delivery: OrderDelivery, user, note: str = '') -> OrderDelivery:
-    locked = (
-        OrderDelivery.objects.select_for_update()
+def _lock_delivery_for_meal_toggle(delivery_pk: int) -> OrderDelivery:
+    """
+    Lock the delivery row for meal-off / meal-on.
+
+    Use select_for_update(of=('self',)) so PostgreSQL does not apply FOR UPDATE
+    to nullable order/subscription outer joins from select_related.
+    """
+    return (
+        OrderDelivery.objects.select_for_update(of=('self',))
         .select_related(
             'order',
             'order__customer',
             'subscription',
             'subscription__customer',
         )
-        .get(pk=delivery.pk)
+        .get(pk=delivery_pk)
     )
+
+
+@transaction.atomic
+def customer_meal_off(delivery: OrderDelivery, user, note: str = '') -> OrderDelivery:
+    locked = _lock_delivery_for_meal_toggle(delivery.pk)
     from orders.services.subscription_parent import (
         delivery_customer,
         delivery_parent_is_cancelled,
@@ -189,16 +199,7 @@ def customer_meal_on(delivery: OrderDelivery, user, note: str = '') -> OrderDeli
 
     Does not debit the wallet; charge happens only if later marked delivered.
     """
-    locked = (
-        OrderDelivery.objects.select_for_update()
-        .select_related(
-            'order',
-            'order__customer',
-            'subscription',
-            'subscription__customer',
-        )
-        .get(pk=delivery.pk)
-    )
+    locked = _lock_delivery_for_meal_toggle(delivery.pk)
     from orders.services.subscription_parent import (
         delivery_customer,
         delivery_parent_is_cancelled,

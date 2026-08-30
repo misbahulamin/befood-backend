@@ -9,6 +9,13 @@ from ..services.customer_address import (
     handle_default_on_delete,
 )
 from ..services.profile_completion import update_profile_completion
+from ..services.profile_picture import (
+    clear_profile_picture,
+    get_profile_picture_url,
+    upload_profile_picture,
+    validate_image_extension,
+    validate_image_size,
+)
 from ..validators import validate_bangladesh_phone
 
 
@@ -100,6 +107,8 @@ class CustomerAddressCreateUpdateSerializer(serializers.ModelSerializer):
 
 
 class CustomerProfileFieldsSerializer(serializers.ModelSerializer):
+    profile_image_url = serializers.SerializerMethodField()
+
     class Meta:
         model = CustomerProfile
         fields = (
@@ -123,6 +132,7 @@ class CustomerProfileFieldsSerializer(serializers.ModelSerializer):
             'religious',
             'delivery_instruction',
             'preferred_delivery_time',
+            'profile_image_url',
             'profile_completed',
             'profile_completion_percentage',
             'created_at',
@@ -133,11 +143,32 @@ class CustomerProfileFieldsSerializer(serializers.ModelSerializer):
             'occupation',
             'is_bachelor',
             'is_email_verified',
+            'profile_image_url',
             'profile_completed',
             'profile_completion_percentage',
             'created_at',
             'updated_at',
         )
+
+    def get_profile_image_url(self, profile):
+        return get_profile_picture_url(profile, request=self.context.get('request'))
+
+
+class CustomerProfileImageUploadSerializer(serializers.Serializer):
+    image = serializers.ImageField(required=True)
+
+    def validate_image(self, value):
+        try:
+            validate_image_extension(value.name)
+            validate_image_size(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
+        return value
+
+    def create(self, validated_data):
+        profile = self.context['customer_profile']
+        url = upload_profile_picture(profile, validated_data['image'])
+        return {'profile_image_url': url, 'message': 'Profile picture updated.'}
 
 
 class CustomerExtendedProfileUpdateSerializer(serializers.ModelSerializer):
@@ -151,6 +182,13 @@ class CustomerExtendedProfileUpdateSerializer(serializers.ModelSerializer):
         allow_blank=True,
     )
     is_bachelor = serializers.BooleanField(required=False, allow_null=True)
+    # Write-only: null clears the picture; non-null strings are ignored (upload via dedicated endpoint).
+    profile_image_url = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        write_only=True,
+    )
 
     class Meta:
         model = CustomerProfile
@@ -176,6 +214,7 @@ class CustomerExtendedProfileUpdateSerializer(serializers.ModelSerializer):
             'religious',
             'delivery_instruction',
             'preferred_delivery_time',
+            'profile_image_url',
         )
 
     def validate_first_name(self, value):
@@ -230,7 +269,16 @@ class CustomerExtendedProfileUpdateSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         from ..services.profile_onboarding import update_customer_onboarding_profile
 
+        clear_picture = False
+        if 'profile_image_url' in validated_data:
+            value = validated_data.pop('profile_image_url')
+            # Only explicit null clears; data/remote URLs are ignored for security.
+            if value is None:
+                clear_picture = True
+
         update_customer_onboarding_profile(instance, validated_data)
+        if clear_picture:
+            clear_profile_picture(instance)
         instance.refresh_from_db()
         update_profile_completion(instance)
         return instance
@@ -243,6 +291,7 @@ class CustomerExtendedProfileSerializer(serializers.Serializer):
     profile_completion_percentage = serializers.IntegerField(read_only=True)
     profile_completed = serializers.BooleanField(read_only=True)
     onboarding_completion = serializers.SerializerMethodField()
+    profile_image_url = serializers.SerializerMethodField()
 
     def get_user(self, profile):
         user = profile.user
@@ -254,12 +303,15 @@ class CustomerExtendedProfileSerializer(serializers.Serializer):
         }
 
     def get_customer_profile(self, profile):
-        return CustomerProfileFieldsSerializer(profile).data
+        return CustomerProfileFieldsSerializer(profile, context=self.context).data
 
     def get_onboarding_completion(self, profile):
         from ..services.profile_onboarding import get_onboarding_completion
 
         return get_onboarding_completion(profile.user, profile)
+
+    def get_profile_image_url(self, profile):
+        return get_profile_picture_url(profile, request=self.context.get('request'))
 
 
 class CustomerProfileCompletionSerializer(serializers.Serializer):

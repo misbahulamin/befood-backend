@@ -24,7 +24,7 @@ Non-admin users must not call these APIs. On `401`/`403`, show the standard admi
 
 | UI | API field |
 |----|-----------|
-| Avatar | `profile_picture_url` (always `null` → placeholder) |
+| Avatar | `profile_picture_url` (nullable media/S3 URL; use placeholder when null) |
 | Name | `name` |
 | Email | `email` |
 | Phone | `phone` |

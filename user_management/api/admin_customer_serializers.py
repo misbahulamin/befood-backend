@@ -73,7 +73,9 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
         return 'verified' if obj.is_email_verified else 'unverified'
 
     def get_profile_picture_url(self, obj):
-        return None
+        from user_management.services.profile_picture import get_profile_picture_url
+
+        return get_profile_picture_url(obj, request=self.context.get('request'))
 
     def get_current_package(self, obj):
         order = get_active_order(obj)

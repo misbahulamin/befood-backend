@@ -456,6 +456,8 @@ class CustomerSubscriptionAPITestCase(APITestCase):
         delivery = subscription.deliveries.get(
             service_date=date(2026, 7, 11), meal_period='lunch'
         )
+        self.assertIsNone(delivery.order_id)
+        self.assertEqual(delivery.subscription_id, subscription.pk)
         tz = ZoneInfo('Asia/Dhaka')
         now = datetime(2026, 7, 10, 10, 0, tzinfo=tz)
         with patch('orders.services.meal_off.meal_off_business_now', return_value=now):
@@ -463,6 +465,46 @@ class CustomerSubscriptionAPITestCase(APITestCase):
         self.assertEqual(updated.status, OrderDelivery.DeliveryStatus.SKIPPED)
         subscription.refresh_from_db()
         self.assertEqual(subscription.status, CustomerSubscription.Status.ACTIVE)
+
+    @patch('orders.services.meal_off.meal_off_business_now')
+    def test_subscription_api_meal_off_and_meal_on(self, mock_now):
+        """Postgres-safe lock: subscription-owned slots (order null) must not 500."""
+        mock_now.return_value = datetime(2026, 7, 10, 10, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        subscription = subscribe_customer(
+            self.customer_profile, self.plan, today=date(2026, 7, 10)
+        )
+        delivery = subscription.deliveries.get(
+            service_date=date(2026, 7, 11), meal_period='lunch'
+        )
+        self.assertIsNone(delivery.order_id)
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.customer_token.key}')
+        off_url = reverse(
+            'subscriptions:subscription-meal-off-noslash',
+            kwargs={
+                'public_id': subscription.public_id,
+                'delivery_id': delivery.public_id,
+            },
+        )
+        off_response = self.client.post(off_url, {'note': 'Travel'}, format='json')
+        self.assertEqual(off_response.status_code, status.HTTP_200_OK, off_response.data)
+        self.assertEqual(off_response.data['status'], 'skipped')
+        self.assertEqual(off_response.data['skip_source'], 'customer')
+
+        delivery.refresh_from_db()
+        on_url = reverse(
+            'subscriptions:subscription-meal-on-noslash',
+            kwargs={
+                'public_id': subscription.public_id,
+                'delivery_id': delivery.public_id,
+            },
+        )
+        on_response = self.client.post(on_url, {}, format='json')
+        self.assertEqual(on_response.status_code, status.HTTP_200_OK, on_response.data)
+        self.assertEqual(on_response.data['status'], 'scheduled')
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+        self.assertIsNone(delivery.skip_source)
 
     def test_demand_counts_subscription_slots(self):
         subscribe_customer(self.customer_profile, self.plan, today=date(2026, 7, 10))

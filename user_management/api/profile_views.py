@@ -15,6 +15,7 @@ from .profile_serializers import (
     CustomerExtendedProfileSerializer,
     CustomerExtendedProfileUpdateSerializer,
     CustomerProfileCompletionSerializer,
+    CustomerProfileImageUploadSerializer,
 )
 
 
@@ -33,7 +34,7 @@ class CustomerProfileView(APIView):
         profile = self._get_profile(request)
         update_profile_completion(profile)
         profile.refresh_from_db()
-        data = CustomerExtendedProfileSerializer(profile).data
+        data = CustomerExtendedProfileSerializer(profile, context={'request': request}).data
         data['profile_completion_percentage'] = profile.profile_completion_percentage
         data['profile_completed'] = profile.profile_completed
         return Response(data)
@@ -88,14 +89,48 @@ class CustomerProfileView(APIView):
     )
     def patch(self, request):
         profile = self._get_profile(request)
-        serializer = CustomerExtendedProfileUpdateSerializer(profile, data=request.data, partial=True)
+        serializer = CustomerExtendedProfileUpdateSerializer(
+            profile,
+            data=request.data,
+            partial=True,
+            context={'request': request},
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         profile.refresh_from_db()
-        data = CustomerExtendedProfileSerializer(profile).data
+        data = CustomerExtendedProfileSerializer(profile, context={'request': request}).data
         data['profile_completion_percentage'] = profile.profile_completion_percentage
         data['profile_completed'] = profile.profile_completed
         return Response(data)
+
+
+class CustomerProfileImageUploadView(APIView):
+    permission_classes = [HasCustomerProfile]
+
+    @extend_schema(
+        tags=['Customer Profile'],
+        request=CustomerProfileImageUploadSerializer,
+        responses={
+            200: OpenApiResponse(description='Profile picture uploaded'),
+        },
+        description=(
+            'Upload a customer profile picture (multipart field `image`). '
+            'Stored via default media storage (S3 when USE_S3_MEDIA=true).'
+        ),
+    )
+    def post(self, request):
+        profile = request.user.customer_profile
+        serializer = CustomerProfileImageUploadSerializer(
+            data=request.data,
+            context={'request': request, 'customer_profile': profile},
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save()
+        url = result['profile_image_url']
+        if url and request and not str(url).startswith(('http://', 'https://')):
+            url = request.build_absolute_uri(url)
+            result = {**result, 'profile_image_url': url}
+        return Response(result, status=status.HTTP_200_OK)
 
 
 class CustomerAddressViewSet(

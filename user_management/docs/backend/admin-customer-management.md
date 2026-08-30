@@ -68,7 +68,7 @@ Detail includes list fields plus profile attributes, addresses, `summary`, and `
 | `wallet_currency` | e.g. `BDT` or `null` |
 | `last_order_at` | Latest order `created_at` |
 | `last_activity_at` | Max of order / profile / meal-off / wallet activity timestamps |
-| `profile_picture_url` | Always `null` in v1 |
+| `profile_picture_url` | Media/S3 URL when the customer has uploaded a picture; otherwise `null` |
 
 **`active_order`** (also on `/active-order/` as `{ "active_order": ... }`)
 

@@ -15,7 +15,12 @@ from .deliveryman_views import (
     DeliverymanResendVerificationView,
     DeliverymanVerifyEmailView,
 )
-from .profile_views import CustomerAddressViewSet, CustomerProfileView, SetDefaultDeliveryAddressView
+from .profile_views import (
+    CustomerAddressViewSet,
+    CustomerProfileImageUploadView,
+    CustomerProfileView,
+    SetDefaultDeliveryAddressView,
+)
 from .views import (
     AdminCurrentUserView,
     AdminLoginView,
@@ -63,6 +68,11 @@ urlpatterns = [
     ),
     path('deliveryman/me/', DeliverymanCurrentUserView.as_view(), name='deliveryman-me'),
     path('customer/profile/', CustomerProfileView.as_view(), name='customer-profile'),
+    path(
+        'customer/profile/image/',
+        CustomerProfileImageUploadView.as_view(),
+        name='customer-profile-image',
+    ),
     path(
         'customer/addresses/<uuid:public_id>/set-default/',
         SetDefaultDeliveryAddressView.as_view(),

@@ -2,6 +2,7 @@ from django.contrib.auth.models import User
 from django.db import models
 
 from core.models import PublicIdMixin
+from user_management.services.profile_picture import profile_picture_upload_path
 
 
 class TimeStampedModel(models.Model):
@@ -80,6 +81,12 @@ class CustomerProfile(PublicIdMixin, TimeStampedModel):
 
     delivery_instruction = models.TextField(blank=True)
     preferred_delivery_time = models.TimeField(null=True, blank=True)
+
+    profile_picture = models.ImageField(
+        upload_to=profile_picture_upload_path,
+        blank=True,
+        null=True,
+    )
 
     profile_completed = models.BooleanField(default=False)
     profile_completion_percentage = models.PositiveIntegerField(default=0)
