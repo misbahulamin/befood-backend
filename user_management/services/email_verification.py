@@ -9,6 +9,13 @@ from django.utils.encoding import force_bytes, force_str
 from django.utils.http import base36_to_int, urlsafe_base64_decode, urlsafe_base64_encode
 from django.utils import timezone
 
+from .auth_otp import (
+    AuthOTPError,
+    IssueStatus,
+    PURPOSE_EMAIL_VERIFICATION,
+    consume_otp,
+    issue_otp,
+)
 from .email_branding import build_activation_frontend_link, build_brand_email_context
 
 
@@ -20,6 +27,9 @@ class EmailVerificationTokenGenerator(PasswordResetTokenGenerator):
 token_generator = EmailVerificationTokenGenerator()
 TOKEN_EXPIRY_SECONDS = 24 * 60 * 60
 DjangoEpoch = datetime(2001, 1, 1, tzinfo=dt_timezone.utc)
+
+EMAIL_VERIFIED_SUCCESS_MESSAGE = 'Email verified successfully. You can now login.'
+EMAIL_OTP_INVALID_MESSAGE = 'Invalid or expired OTP.'
 
 
 def generate_uid(user):
@@ -37,11 +47,25 @@ def build_activation_link(request, user):
     return build_activation_frontend_link(uidb64, token), uidb64, token
 
 
-def send_activation_email(request, user):
+def send_activation_email(request, user, *, force_new_otp: bool = False):
+    """
+    Send branded activation email with link + OTP when a new OTP is issued.
+
+    Returns IssueStatus (issued / reused / rate_limited). When reused or
+    rate_limited, no email is sent (cooldown / hourly protection).
+    """
+    issue = issue_otp(user, PURPOSE_EMAIL_VERIFICATION, force_new=force_new_otp)
+    if issue.status != IssueStatus.ISSUED:
+        return issue.status
+
     activation_link, _, _ = build_activation_link(request, user)
     context = build_brand_email_context(
         user,
-        extra={'activation_link': activation_link},
+        extra={
+            'activation_link': activation_link,
+            'otp_code': issue.plaintext_otp,
+            'otp_ttl_minutes': int(getattr(settings, 'AUTH_OTP_TTL_SECONDS', 600)) // 60,
+        },
     )
     subject = render_to_string('emails/customer_activation_subject.txt', context).strip()
     text_body = render_to_string('emails/customer_activation_email.txt', context)
@@ -49,6 +73,7 @@ def send_activation_email(request, user):
     email = EmailMultiAlternatives(subject, text_body, settings.DEFAULT_FROM_EMAIL, [user.email])
     email.attach_alternative(html_body, 'text/html')
     email.send(fail_silently=False)
+    return issue.status
 
 
 def get_user_from_uid(uidb64):
@@ -77,3 +102,28 @@ def mark_email_verified(profile):
     profile.user.is_active = True
     profile.user.save(update_fields=['is_active'])
     profile.save(update_fields=['is_email_verified', 'email_verified_at', 'updated_at'])
+
+
+def verify_email_with_otp(email: str, otp: str) -> str:
+    """
+    Verify customer email using OTP. Raises AuthOTPError on failure.
+    """
+    normalized = (email or '').strip().lower()
+    user = User.objects.filter(email__iexact=normalized).first()
+    if not user or not hasattr(user, 'customer_profile'):
+        raise AuthOTPError(EMAIL_OTP_INVALID_MESSAGE)
+
+    profile = user.customer_profile
+    if profile.is_email_verified:
+        return 'Email is already verified.'
+
+    try:
+        consume_otp(user, PURPOSE_EMAIL_VERIFICATION, otp)
+    except AuthOTPError as exc:
+        # Normalize verify-email OTP errors for clients.
+        if exc.message == 'OTP expired.':
+            raise
+        raise AuthOTPError(EMAIL_OTP_INVALID_MESSAGE) from exc
+
+    mark_email_verified(profile)
+    return EMAIL_VERIFIED_SUCCESS_MESSAGE

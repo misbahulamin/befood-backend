@@ -2,14 +2,20 @@
 
 {% block title %}Verify your {{ brand_name }} account{% endblock %}
 
-{% block preheader %}Welcome to {{ brand_name }} — verify your email to start ordering homestyle meals.{% endblock %}
+{% block preheader %}Welcome to {{ brand_name }} — verify with the code {{ otp_code }} or the button below.{% endblock %}
 
 {% block headline %}Welcome to {{ brand_name }}!{% endblock %}
 
 {% block subheadline %}Complete your account verification{% endblock %}
 
 {% block body %}
-Thanks for joining {{ brand_name }} — Bachelor's e-Food. Homestyle lunch and dinner, delivered for students, bachelors, and busy professionals. Click the button below to verify your email and activate your account. This link expires in 24 hours.
+Thanks for joining {{ brand_name }} — Bachelor's e-Food. Homestyle lunch and dinner, delivered for students, bachelors, and busy professionals.
+<br><br>
+Enter this verification code in the app (expires in {{ otp_ttl_minutes }} minutes):
+<br><br>
+<span style="display:inline-block;font-size:28px;font-weight:700;letter-spacing:6px;color:{{ brand_deep_ink }};">{{ otp_code }}</span>
+<br><br>
+Or click the button below to verify with the link. The link expires in 24 hours.
 {% endblock %}
 
 {% block cta_url %}{{ activation_link }}{% endblock %}
@@ -17,6 +23,10 @@ Thanks for joining {{ brand_name }} — Bachelor's e-Food. Homestyle lunch and d
 {% block cta_label %}Verify Email Address{% endblock %}
 
 {% block cta_hint %}Or open this link in your browser to verify automatically.{% endblock %}
+
+{% block security_note %}
+For your security, never share this code or link with anyone. {{ brand_name }} will never ask for your password by email.
+{% endblock %}
 
 {% block ignore_note %}
 If you didn't create a {{ brand_name }} account, you can safely ignore this email.

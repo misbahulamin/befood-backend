@@ -1,5 +1,6 @@
 from django.contrib.auth.models import User
 from django.contrib.auth import login as django_login
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import HttpResponse
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
@@ -11,16 +12,40 @@ from rest_framework.views import APIView
 
 from ..services.admin_access import is_verified_admin
 from ..services.auth_service import get_admin_login_response, get_login_response, register_customer
-from ..services.email_verification import get_user_from_uid, mark_email_verified, send_activation_email, verify_token
-from ..services.password_reset import request_password_reset
+from ..services.auth_otp import AuthOTPError
+from ..services.email_verification import (
+    get_user_from_uid,
+    mark_email_verified,
+    send_activation_email,
+    verify_email_with_otp,
+    verify_token,
+)
+from ..services.password_reset import (
+    PasswordResetError,
+    confirm_password_reset,
+    confirm_password_reset_otp,
+    request_password_reset,
+    validate_password_reset,
+    validate_password_reset_otp,
+)
 from .serializers import (
     AdminCurrentUserSerializer,
     AdminLoginSerializer,
     CurrentUserSerializer,
     CustomerLoginSerializer,
     CustomerRegistrationSerializer,
+    EmailOTPVerifySerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetOTPConfirmSerializer,
+    PasswordResetOTPValidateSerializer,
     PasswordResetRequestSerializer,
+    PasswordResetValidateSerializer,
     ResendVerificationSerializer,
+)
+
+EMAIL_NOT_VERIFIED_LOGIN_MESSAGE = (
+    'Your account is not verified yet. Please check your email for the '
+    'verification code or link.'
 )
 
 
@@ -91,7 +116,14 @@ class VerifyEmailView(APIView):
 class ResendVerificationView(APIView):
     permission_classes = [permissions.AllowAny]
 
-    @extend_schema(tags=['Customer Auth'], request=ResendVerificationSerializer, description='Resend the verification email for an unverified account.')
+    @extend_schema(
+        tags=['Customer Auth'],
+        request=ResendVerificationSerializer,
+        description=(
+            'Resend the verification email (OTP + link) for an unverified account. '
+            'Respects OTP cooldown and hourly issue caps.'
+        ),
+    )
     def post(self, request):
         serializer = ResendVerificationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -102,6 +134,39 @@ class ResendVerificationView(APIView):
             return Response({'message': 'This email is already verified.'})
         send_activation_email(request, user)
         return Response({'message': 'Verification email has been sent again.'})
+
+
+class VerifyEmailOTPView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        tags=['Customer Auth'],
+        request=EmailOTPVerifySerializer,
+        description='Verify customer email using a 6-digit OTP from the activation email.',
+    )
+    def post(self, request):
+        serializer = EmailOTPVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            message = verify_email_with_otp(
+                serializer.validated_data['email'],
+                serializer.validated_data['otp'],
+            )
+        except AuthOTPError as exc:
+            return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'message': message})
+
+
+class ResendVerificationOTPView(ResendVerificationView):
+    """Alias of resend-verification for OTP-first clients."""
+
+    @extend_schema(
+        tags=['Customer Auth'],
+        request=ResendVerificationSerializer,
+        description='Alias of resend-verification: send OTP + link (cooldown/hourly caps apply).',
+    )
+    def post(self, request):
+        return super().post(request)
 
 
 class PasswordResetRequestView(APIView):
@@ -145,10 +210,195 @@ class PasswordResetRequestView(APIView):
         return Response({'message': message})
 
 
+class PasswordResetValidateView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        tags=['Customer Auth'],
+        request=PasswordResetValidateSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=None,
+                description='Reset link uid+token is valid.',
+            ),
+            400: OpenApiResponse(
+                response=None,
+                description='Invalid or expired reset link.',
+            ),
+        },
+        examples=[
+            OpenApiExample(
+                'Validate reset link',
+                value={'uid': 'MQ', 'token': 'abc123-def456'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Valid',
+                value={'message': 'Password reset link is valid.'},
+                response_only=True,
+            ),
+        ],
+        description=(
+            'Validate a password-reset uid+token from the email deep link '
+            'before showing the new-password form. Does not change the password.'
+        ),
+    )
+    def post(self, request):
+        serializer = PasswordResetValidateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            message = validate_password_reset(
+                serializer.validated_data['uid'],
+                serializer.validated_data['token'],
+            )
+        except PasswordResetError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'message': message})
+
+
+class PasswordResetConfirmView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        tags=['Customer Auth'],
+        request=PasswordResetConfirmSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=None,
+                description='Password updated; client must login again.',
+            ),
+            400: OpenApiResponse(
+                response=None,
+                description='Invalid token, weak password, or password mismatch.',
+            ),
+        },
+        examples=[
+            OpenApiExample(
+                'Confirm reset',
+                value={
+                    'uid': 'MQ',
+                    'token': 'abc123-def456',
+                    'new_password': 'NewStrongPassword123',
+                    'confirm_password': 'NewStrongPassword123',
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Success',
+                value={
+                    'message': (
+                        'Password has been reset successfully. You can now login.'
+                    ),
+                },
+                response_only=True,
+            ),
+        ],
+        description=(
+            'Set a new password using uid+token from the email deep link. '
+            'Invalidates prior DRF auth tokens. Does not return a new auth token; '
+            'client must call login afterwards.'
+        ),
+    )
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            message = confirm_password_reset(
+                serializer.validated_data['uid'],
+                serializer.validated_data['token'],
+                serializer.validated_data['new_password'],
+            )
+        except PasswordResetError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except DjangoValidationError as exc:
+            return Response(
+                {'new_password': list(exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({'message': message})
+
+
+class PasswordResetRequestOTPView(PasswordResetRequestView):
+    """Alias of password-reset request for OTP-first clients."""
+
+    @extend_schema(
+        tags=['Customer Auth'],
+        request=PasswordResetRequestSerializer,
+        description=(
+            'Alias of password-reset request. Sends OTP + link when allowed '
+            '(anti-enumeration; cooldown/hourly caps apply).'
+        ),
+    )
+    def post(self, request):
+        return super().post(request)
+
+
+class PasswordResetValidateOTPView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        tags=['Customer Auth'],
+        request=PasswordResetOTPValidateSerializer,
+        description=(
+            'UX-only check that a password-reset OTP is currently valid. '
+            'Does not consume the OTP and does not authorize password change; '
+            'confirm-otp must send the OTP again for independent verification.'
+        ),
+    )
+    def post(self, request):
+        serializer = PasswordResetOTPValidateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            message = validate_password_reset_otp(
+                serializer.validated_data['email'],
+                serializer.validated_data['otp'],
+            )
+        except AuthOTPError as exc:
+            return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'message': message})
+
+
+class PasswordResetConfirmOTPView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        tags=['Customer Auth'],
+        request=PasswordResetOTPConfirmSerializer,
+        description=(
+            'Set a new password using email + OTP. Independently re-verifies the OTP, '
+            'consumes it, and invalidates DRF auth tokens. Does not return a new auth token.'
+        ),
+    )
+    def post(self, request):
+        serializer = PasswordResetOTPConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            message = confirm_password_reset_otp(
+                serializer.validated_data['email'],
+                serializer.validated_data['otp'],
+                serializer.validated_data['new_password'],
+            )
+        except AuthOTPError as exc:
+            return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+        except DjangoValidationError as exc:
+            return Response(
+                {'new_password': list(exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({'message': message})
+
+
 class CustomerLoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
-    @extend_schema(tags=['Customer Auth'], request=CustomerLoginSerializer, description='Login customer using email and password.')
+    @extend_schema(
+        tags=['Customer Auth'],
+        request=CustomerLoginSerializer,
+        description=(
+            'Login customer using email and password. Unverified accounts receive a '
+            'not-verified error and a verification email when cooldown allows.'
+        ),
+    )
     def post(self, request):
         serializer = CustomerLoginSerializer(data=request.data)
         if not serializer.is_valid():
@@ -157,6 +407,16 @@ class CustomerLoginView(APIView):
                 detail = errors['non_field_errors'][0]
                 return Response({'detail': str(detail)}, status=status.HTTP_400_BAD_REQUEST)
             return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+        if serializer.validated_data.get('email_not_verified'):
+            user = serializer.validated_data['user']
+            send_activation_email(request, user)
+            return Response(
+                {
+                    'detail': EMAIL_NOT_VERIFIED_LOGIN_MESSAGE,
+                    'code': 'email_not_verified',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         response_data = get_login_response(serializer.validated_data['user'])
         return Response(response_data)
 

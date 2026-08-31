@@ -1,7 +1,7 @@
 # Customer Auth API
 
 ## Feature overview
-This feature covers customer registration, email verification, resend verification email, login, current user, and logout for the Befood-Bachelors E-Food backend.
+This feature covers customer registration, email verification, resend verification email, login, current user, logout, and **password reset** for the Befood-Bachelors E-Food backend.
 
 ## Customer registration flow (simplified)
 1. Customer submits **email** and **password** (required).
@@ -15,24 +15,36 @@ This feature covers customer registration, email verification, resend verificati
 Profile fields that used to be required at signup are collected **after login** via progressive profile PATCH. See `user_management/docs/frontend/progressive-customer-onboarding.md`.
 
 ## Email verification flow
-1. Customer clicks verification link.
-2. Backend validates uid and token (existing 24h token generator).
-3. Backend activates the user.
-4. Backend marks the profile as email verified.
-5. Backend stores verification timestamp.
+1. Customer receives branded email with a **6-digit OTP** and a verification link.
+2. Customer either enters the OTP (`POST /user_management/verify-email/otp/`) or opens the link.
+3. Backend validates OTP or uid+token (existing 24h token generator).
+4. Backend activates the user, marks the profile email verified, and stores verification timestamp.
 
-**Account registration complete** = successful email verification. Incomplete onboarding profile does **not** block login.
+OTP details (cooldown, hashing, APIs): `user_management/docs/backend/email-verification-otp.md`  
+Client guide: `user_management/docs/frontend-mobile/auth-verification-integration.md`
 
 ## Resend verification flow
-If the user is unverified, the backend sends a fresh verification email. If already verified, the backend returns a helpful message. Unknown emails get a generic anti-enumeration message.
+If the user is unverified, the backend sends a fresh verification email when cooldown/hourly caps allow. Within cooldown, an active OTP is reused without another email. If already verified, the backend returns a helpful message. Unknown emails get a generic anti-enumeration message.
 
 ## Login flow
-Customers login with email and password only. Login is blocked until email verification is completed. Login is **not** blocked for missing name/phone/occupation/`is_bachelor`/gender.
+Customers login with email and password only. Login is blocked until email verification is completed. If credentials are correct but unverified, the API returns `code: email_not_verified` and may send (or reuse) a verification email. Login is **not** blocked for missing name/phone/occupation/`is_bachelor`/gender.
 
 Login response may include additive `onboarding_completion` metadata.
 
 ## Logout flow
 Authenticated users can logout by deleting the current DRF token.
+
+## Password reset flow
+Customers recover access without knowing the current password using **link and/or OTP**:
+
+1. `POST /user_management/password-reset/` (or `.../request-otp/`) with email (anti-enumeration).
+2. Open branded email: link `{FRONTEND_URL}/reset-password?uid=...&token=...` **and/or** enter OTP.
+3. Link path: optional `POST .../password-reset/validate/` then `POST .../password-reset/confirm/`.
+4. OTP path: optional `POST .../password-reset/validate-otp/` (UX only — does **not** authorize reset), then `POST .../password-reset/confirm-otp/` which **re-verifies** the OTP.
+5. `POST /user_management/login/` with the **new** password.
+
+Full OTP contract: `user_management/docs/frontend-mobile/auth-verification-integration.md`.  
+Link reset: `user_management/docs/frontend/customer-password-reset.md`.
 
 ## Current user flow
 Authenticated users can fetch their own user and customer profile details, including:
@@ -45,7 +57,15 @@ These two completion concepts are separate.
 ## API endpoint list
 - `POST /user_management/customer/register/`
 - `GET /user_management/verify-email/<uidb64>/<token>/`
+- `POST /user_management/verify-email/otp/`
 - `POST /user_management/resend-verification/`
+- `POST /user_management/verify-email/resend-otp/`
+- `POST /user_management/password-reset/`
+- `POST /user_management/password-reset/request-otp/`
+- `POST /user_management/password-reset/validate/`
+- `POST /user_management/password-reset/validate-otp/`
+- `POST /user_management/password-reset/confirm/`
+- `POST /user_management/password-reset/confirm-otp/`
 - `POST /user_management/login/`
 - `GET /user_management/me/`
 - `POST /user_management/logout/`

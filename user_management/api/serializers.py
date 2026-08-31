@@ -74,9 +74,16 @@ class CustomerLoginSerializer(serializers.Serializer):
         user = User.objects.filter(email__iexact=email).first()
         if not user or not user.check_password(password):
             raise serializers.ValidationError('Invalid credentials.')
-        if not user.is_active or not getattr(user, 'customer_profile', None) or not user.customer_profile.is_email_verified:
-            raise serializers.ValidationError('Please verify your email before login.')
+        profile = getattr(user, 'customer_profile', None)
+        if profile is None:
+            raise serializers.ValidationError('Invalid credentials.')
+        if not user.is_active or not profile.is_email_verified:
+            # Correct password but unverified — view triggers verification delivery.
+            attrs['user'] = user
+            attrs['email_not_verified'] = True
+            return attrs
         attrs['user'] = user
+        attrs['email_not_verified'] = False
         return attrs
 
 
@@ -190,3 +197,81 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         return value.lower()
+
+
+class PasswordResetValidateSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=1)
+    confirm_password = serializers.CharField(write_only=True, min_length=1)
+
+    def validate_new_password(self, value):
+        validate_password(value)
+        return value
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError(
+                {'confirm_password': ['Passwords do not match.']}
+            )
+        return attrs
+
+
+class EmailOTPVerifySerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp = serializers.CharField(min_length=6, max_length=6)
+
+    def validate_email(self, value):
+        return value.lower()
+
+    def validate_otp(self, value):
+        value = (value or '').strip()
+        if not value.isdigit() or len(value) != 6:
+            raise serializers.ValidationError('OTP must be a 6-digit code.')
+        return value
+
+
+class PasswordResetOTPValidateSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp = serializers.CharField(min_length=6, max_length=6)
+
+    def validate_email(self, value):
+        return value.lower()
+
+    def validate_otp(self, value):
+        value = (value or '').strip()
+        if not value.isdigit() or len(value) != 6:
+            raise serializers.ValidationError('OTP must be a 6-digit code.')
+        return value
+
+
+class PasswordResetOTPConfirmSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp = serializers.CharField(min_length=6, max_length=6)
+    new_password = serializers.CharField(write_only=True, min_length=1)
+    confirm_password = serializers.CharField(write_only=True, min_length=1)
+
+    def validate_email(self, value):
+        return value.lower()
+
+    def validate_otp(self, value):
+        value = (value or '').strip()
+        if not value.isdigit() or len(value) != 6:
+            raise serializers.ValidationError('OTP must be a 6-digit code.')
+        return value
+
+    def validate_new_password(self, value):
+        validate_password(value)
+        return value
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError(
+                {'confirm_password': ['Passwords do not match.']}
+            )
+        return attrs

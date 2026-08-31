@@ -199,6 +199,20 @@ DELIVERYMAN_EMAIL_VERIFICATION_FRONTEND_PATH = config(
     default='/deliveryman/verify-email',
 )
 
+# Customer auth OTP (email verification + password reset). Plaintext never stored.
+AUTH_OTP_TTL_SECONDS = config('AUTH_OTP_TTL_SECONDS', default=600, cast=int)
+AUTH_OTP_MAX_ATTEMPTS = config('AUTH_OTP_MAX_ATTEMPTS', default=5, cast=int)
+AUTH_OTP_RESEND_COOLDOWN_SECONDS = config(
+    'AUTH_OTP_RESEND_COOLDOWN_SECONDS',
+    default=60,
+    cast=int,
+)
+AUTH_OTP_MAX_ISSUES_PER_HOUR = config(
+    'AUTH_OTP_MAX_ISSUES_PER_HOUR',
+    default=10,
+    cast=int,
+)
+
 # Customer wallet: manual recharge/withdraw path (replace with gateway-only when ready).
 WALLET_MANUAL_FUNDING_ENABLED = config(
     'WALLET_MANUAL_FUNDING_ENABLED',

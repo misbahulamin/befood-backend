@@ -2,7 +2,10 @@
 
 ## Summary
 
-Registration / resend still use the existing verify flow. Password reset is requested via a new public endpoint; the email CTA opens the frontend reset page with `uid` and `token` query params.
+Registration / resend still use the existing verify flow (now **OTP + link** in the same email). Password reset is requested via a public endpoint; the email includes a CTA deep link **and** a 6-digit OTP. The SPA/app can use link validate/confirm and/or OTP validate/confirm, then logs the user in again.
+
+Full client guide (link): [`customer-password-reset.md`](./customer-password-reset.md).  
+OTP + dual-channel guide: [`../frontend-mobile/auth-verification-integration.md`](../frontend-mobile/auth-verification-integration.md).
 
 ## Integration
 
@@ -33,7 +36,15 @@ Email button opens:
 
 Path is configurable via backend `PASSWORD_RESET_FRONTEND_PATH` (default `/reset-password`).
 
-Confirm-reset API (set new password) may be a follow-up; this change ships request + branded email only.
+### Complete reset on the client
+
+1. Read `uid` and `token` from the query / deep link.
+2. `POST /user_management/password-reset/validate/` with `{ "uid", "token" }` (recommended before showing the form).
+3. `POST /user_management/password-reset/confirm/` with `{ "uid", "token", "new_password", "confirm_password" }`.
+4. Navigate to login — confirm does **not** return an auth token.
+5. `POST /user_management/login/` with email + new password.
+
+Details, errors, and edge cases: [`customer-password-reset.md`](./customer-password-reset.md).
 
 ### Activation (frontend deep link)
 

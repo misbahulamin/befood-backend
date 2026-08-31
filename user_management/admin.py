@@ -6,6 +6,7 @@ from django.utils import timezone
 from .models import (
     AdminProfile,
     CustomerAddress,
+    CustomerAuthOTP,
     CustomerDeliveryPlace,
     CustomerProfile,
     MealDeliveryDayOverride,
@@ -167,3 +168,30 @@ class RiderProfileAdmin(admin.ModelAdmin):
             set_deliveryman_verified(obj, True, admin_notes=obj.admin_notes, send_email=True)
         elif not obj.is_verified and previous.is_verified:
             set_deliveryman_verified(obj, False, admin_notes=obj.admin_notes, send_email=False)
+
+
+@admin.register(CustomerAuthOTP)
+class CustomerAuthOTPAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'user',
+        'purpose',
+        'created_at',
+        'expires_at',
+        'consumed_at',
+        'attempt_count',
+        'max_attempts',
+    )
+    list_filter = ('purpose',)
+    search_fields = ('user__email',)
+    readonly_fields = (
+        'user',
+        'purpose',
+        'code_hash',
+        'created_at',
+        'expires_at',
+        'consumed_at',
+        'attempt_count',
+        'max_attempts',
+    )
+    ordering = ('-created_at',)

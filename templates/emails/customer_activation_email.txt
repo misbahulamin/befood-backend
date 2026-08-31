@@ -6,12 +6,15 @@ Complete your account verification
 
 Thanks for joining {{ brand_name }} — Bachelor's e-Food. Homestyle lunch and dinner, delivered for students, bachelors, and busy professionals.
 
-Verify your email (expires in 24 hours):
+Your verification code (expires in {{ otp_ttl_minutes }} minutes):
+{{ otp_code }}
+
+Or verify your email with this link (expires in 24 hours):
 {{ activation_link }}
 
 This email is for: {{ recipient_email }}
 
-For your security, never share this link with anyone. {{ brand_name }} will never ask for your password by email.
+For your security, never share this code or link with anyone. {{ brand_name }} will never ask for your password by email.
 
 If you didn't create a {{ brand_name }} account, you can safely ignore this email.
 

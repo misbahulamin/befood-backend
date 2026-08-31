@@ -10,6 +10,10 @@ Customer **activation** and **password-reset** emails use a shared Befood-brande
 | POST | `/user_management/resend-verification/` | Public | Resends branded activation email |
 | GET | `/user_management/verify-email/<uidb64>/<token>/` | Public | Activates account (activation token only) |
 | POST | `/user_management/password-reset/` | Public | Requests branded password-reset email (anti-enumeration) |
+| POST | `/user_management/password-reset/validate/` | Public | Validates reset `uid` + `token` |
+| POST | `/user_management/password-reset/confirm/` | Public | Sets new password; invalidates DRF tokens |
+
+Full password-reset API contract: [`customer-password-reset.md`](./customer-password-reset.md).
 
 ## Branding settings
 
@@ -59,9 +63,17 @@ Content-Type: application/json
 
 Reset CTA opens `{FRONTEND_URL}{PASSWORD_RESET_FRONTEND_PATH}?uid=...&token=...`.
 
+The SPA/app then calls:
+
+1. `POST /user_management/password-reset/validate/` with `{ "uid", "token" }` (optional UX check)
+2. `POST /user_management/password-reset/confirm/` with `{ "uid", "token", "new_password", "confirm_password" }`
+3. `POST /user_management/login/` with the new password
+
+See [`customer-password-reset.md`](./customer-password-reset.md) for full payloads and errors.
+
 Activation CTA opens `{FRONTEND_URL}{EMAIL_VERIFICATION_FRONTEND_PATH}/<uidb64>/<token>/` (SPA). The SPA then calls `GET /user_management/verify-email/<uidb64>/<token>/`. Activation emails MUST NOT use the API request host.
 
-Activation verify **rejects** password-reset tokens (different token generators).
+Activation verify **rejects** password-reset tokens (different token generators). Reset validate/confirm **reject** activation tokens.
 
 ## Test send command
 
@@ -76,5 +88,5 @@ Requires working SMTP (`EMAIL_HOST_*` / `DEFAULT_FROM_EMAIL` in env).
 
 ## How to verify
 
-1. Unit tests: `python manage.py test user_management.tests.test_branded_auth_emails user_management.tests.test_customer_auth`
+1. Unit tests: `python manage.py test user_management.tests.test_branded_auth_emails user_management.tests.test_customer_password_reset --keepdb`
 2. Live: run `send_test_auth_email` and check Gmail rendering (logo, button, footer, Play Store).

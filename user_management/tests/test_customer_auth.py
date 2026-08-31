@@ -94,7 +94,8 @@ class CustomerAuthTests(TestCase):
         self.register_customer()
         response = self.login_customer()
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data['detail'], 'Please verify your email before login.')
+        self.assertEqual(response.data['code'], 'email_not_verified')
+        self.assertIn('not verified', response.data['detail'].lower())
 
     def test_email_verification_activates_user(self):
         self.register_customer()
