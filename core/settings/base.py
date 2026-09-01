@@ -276,6 +276,8 @@ CORS_ALLOWED_ORIGINS = [
     # Your frontend domain should be here
     'http://befood.com.bd',
     'https://befood.com.bd',
+    'http://www.befood.com.bd',
+    'https://www.befood.com.bd',
 ]
 
 CORS_ALLOW_CREDENTIALS = True
