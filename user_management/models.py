@@ -375,11 +375,25 @@ class AdminProfile(TimeStampedModel):
 
 
 class DeviceToken(models.Model):
+    class Platform(models.TextChoices):
+        ANDROID = 'android', 'Android'
+        IOS = 'ios', 'iOS'
+        WEB = 'web', 'Web'
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='device_tokens')
-    token = models.CharField(max_length=255)
-    platform = models.CharField(max_length=20, blank=True)
+    token = models.CharField(max_length=255, unique=True)
+    platform = models.CharField(max_length=20, choices=Platform.choices, blank=True)
+    device_name = models.CharField(max_length=100, blank=True)
+    app_version = models.CharField(max_length=50, blank=True)
     is_active = models.BooleanField(default=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'is_active'], name='devicetoken_user_active_idx'),
+        ]
 
 
 class UserActivityLog(models.Model):

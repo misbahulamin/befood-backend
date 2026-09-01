@@ -11,9 +11,12 @@ from .models import (
     CustomerLocationPreference,
     CustomerLocationSettings,
     CustomerProfile,
+    DeviceToken,
     MealDeliveryDayOverride,
     MealDeliveryPreference,
     RiderProfile,
+    StaffProfile,
+    UserActivityLog,
 )
 from .services.deliveryman_auth import approve_deliveryman, reject_deliveryman, set_deliveryman_verified
 
@@ -204,6 +207,48 @@ class RiderProfileAdmin(admin.ModelAdmin):
             set_deliveryman_verified(obj, True, admin_notes=obj.admin_notes, send_email=True)
         elif not obj.is_verified and previous.is_verified:
             set_deliveryman_verified(obj, False, admin_notes=obj.admin_notes, send_email=False)
+
+
+@admin.register(DeviceToken)
+class DeviceTokenAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'user',
+        'platform',
+        'device_name',
+        'is_active',
+        'last_used_at',
+        'created_at',
+    )
+    list_filter = ('is_active', 'platform')
+    search_fields = ('user__email', 'token', 'device_name')
+    autocomplete_fields = ('user',)
+    readonly_fields = ('created_at', 'updated_at', 'last_used_at')
+    ordering = ('-created_at',)
+
+
+@admin.register(StaffProfile)
+class StaffProfileAdmin(admin.ModelAdmin):
+    list_display = ('user', 'role', 'outlet_id')
+    search_fields = ('user__email', 'user__first_name', 'user__last_name', 'role')
+    autocomplete_fields = ('user',)
+
+
+@admin.register(UserActivityLog)
+class UserActivityLogAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'action', 'ip_address', 'timestamp')
+    search_fields = ('user__email', 'action', 'ip_address')
+    readonly_fields = ('user', 'action', 'ip_address', 'metadata', 'timestamp')
+    ordering = ('-timestamp',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(CustomerAuthOTP)

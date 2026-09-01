@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 from uuid import uuid4
@@ -7,13 +7,14 @@ from django.contrib.auth.models import Group, User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 from PIL import Image
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
 from meals.models import MealCategory
-from orders.models import Order, OrderDelivery
+from orders.models import CustomerSubscription, Order, OrderDelivery
 from user_management.models import AdminProfile, CustomerAddress, CustomerProfile
 from wallet.models import Wallet, WalletTransaction
 
@@ -50,6 +51,7 @@ class AdminCustomerManagementAPITests(APITestCase):
             meal_type=MealCategory.MealType.MONTHLY,
             meal_period=MealCategory.MealPeriod.BOTH,
             is_active=True,
+            is_subscribable=True,
         )
 
         self.customer_a = self._make_customer(
@@ -76,6 +78,15 @@ class AdminCustomerManagementAPITests(APITestCase):
             phone='1733333333',
             first_name='Carol',
             last_name='NoOrder',
+            is_email_verified=True,
+            is_active=True,
+        )
+        self.customer_d = self._make_customer(
+            'dave',
+            email='dave@example.com',
+            phone='1744444444',
+            first_name='Dave',
+            last_name='Subscriber',
             is_email_verified=True,
             is_active=True,
         )
@@ -111,6 +122,7 @@ class AdminCustomerManagementAPITests(APITestCase):
             status=OrderDelivery.DeliveryStatus.DELIVERED,
             payment_status=OrderDelivery.PaymentStatus.CHARGED,
             charged_amount=Decimal('100.00'),
+            marked_at=timezone.now(),
         )
 
         self.wallet = Wallet.objects.create(
@@ -133,8 +145,44 @@ class AdminCustomerManagementAPITests(APITestCase):
             balance_after=Decimal('400.00'),
             status=WalletTransaction.Status.COMPLETED,
         )
-        self.wallet.balance = Decimal('400.00')
+        WalletTransaction.objects.create(
+            wallet=self.wallet,
+            type=WalletTransaction.Type.RECHARGE,
+            direction=WalletTransaction.Direction.CREDIT,
+            amount=Decimal('500.00'),
+            method=WalletTransaction.Method.BKASH,
+            external_ref='pending-ref-001',
+            status=WalletTransaction.Status.PENDING,
+        )
+        self.wallet.balance = Decimal('500.00')
         self.wallet.save(update_fields=['balance'])
+
+        self.subscription_d = CustomerSubscription.objects.create(
+            customer=self.customer_d,
+            meal=self.meal,
+            meal_name_snapshot=self.meal.meal_name,
+            meal_period_snapshot=self.meal.meal_period,
+            status=CustomerSubscription.Status.ACTIVE,
+            started_on=date(2026, 8, 1),
+        )
+        self.sub_delivery = OrderDelivery.objects.create(
+            subscription=self.subscription_d,
+            service_date=date(2026, 8, 10),
+            meal_period=OrderDelivery.MealPeriod.LUNCH,
+            status=OrderDelivery.DeliveryStatus.DELIVERED,
+            marked_at=timezone.now(),
+        )
+
+        self.cancelled_subscription = CustomerSubscription.objects.create(
+            customer=self.customer_b,
+            meal=self.meal,
+            meal_name_snapshot=self.meal.meal_name,
+            meal_period_snapshot=self.meal.meal_period,
+            status=CustomerSubscription.Status.CANCELLED,
+            started_on=date(2026, 6, 1),
+            cancelled_at=timezone.now(),
+            cancel_effective_on=date(2026, 6, 30),
+        )
 
         self.list_url = reverse('web_customers:admin-customer-list')
 
@@ -185,13 +233,16 @@ class AdminCustomerManagementAPITests(APITestCase):
     def _auth_admin(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
 
+    def _auth_customer(self, customer_profile):
+        token = Token.objects.create(user=customer_profile.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+
     def test_unauthenticated_list_denied(self):
         response = self.client.get(self.list_url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_customer_cannot_list(self):
-        token = Token.objects.create(user=self.customer_a.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        self._auth_customer(self.customer_a)
         response = self.client.get(self.list_url)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -199,7 +250,7 @@ class AdminCustomerManagementAPITests(APITestCase):
         self._auth_admin()
         response = self.client.get(self.list_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertGreaterEqual(response.data['count'], 3)
+        self.assertGreaterEqual(response.data['count'], 4)
         row = next(item for item in response.data['results'] if item['email'] == 'alice@example.com')
         self.assertEqual(row['name'], 'Alice Active')
         self.assertEqual(row['phone'], '1711111111')
@@ -208,8 +259,11 @@ class AdminCustomerManagementAPITests(APITestCase):
         self.assertEqual(row['account_status'], 'active')
         self.assertEqual(row['current_package']['package_name'], 'Regular Package')
         self.assertEqual(row['current_package']['remaining_meals'], 1)
-        self.assertEqual(row['wallet_balance'], '400.00')
+        self.assertEqual(row['wallet_balance'], '500.00')
         self.assertEqual(str(row['public_id']), str(self.customer_a.public_id))
+
+        sub_row = next(item for item in response.data['results'] if item['email'] == 'dave@example.com')
+        self.assertEqual(sub_row['current_package']['subscription_public_id'], str(self.subscription_d.public_id))
 
     def test_search_by_email_and_phone(self):
         self._auth_admin()
@@ -220,39 +274,39 @@ class AdminCustomerManagementAPITests(APITestCase):
         self.assertEqual(by_phone.data['count'], 1)
         self.assertEqual(by_phone.data['results'][0]['email'], 'bob@example.com')
 
-    def test_filters_active_verified_and_active_order(self):
+    def test_filters_active_verified_and_subscription(self):
         self._auth_admin()
         active = self.client.get(self.list_url, {'is_active': 'true'})
         emails = {r['email'] for r in active.data['results']}
         self.assertIn('alice@example.com', emails)
         self.assertNotIn('bob@example.com', emails)
 
-        inactive = self.client.get(self.list_url, {'is_active': 'false'})
-        self.assertTrue(all(r['account_status'] == 'inactive' for r in inactive.data['results']))
+        with_sub = self.client.get(self.list_url, {'has_active_subscription': 'true'})
+        self.assertEqual(with_sub.data['count'], 1)
+        self.assertEqual(with_sub.data['results'][0]['email'], 'dave@example.com')
 
-        verified = self.client.get(self.list_url, {'is_email_verified': 'true'})
-        self.assertTrue(all(r['verification_status'] == 'verified' for r in verified.data['results']))
+        with_wallet = self.client.get(self.list_url, {'has_wallet': 'true'})
+        self.assertEqual(with_wallet.data['count'], 1)
+
+        pending_recharge = self.client.get(self.list_url, {'has_pending_recharge': 'true'})
+        self.assertEqual(pending_recharge.data['count'], 1)
+        self.assertEqual(pending_recharge.data['results'][0]['email'], 'alice@example.com')
+
+        inactive_sub = self.client.get(self.list_url, {'inactive_subscription': 'true'})
+        inactive_emails = {r['email'] for r in inactive_sub.data['results']}
+        self.assertIn('bob@example.com', inactive_emails)
+        self.assertNotIn('dave@example.com', inactive_emails)
 
         with_order = self.client.get(self.list_url, {'has_active_order': 'true'})
         self.assertEqual(with_order.data['count'], 1)
         self.assertEqual(with_order.data['results'][0]['email'], 'alice@example.com')
-
-        without_order = self.client.get(self.list_url, {'has_active_order': 'false'})
-        without_emails = {r['email'] for r in without_order.data['results']}
-        self.assertIn('carol@example.com', without_emails)
-        self.assertNotIn('alice@example.com', without_emails)
-
-        by_package = self.client.get(
-            self.list_url, {'meal_public_id': str(self.meal.public_id)}
-        )
-        self.assertEqual(by_package.data['count'], 1)
 
     def test_unknown_filter_rejected(self):
         self._auth_admin()
         response = self.client.get(self.list_url, {'foo': 'bar'})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_detail_overview_and_404(self):
+    def test_detail_overview_lean_and_404(self):
         self._auth_admin()
         url = reverse(
             'web_customers:admin-customer-detail',
@@ -261,13 +315,22 @@ class AdminCustomerManagementAPITests(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['verification_status'], 'verified')
-        self.assertEqual(response.data['summary']['total_orders'], 1)
-        self.assertEqual(response.data['summary']['total_meals_delivered'], 1)
-        self.assertEqual(response.data['summary']['total_meal_offs'], 1)
-        self.assertEqual(response.data['summary']['total_wallet_spent'], '100.00')
-        self.assertEqual(response.data['summary']['wallet_balance'], '400.00')
-        self.assertEqual(len(response.data['addresses']), 1)
+        summary = response.data['summary']
+        self.assertEqual(summary['total_orders'], 1)
+        self.assertEqual(summary['total_meals_delivered'], 1)
+        self.assertEqual(summary['total_meal_offs'], 1)
+        self.assertEqual(summary['total_wallet_spent'], '100.00')
+        self.assertEqual(summary['customer_lifetime_value'], '100.00')
+        self.assertEqual(summary['wallet_balance'], '500.00')
+        self.assertTrue(summary['has_legacy_orders'])
         self.assertIsNotNone(response.data['active_order'])
+        self.assertIn('pending_recharge_amount', response.data['wallet_summary'])
+        self.assertEqual(response.data['wallet_summary']['pending_recharge_amount'], '500.00')
+        self.assertEqual(len(response.data['addresses']), 1)
+        self.assertNotIn('subscriptions', response.data)
+        self.assertNotIn('meals', response.data)
+        self.assertNotIn('wallet_transactions', response.data)
+        self.assertNotIn('activity', response.data)
 
         missing = reverse(
             'web_customers:admin-customer-detail',
@@ -275,15 +338,71 @@ class AdminCustomerManagementAPITests(APITestCase):
         )
         self.assertEqual(self.client.get(missing).status_code, status.HTTP_404_NOT_FOUND)
 
-    def test_active_order_empty_when_none(self):
+    def test_subscribed_customer_active_subscription(self):
+        self._auth_admin()
+        detail_url = reverse(
+            'web_customers:admin-customer-detail',
+            kwargs={'public_id': self.customer_d.public_id},
+        )
+        detail = self.client.get(detail_url)
+        self.assertIsNotNone(detail.data['active_subscription'])
+        self.assertEqual(
+            detail.data['active_subscription']['subscription_public_id'],
+            str(self.subscription_d.public_id),
+        )
+
+        action_url = reverse(
+            'web_customers:admin-customer-active-subscription',
+            kwargs={'public_id': self.customer_d.public_id},
+        )
+        action = self.client.get(action_url)
+        self.assertEqual(action.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(action.data['active_subscription'])
+
+    def test_active_subscription_empty_when_none(self):
         self._auth_admin()
         url = reverse(
-            'web_customers:admin-customer-active-order',
+            'web_customers:admin-customer-active-subscription',
             kwargs={'public_id': self.customer_c.public_id},
         )
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIsNone(response.data['active_order'])
+        self.assertIsNone(response.data['active_subscription'])
+
+    def test_subscription_history_and_meals_include_subscription_rows(self):
+        self._auth_admin()
+        pid = self.customer_d.public_id
+
+        subs = self.client.get(
+            reverse('web_customers:admin-customer-subscriptions', kwargs={'public_id': pid})
+        )
+        self.assertEqual(subs.status_code, status.HTTP_200_OK)
+        self.assertEqual(subs.data['count'], 1)
+        self.assertEqual(str(subs.data['results'][0]['public_id']), str(self.subscription_d.public_id))
+
+        meals = self.client.get(
+            reverse('web_customers:admin-customer-meals', kwargs={'public_id': pid})
+        )
+        self.assertEqual(meals.status_code, status.HTTP_200_OK)
+        self.assertEqual(meals.data['count'], 1)
+        self.assertEqual(
+            meals.data['results'][0]['subscription_public_id'],
+            str(self.subscription_d.public_id),
+        )
+
+    def test_wallet_overview_pending_and_totals(self):
+        self._auth_admin()
+        url = reverse(
+            'web_customers:admin-customer-wallet-overview',
+            kwargs={'public_id': self.customer_a.public_id},
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        overview = response.data['wallet_overview']
+        self.assertEqual(overview['available_balance'], '500.00')
+        self.assertEqual(overview['pending_recharge_amount'], '500.00')
+        self.assertEqual(overview['total_spent'], '100.00')
+        self.assertEqual(overview['total_recharged'], '500.00')
 
     def test_history_scoped_and_wallet_empty(self):
         self._auth_admin()
@@ -295,6 +414,7 @@ class AdminCustomerManagementAPITests(APITestCase):
         )
         self.assertEqual(orders.status_code, status.HTTP_200_OK)
         self.assertEqual(orders.data['count'], 1)
+        self.assertIn('Deprecation', orders.headers)
         self.assertEqual(str(orders.data['results'][0]['public_id']), str(self.order_a.public_id))
 
         other_orders = self.client.get(
@@ -322,7 +442,7 @@ class AdminCustomerManagementAPITests(APITestCase):
             )
         )
         self.assertEqual(wallet.status_code, status.HTTP_200_OK)
-        self.assertEqual(wallet.data['count'], 2)
+        self.assertEqual(wallet.data['count'], 3)
 
         empty_wallet = self.client.get(
             reverse(
@@ -339,8 +459,21 @@ class AdminCustomerManagementAPITests(APITestCase):
         self.assertEqual(activity.status_code, status.HTTP_200_OK)
         event_types = {item['event_type'] for item in activity.data['results']}
         self.assertIn('order_created', event_types)
-        self.assertIn('meal_off', event_types)
-        self.assertTrue(any(t.startswith('wallet_') for t in event_types))
+        self.assertIn('meal_skipped', event_types)
+        self.assertIn('meal_delivered', event_types)
+        self.assertIn('wallet_transaction_completed', event_types)
+        self.assertNotIn('meal_off', event_types)
+
+    def test_activity_confirmed_events_for_subscription_customer(self):
+        self._auth_admin()
+        url = reverse(
+            'web_customers:admin-customer-activity',
+            kwargs={'public_id': self.customer_d.public_id},
+        )
+        response = self.client.get(url)
+        event_types = {item['event_type'] for item in response.data['results']}
+        self.assertIn('subscription_created', event_types)
+        self.assertIn('meal_delivered', event_types)
 
     def test_invalid_meal_filter_rejected(self):
         self._auth_admin()
@@ -351,11 +484,51 @@ class AdminCustomerManagementAPITests(APITestCase):
         response = self.client.get(url, {'meal_period': 'brunch'})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_customer_denied_history(self):
-        token = Token.objects.create(user=self.customer_a.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+    def test_customer_denied_admin_endpoints(self):
+        self._auth_customer(self.customer_a)
+        endpoints = [
+            reverse('web_customers:admin-customer-list'),
+            reverse(
+                'web_customers:admin-customer-detail',
+                kwargs={'public_id': self.customer_b.public_id},
+            ),
+            reverse(
+                'web_customers:admin-customer-active-subscription',
+                kwargs={'public_id': self.customer_b.public_id},
+            ),
+            reverse(
+                'web_customers:admin-customer-subscriptions',
+                kwargs={'public_id': self.customer_b.public_id},
+            ),
+            reverse(
+                'web_customers:admin-customer-wallet-overview',
+                kwargs={'public_id': self.customer_b.public_id},
+            ),
+            reverse(
+                'web_customers:admin-customer-activity',
+                kwargs={'public_id': self.customer_b.public_id},
+            ),
+        ]
+        for url in endpoints:
+            self.assertEqual(
+                self.client.get(url).status_code,
+                status.HTTP_403_FORBIDDEN,
+                msg=f'Expected 403 for {url}',
+            )
+
+    def test_cancelled_subscription_customer_overview(self):
+        self._auth_admin()
         url = reverse(
-            'web_customers:admin-customer-activity',
-            kwargs={'public_id': self.customer_a.public_id},
+            'web_customers:admin-customer-detail',
+            kwargs={'public_id': self.customer_b.public_id},
         )
-        self.assertEqual(self.client.get(url).status_code, status.HTTP_403_FORBIDDEN)
+        response = self.client.get(url)
+        self.assertIsNone(response.data['active_subscription'])
+        subs = self.client.get(
+            reverse(
+                'web_customers:admin-customer-subscriptions',
+                kwargs={'public_id': self.customer_b.public_id},
+            )
+        )
+        self.assertEqual(subs.data['count'], 1)
+        self.assertEqual(subs.data['results'][0]['status'], 'cancelled')

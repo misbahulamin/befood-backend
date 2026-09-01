@@ -6,11 +6,14 @@ from rest_framework.response import Response
 
 from user_management.api.admin_customer_serializers import (
     AdminCustomerActiveOrderSerializer,
+    AdminCustomerActiveSubscriptionSerializer,
     AdminCustomerActivitySerializer,
     AdminCustomerDetailSerializer,
     AdminCustomerListSerializer,
     AdminCustomerMealHistorySerializer,
     AdminCustomerOrderHistorySerializer,
+    AdminCustomerSubscriptionHistorySerializer,
+    AdminCustomerWalletOverviewSerializer,
     AdminCustomerWalletTransactionSerializer,
 )
 from user_management.api.permissions import IsVerifiedAdmin
@@ -18,10 +21,13 @@ from user_management.services.admin_customer import (
     MEAL_QUERY_ALLOWLIST,
     apply_customer_list_filters,
     build_active_order_payload,
+    build_active_subscription_payload,
     build_activity_events,
+    build_wallet_overview,
     customer_base_queryset,
     customer_deliveries_queryset,
     customer_orders_queryset,
+    customer_subscriptions_queryset,
     customer_wallet_transactions_queryset,
 )
 
@@ -30,6 +36,12 @@ class AdminCustomerPagination(PageNumberPagination):
     page_size = 20
     page_size_query_param = 'page_size'
     max_page_size = 100
+
+
+def _with_deprecation(response, successor_path: str):
+    response['Deprecation'] = 'true'
+    response['Link'] = f'<{successor_path}>; rel="successor-version"'
+    return response
 
 
 @extend_schema_view(
@@ -44,12 +56,26 @@ class AdminCustomerPagination(PageNumberPagination):
             OpenApiParameter(name='q', type=str, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='is_active', type=bool, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='is_email_verified', type=bool, location=OpenApiParameter.QUERY),
-            OpenApiParameter(name='has_active_order', type=bool, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='has_active_subscription', type=bool, location=OpenApiParameter.QUERY),
+            OpenApiParameter(
+                name='has_active_order',
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                description='Deprecated. Prefer has_active_subscription.',
+            ),
+            OpenApiParameter(name='has_wallet', type=bool, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='has_pending_recharge', type=bool, location=OpenApiParameter.QUERY),
+            OpenApiParameter(
+                name='subscription_expiring_soon',
+                type=bool,
+                location=OpenApiParameter.QUERY,
+            ),
+            OpenApiParameter(name='inactive_subscription', type=bool, location=OpenApiParameter.QUERY),
             OpenApiParameter(
                 name='meal_public_id',
                 type=str,
                 location=OpenApiParameter.QUERY,
-                description='Filter customers whose active order uses this meal package UUID.',
+                description='Filter customers whose active subscription or legacy order uses this package UUID.',
             ),
             OpenApiParameter(name='registered_from', type=str, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='registered_to', type=str, location=OpenApiParameter.QUERY),
@@ -64,6 +90,10 @@ class AdminCustomerPagination(PageNumberPagination):
     retrieve=extend_schema(
         tags=['Admin Customers'],
         summary='Customer detail / overview',
+        description=(
+            'Lean overview: profile, summary metrics, active subscription summary, and wallet summary. '
+            'History arrays are not embedded; use paginated sub-resources.'
+        ),
         responses={200: AdminCustomerDetailSerializer},
     ),
 )
@@ -87,23 +117,62 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
     def list(self, request, *args, **kwargs):
         queryset = apply_customer_list_filters(self.get_queryset(), request.query_params)
         page = self.paginate_queryset(queryset)
-        serializer = AdminCustomerListSerializer(page, many=True)
+        serializer = AdminCustomerListSerializer(page, many=True, context={'request': request})
         return self.get_paginated_response(serializer.data)
 
     @extend_schema(
         tags=['Admin Customers'],
-        summary='Active order for customer',
+        summary='Active subscription for customer',
+        responses={200: AdminCustomerActiveSubscriptionSerializer},
+    )
+    @action(detail=True, methods=['get'], url_path='active-subscription')
+    def active_subscription(self, request, public_id=None):
+        customer = self.get_object()
+        payload = {'active_subscription': build_active_subscription_payload(customer)}
+        return Response(payload)
+
+    @extend_schema(
+        tags=['Admin Customers'],
+        summary='Customer subscription history',
+        responses={200: AdminCustomerSubscriptionHistorySerializer(many=True)},
+    )
+    @action(detail=True, methods=['get'], url_path='subscriptions')
+    def subscriptions(self, request, public_id=None):
+        customer = self.get_object()
+        queryset = customer_subscriptions_queryset(customer)
+        page = self.paginate_queryset(queryset)
+        serializer = AdminCustomerSubscriptionHistorySerializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
+
+    @extend_schema(
+        tags=['Admin Customers'],
+        summary='Wallet overview for customer',
+        responses={200: AdminCustomerWalletOverviewSerializer},
+    )
+    @action(detail=True, methods=['get'], url_path='wallet-overview')
+    def wallet_overview(self, request, public_id=None):
+        customer = self.get_object()
+        return Response({'wallet_overview': build_wallet_overview(customer)})
+
+    @extend_schema(
+        tags=['Admin Customers'],
+        summary='Active order for customer (deprecated)',
+        deprecated=True,
         responses={200: AdminCustomerActiveOrderSerializer},
     )
     @action(detail=True, methods=['get'], url_path='active-order')
     def active_order(self, request, public_id=None):
         customer = self.get_object()
         payload = {'active_order': build_active_order_payload(customer)}
-        return Response(payload)
+        successor = request.build_absolute_uri(
+            f'/api/v1/web/customers/{customer.public_id}/active-subscription/'
+        )
+        return _with_deprecation(Response(payload), successor)
 
     @extend_schema(
         tags=['Admin Customers'],
-        summary='Customer order history',
+        summary='Customer order history (deprecated legacy)',
+        deprecated=True,
         responses={200: AdminCustomerOrderHistorySerializer(many=True)},
     )
     @action(detail=True, methods=['get'], url_path='orders')
@@ -112,7 +181,10 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
         queryset = customer_orders_queryset(customer)
         page = self.paginate_queryset(queryset)
         serializer = AdminCustomerOrderHistorySerializer(page, many=True)
-        return self.get_paginated_response(serializer.data)
+        successor = request.build_absolute_uri(
+            f'/api/v1/web/customers/{customer.public_id}/subscriptions/'
+        )
+        return _with_deprecation(self.get_paginated_response(serializer.data), successor)
 
     @extend_schema(
         tags=['Admin Customers'],

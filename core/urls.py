@@ -33,6 +33,8 @@ urlpatterns = [
     path('api/v1/web/service-areas/', include('service_area.api.web_urls')),
     path('api/v1/search/', include('search.api.urls')),
     path('api/v1/web/search/', include('search.api.web_urls')),
+    path('api/v1/web/notifications/', include('notifications.api.web_urls')),
+    path('notifications/', include('notifications.api.urls')),
 ]
 
 if settings.DEBUG:

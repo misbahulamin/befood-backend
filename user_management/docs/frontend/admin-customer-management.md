@@ -1,124 +1,79 @@
-# Frontend: Admin Customer Management
+# Admin Customer Management — Frontend Integration
 
 ## Summary
 
-Build the Admin Panel **Customer** section against `/api/v1/web/customers/`. All endpoints require a **verified admin** token. Customer verification in the UI means **email verified** (`verification_status`), not admin `is_verified`.
-
-**Target client:** Admin web SPA only.
+Admin Panel Customer 360 at `/admin/customers/:publicId`. **Subscription-first** tabs; history lazy-loaded per tab. Overview loads a single lean detail GET — no embedded history arrays.
 
 ## Auth
 
-```http
-Authorization: Token <admin-token>
-```
+- Verified admin token (`Authorization: Token …`)
+- Customer tokens receive `403` on all admin customer routes (including another customer's `public_id`)
 
-Non-admin users must not call these APIs. On `401`/`403`, show the standard admin session/permission error.
+## Page flow
 
-## Pages
+1. **Customer list** — `GET /api/v1/web/customers/` with filters
+2. **Customer detail** — `GET /api/v1/web/customers/{publicId}/` (overview only)
+3. **Tab switch** — enable React Query fetch for that tab's endpoint only
 
-### 1. Customer List
+## Tabs
 
-**API:** `GET /api/v1/web/customers/`
+| Tab | Endpoint | Lazy? |
+|-----|----------|-------|
+| Overview | Detail GET | No (initial load) |
+| Active subscription | `…/active-subscription/` | Yes |
+| Subscription history | `…/subscriptions/` | Yes |
+| Meal history | `…/meals/` | Yes |
+| Meal-offs | `…/meal-offs/` | Yes |
+| Wallet overview | `…/wallet-overview/` | Yes |
+| Wallet history | `…/wallet-transactions/` | Yes |
+| Activity | `…/activity/` | Yes |
 
-**Table columns**
+### Legacy monthly orders
+
+When `summary.has_legacy_orders === true`, show a **collapsed** "Legacy monthly orders" section on the Subscription history tab. Expand loads deprecated `GET …/orders/`.
+
+## Header summary cards (from detail)
+
+- Active subscription package
+- Wallet balance
+- Meals delivered, total subscriptions
+- Customer lifetime value, last payment, last meal, package expiry
+
+## Field mapping (use backend names)
 
 | UI | API field |
 |----|-----------|
-| Avatar | `profile_picture_url` (nullable media/S3 URL; use placeholder when null) |
-| Name | `name` |
-| Email | `email` |
-| Phone | `phone` |
-| Account | `account_status` (`active` / `inactive`) or `is_active` |
-| Verification | `verification_status` (`verified` / `unverified`) |
-| Package | `current_package.package_name` (or “—” if null) |
-| Registered | `registered_at` |
+| Subscription row key | `public_id` |
+| Delivered/skipped counts | `delivered_count`, `skipped_count` |
+| Address line | `full_address` |
+| Allergies | `has_allergy`, `allergy_details`, `restricted_foods` |
+| Meal row key | `public_id` |
+| Subscription status | `status` (render raw value; tolerate unknown enums) |
 
-**Actions:** View Details → navigate to `/customers/{public_id}` (or your route).
+## Wallet support scenario
 
-**Search:** bind search box to `q` (name / email / phone).
+Wallet overview shows `pending_recharge_amount` separately from `available_balance` so admins can answer "I recharged but balance didn't update."
 
-**Filters**
+## Empty states
 
-| UI control | Query param |
-|------------|-------------|
-| Active / Inactive | `is_active=true\|false` |
-| Verified / Unverified | `is_email_verified=true\|false` |
-| Has active order | `has_active_order=true\|false` |
-| Package | `meal_public_id=<package uuid>` |
-| Registration range | `registered_from`, `registered_to` (`YYYY-MM-DD`) |
+- No active subscription → "No active subscription"
+- No wallet → wallet overview zeros / "No wallet" on overview
+- No history rows → tab-specific empty copy; **never** invent placeholder data
 
-**Pagination:** use `count`, `next`, `previous`, `results`. Support `page` and `page_size` (max 100).
+## Code locations (`befood-frontend`)
 
-**UI states**
+- `src/features/admin/pages/AdminCustomerDetailPage.tsx`
+- `src/features/admin/api/adminCustomerApi.ts`
+- `src/features/admin/hooks/useAdminCustomers.ts`
+- `src/features/admin/types/customerManagementTypes.ts`
 
-- Loading: table skeleton
-- Empty: “No customers match your filters”
-- Error: toast / inline error from `400`/`401`/`403`/`5xx`
+## QA matrix
 
-### 2. Customer Details
+| Customer | Expected |
+|----------|----------|
+| A — active subscription + wallet + meals | All tabs populated |
+| B — cancelled subscription | History visible; active null |
+| C — no subscription, no wallet | Empty states |
+| D — legacy order only | Subscription empty; legacy collapsible visible |
 
-Load overview first, then fetch tab data when the tab is selected (or prefetch Active Order with overview).
-
-Base path: `/api/v1/web/customers/{public_id}/`
-
-#### Tab 1 — Overview
-
-**API:** `GET /api/v1/web/customers/{public_id}/`
-
-Show:
-
-- Basic: name, email, phone, addresses, occupation, allergies, etc.
-- Account + verification badges
-- Summary cards: `summary.total_orders`, `total_meals_delivered`, `total_meal_offs`, `total_wallet_spent`, `wallet_balance`, `last_order_at`, `last_activity_at`
-- Optional inline current package from `active_order` / `current_package`
-
-#### Tab 2 — Active Order
-
-**API:** `GET .../active-order/`
-
-- If `active_order` is null → empty state: “No active package”
-- Else show package name, start/end, remaining meals, status
-
-#### Tab 3 — Order History
-
-**API:** `GET .../orders/`
-
-Columns: package name, month, status, start/end, remaining/delivered/skipped counts, created date. Paginate.
-
-#### Tab 4 — Meal History
-
-**API:** `GET .../meals/`
-
-Optional filters: `status`, `meal_period`, date range. Show delivered / skipped / scheduled / missed. Paginate.
-
-For meal-off–only view you may call `GET .../meal-offs/` instead (or filter meals with `status=skipped`).
-
-#### Tab 5 — Wallet History
-
-**API:** `GET .../wallet-transactions/`
-
-Columns: type, direction, amount, balance_after, status, method, note, created_at. Empty list is normal when no wallet exists (`200`, `count=0`).
-
-#### Tab 6 — Activity History
-
-**API:** `GET .../activity/`
-
-Timeline of `event_type` + `summary` + `occurred_at`. Not a full audit log—compose from orders, meal-offs, and wallet events.
-
-## Suggested call order
-
-1. List page → `GET /customers/`
-2. Open row → `GET /customers/{public_id}/` (Overview)
-3. Tab clicks → corresponding nested GET (cache per tab if desired)
-
-## UX notes
-
-- Match existing Admin Panel table/card patterns
-- Keep list lean; put heavy metrics on Overview
-- Avatar placeholder when `profile_picture_url` is null
-- Treat unknown future enum values defensively on status badges
-
-## OpenSpec / backend
-
-- Backend doc: `user_management/docs/backend/admin-customer-management.md`
-- Change: `openspec/changes/admin-customer-management/`
+Cross-customer: Customer A token → Customer B admin URLs → `403`.

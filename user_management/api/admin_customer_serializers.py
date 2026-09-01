@@ -1,13 +1,14 @@
 from rest_framework import serializers
 
-from orders.models import Order, OrderDelivery
+from orders.models import CustomerSubscription, Order, OrderDelivery
 from user_management.models import CustomerAddress, CustomerProfile
 from user_management.services.admin_customer import (
     build_active_order_payload,
+    build_active_subscription_payload,
+    build_current_package_summary,
     build_overview_metrics,
-    get_active_order,
+    build_wallet_summary,
     get_customer_wallet,
-    remaining_meal_count,
 )
 from wallet.models import WalletTransaction
 
@@ -78,18 +79,7 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
         return get_profile_picture_url(obj, request=self.context.get('request'))
 
     def get_current_package(self, obj):
-        order = get_active_order(obj)
-        if order is None:
-            return None
-        return {
-            'order_public_id': str(order.public_id),
-            'package_name': order.meal_name_snapshot,
-            'meal_public_id': str(order.meal.public_id) if order.meal_id else None,
-            'order_status': order.order_status,
-            'order_start_date': order.order_start_date,
-            'order_end_date': order.order_end_date,
-            'remaining_meals': remaining_meal_count(order),
-        }
+        return build_current_package_summary(obj)
 
     def get_wallet_balance(self, obj):
         wallet = get_customer_wallet(obj)
@@ -119,6 +109,8 @@ class AdminCustomerDetailSerializer(AdminCustomerListSerializer):
     profile_completion_percentage = serializers.IntegerField(read_only=True)
     addresses = AdminCustomerAddressSerializer(many=True, read_only=True)
     summary = serializers.SerializerMethodField()
+    active_subscription = serializers.SerializerMethodField()
+    wallet_summary = serializers.SerializerMethodField()
     active_order = serializers.SerializerMethodField()
 
     class Meta(AdminCustomerListSerializer.Meta):
@@ -143,6 +135,8 @@ class AdminCustomerDetailSerializer(AdminCustomerListSerializer):
             'profile_completion_percentage',
             'addresses',
             'summary',
+            'active_subscription',
+            'wallet_summary',
             'active_order',
             'created_at',
             'updated_at',
@@ -151,12 +145,53 @@ class AdminCustomerDetailSerializer(AdminCustomerListSerializer):
     def get_summary(self, obj):
         return build_overview_metrics(obj)
 
+    def get_active_subscription(self, obj):
+        return build_active_subscription_payload(obj)
+
+    def get_wallet_summary(self, obj):
+        return build_wallet_summary(obj)
+
     def get_active_order(self, obj):
         return build_active_order_payload(obj)
 
 
+class AdminCustomerActiveSubscriptionSerializer(serializers.Serializer):
+    active_subscription = serializers.JSONField(allow_null=True)
+
+
 class AdminCustomerActiveOrderSerializer(serializers.Serializer):
     active_order = serializers.JSONField(allow_null=True)
+
+
+class AdminCustomerWalletOverviewSerializer(serializers.Serializer):
+    wallet_overview = serializers.JSONField()
+
+
+class AdminCustomerSubscriptionHistorySerializer(serializers.ModelSerializer):
+    meal_public_id = serializers.UUIDField(source='meal.public_id', read_only=True)
+    delivered_count = serializers.IntegerField(read_only=True)
+    skipped_count = serializers.IntegerField(read_only=True)
+    remaining_meals = serializers.IntegerField(source='scheduled_count', read_only=True)
+
+    class Meta:
+        model = CustomerSubscription
+        fields = (
+            'public_id',
+            'meal_public_id',
+            'meal_name_snapshot',
+            'meal_period_snapshot',
+            'status',
+            'started_on',
+            'cancel_effective_on',
+            'cancelled_at',
+            'delivered_count',
+            'skipped_count',
+            'remaining_meals',
+            'customer_note',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = fields
 
 
 class AdminCustomerOrderHistorySerializer(serializers.ModelSerializer):
@@ -191,14 +226,16 @@ class AdminCustomerOrderHistorySerializer(serializers.ModelSerializer):
 
 
 class AdminCustomerMealHistorySerializer(serializers.ModelSerializer):
-    order_public_id = serializers.UUIDField(source='order.public_id', read_only=True)
-    package_name = serializers.CharField(source='order.meal_name_snapshot', read_only=True)
+    order_public_id = serializers.SerializerMethodField()
+    subscription_public_id = serializers.SerializerMethodField()
+    package_name = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderDelivery
         fields = (
             'public_id',
             'order_public_id',
+            'subscription_public_id',
             'package_name',
             'service_date',
             'meal_period',
@@ -212,6 +249,23 @@ class AdminCustomerMealHistorySerializer(serializers.ModelSerializer):
             'updated_at',
         )
         read_only_fields = fields
+
+    def get_order_public_id(self, obj):
+        if obj.order_id:
+            return str(obj.order.public_id)
+        return None
+
+    def get_subscription_public_id(self, obj):
+        if obj.subscription_id:
+            return str(obj.subscription.public_id)
+        return None
+
+    def get_package_name(self, obj):
+        if obj.order_id:
+            return obj.order.meal_name_snapshot
+        if obj.subscription_id:
+            return obj.subscription.meal_name_snapshot
+        return None
 
 
 class AdminCustomerWalletTransactionSerializer(serializers.ModelSerializer):
@@ -227,6 +281,8 @@ class AdminCustomerWalletTransactionSerializer(serializers.ModelSerializer):
             'method',
             'external_ref',
             'note',
+            'reviewed_at',
+            'rejection_reason',
             'created_at',
             'updated_at',
         )
