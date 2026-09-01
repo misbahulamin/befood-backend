@@ -233,8 +233,9 @@ def mark_delivery(
     if to_status not in MARKABLE_STATUSES:
         raise DeliveryError(f'Cannot mark delivery as {to_status}. Use delivered or skipped.')
 
+    # of=('self',): Postgres forbids FOR UPDATE on nullable order/subscription outer joins.
     locked = (
-        OrderDelivery.objects.select_for_update()
+        OrderDelivery.objects.select_for_update(of=('self',))
         .select_related(
             'order',
             'subscription',

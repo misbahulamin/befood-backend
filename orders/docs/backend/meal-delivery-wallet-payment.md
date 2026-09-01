@@ -4,6 +4,8 @@
 
 When an admin (or any caller using `mark_delivery`) marks an `OrderDelivery` as **`delivered`**, the system debits the customer wallet by the **published menu slot final selling price** for that package’s lunch or dinner on that `service_date` — not the package average `Order.per_meal_price_snapshot`.
 
+Works for **subscription-owned** slots (`order` null) and order-owned slots. On PostgreSQL, `mark_delivery` / `charge_delivered_meal` lock the delivery row only so nullable parent outer joins do not raise a FOR UPDATE error.
+
 Slot final price (frozen at menu publish):
 
 ```text

@@ -513,6 +513,70 @@ class CustomerSubscriptionAPITestCase(APITestCase):
         by_name = {row.package_name: row for row in demand.packages}
         self.assertIn('Regular Package', by_name)
 
+    def test_admin_api_mark_skip_on_subscription_slot(self):
+        """Postgres-safe lock: admin skip on subscription-owned slot (order null) must not 500."""
+        subscription = subscribe_customer(
+            self.customer_profile, self.plan, today=date(2026, 7, 10)
+        )
+        delivery = subscription.deliveries.get(
+            service_date=date(2026, 7, 11), meal_period='dinner'
+        )
+        self.assertIsNone(delivery.order_id)
+
+        self._auth(self.admin_token)
+        url = reverse(
+            'web_subscriptions:admin-subscription-mark-delivery-noslash',
+            kwargs={
+                'public_id': subscription.public_id,
+                'delivery_id': delivery.public_id,
+            },
+        )
+        response = self.client.post(url, {'status': 'skipped', 'note': 'Admin skip'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['status'], 'skipped')
+        self.assertEqual(response.data['skip_source'], 'admin')
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.SKIPPED)
+        self.assertEqual(delivery.skip_source, OrderDelivery.SkipSource.ADMIN)
+
+    def test_admin_api_mark_delivered_on_subscription_slot(self):
+        """Postgres-safe lock: admin deliver + wallet charge on subscription slot must not 500."""
+        from orders.tests.test_meal_delivery_wallet_payment import ensure_priced_delivery_slot
+
+        wallet = get_or_create_wallet(self.customer_profile)
+        credit_wallet(wallet, Decimal('500.00'))
+        subscription = subscribe_customer(
+            self.customer_profile, self.plan, today=date(2026, 7, 10)
+        )
+        delivery = subscription.deliveries.get(
+            service_date=date(2026, 7, 10), meal_period='lunch'
+        )
+        self.assertIsNone(delivery.order_id)
+        ensure_priced_delivery_slot(
+            self.plan, delivery.service_date, delivery.meal_period, price=Decimal('62.00')
+        )
+
+        self._auth(self.admin_token)
+        url = reverse(
+            'web_subscriptions:admin-subscription-mark-delivery-noslash',
+            kwargs={
+                'public_id': subscription.public_id,
+                'delivery_id': delivery.public_id,
+            },
+        )
+        with patch(
+            'orders.services.order_delivery.timezone.localdate',
+            return_value=date(2026, 7, 10),
+        ):
+            response = self.client.post(url, {'status': 'delivered'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['status'], 'delivered')
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.DELIVERED)
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.balance, Decimal('438.00'))
+        self.assertEqual(delivery.charged_amount, Decimal('62.00'))
+
     def test_delivered_debit_still_works_on_subscription_slot(self):
         from orders.tests.test_meal_delivery_wallet_payment import ensure_priced_delivery_slot
 

@@ -21,6 +21,8 @@ Historical `Order` rows remain for past monthly packages. Customer `POST /orders
 
 Auth: `Authorization: Token <key>`.
 
+Admin mark (and the nested wallet charge on `delivered`) locks only the delivery row on PostgreSQL (`SELECT FOR UPDATE OF` the delivery table) so nullable `order` / `subscription` outer joins do not raise `FOR UPDATE cannot be applied to the nullable side of an outer join`.
+
 ## Permissions matrix
 
 | Action | Customer (verified) | Admin (`IsVerifiedAdmin`) |

@@ -138,8 +138,9 @@ def credit_for_delivery(delivery, actor=None) -> OnaharPointEvent | None:
 
     from orders.models import OrderDelivery
 
+    # of=('self',): Postgres forbids FOR UPDATE on nullable order/subscription outer joins.
     locked = (
-        OrderDelivery.objects.select_for_update()
+        OrderDelivery.objects.select_for_update(of=('self',))
         .select_related(
             'order__customer__user',
             'subscription__customer__user',
@@ -199,8 +200,11 @@ def reverse_for_delivery(delivery, actor=None) -> OnaharPointEvent | None:
 
     from orders.models import OrderDelivery
 
-    locked = OrderDelivery.objects.select_for_update().select_related('order__customer').get(
-        pk=delivery.pk
+    # of=('self',): Postgres forbids FOR UPDATE on nullable order/subscription outer joins.
+    locked = (
+        OrderDelivery.objects.select_for_update(of=('self',))
+        .select_related('order__customer', 'subscription__customer')
+        .get(pk=delivery.pk)
     )
     credit = OnaharPointEvent.objects.filter(
         order_delivery=locked,

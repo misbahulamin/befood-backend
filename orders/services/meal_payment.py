@@ -143,8 +143,9 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
     if not _charge_enabled():
         return None
 
+    # of=('self',): Postgres forbids FOR UPDATE on nullable order/subscription outer joins.
     locked = (
-        OrderDelivery.objects.select_for_update()
+        OrderDelivery.objects.select_for_update(of=('self',))
         .select_related(
             'order',
             'order__customer',
