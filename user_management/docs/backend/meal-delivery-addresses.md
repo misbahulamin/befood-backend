@@ -40,7 +40,7 @@ For `(customer, service_date, meal_period)`:
 2. Else preference default for that period (if active)  
 3. Else first active place / lazy create from present default delivery address  
 
-Preference/override saves call `resync_future_scheduled_deliveries` for future `scheduled` rows only. `delivered` / `skipped` / `missed` snapshots are never rewritten.
+Preference/override saves call `resync_future_scheduled_deliveries` for future `scheduled` rows only. `delivered` / `skipped` / `missed` snapshots are never rewritten. On PostgreSQL, that resync locks only the `OrderDelivery` row (`select_for_update(of=('self',))`) so nullable `order` / `subscription` outer joins do not trigger `FOR UPDATE cannot be applied to the nullable side of an outer join`.
 
 ## Business validation
 

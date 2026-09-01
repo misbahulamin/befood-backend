@@ -61,6 +61,9 @@ def resync_future_scheduled_deliveries(
     """
     Re-resolve address snapshots for future scheduled deliveries only.
     Returns number of rows updated.
+
+    Use select_for_update(of=('self',)) so PostgreSQL does not apply FOR UPDATE
+    to nullable order/subscription outer joins from select_related / OR filters.
     """
     today = reference_date or today_in_meal_tz()
     qs = (
@@ -73,7 +76,7 @@ def resync_future_scheduled_deliveries(
             Q(order__customer=customer_profile)
             | Q(subscription__customer=customer_profile)
         )
-        .select_for_update()
+        .select_for_update(of=('self',))
     )
     updated = 0
     for delivery in qs:

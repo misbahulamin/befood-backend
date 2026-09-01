@@ -1,6 +1,21 @@
 from rest_framework import serializers
 
-from user_management.models import CustomerDeliveryPlace, MealDeliveryDayOverride, MealDeliveryPreference
+from user_management.models import (
+    CustomerDeliveryPlace,
+    CustomerLocationSettings,
+    MealDeliveryDayOverride,
+    MealDeliveryPreference,
+)
+
+
+LOCATION_SOURCE_CHOICES = [
+    ('gps', 'GPS'),
+    ('manual', 'Manual'),
+    ('map_pin', 'Map pin'),
+    ('search', 'Search'),
+    ('guest_migration', 'Guest migration'),
+    ('', 'Legacy / unset'),
+]
 
 
 class CustomerDeliveryPlaceSerializer(serializers.ModelSerializer):
@@ -18,6 +33,10 @@ class CustomerDeliveryPlaceSerializer(serializers.ModelSerializer):
             'landmark',
             'latitude',
             'longitude',
+            'location_source',
+            'location_accuracy',
+            'formatted_address',
+            'is_verified_location',
             'is_active',
             'created_at',
             'updated_at',
@@ -27,7 +46,7 @@ class CustomerDeliveryPlaceSerializer(serializers.ModelSerializer):
 
 class CustomerDeliveryPlaceWriteSerializer(serializers.Serializer):
     label = serializers.CharField(max_length=100)
-    full_address = serializers.CharField()
+    full_address = serializers.CharField(required=False, allow_blank=True, default='')
     city = serializers.CharField(max_length=100, required=False, allow_blank=True, default='Dhaka')
     area = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
     building_name = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
@@ -40,6 +59,19 @@ class CustomerDeliveryPlaceWriteSerializer(serializers.Serializer):
     longitude = serializers.DecimalField(
         max_digits=9, decimal_places=6, required=False, allow_null=True, default=None
     )
+    location_source = serializers.ChoiceField(
+        choices=LOCATION_SOURCE_CHOICES,
+        required=False,
+        allow_blank=True,
+        default='',
+    )
+    location_accuracy = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True, default=None
+    )
+    formatted_address = serializers.CharField(
+        max_length=512, required=False, allow_blank=True, default=''
+    )
+    is_verified_location = serializers.BooleanField(required=False, default=False)
     is_active = serializers.BooleanField(required=False, default=True)
 
 
@@ -130,3 +162,83 @@ class DeliveryPreviewItemSerializer(serializers.Serializer):
     full_address = serializers.CharField(allow_blank=True)
     area = serializers.CharField(allow_blank=True)
     city = serializers.CharField(allow_blank=True)
+
+
+class LocationPreferenceRefreshSerializer(serializers.Serializer):
+    latitude = serializers.DecimalField(max_digits=9, decimal_places=6)
+    longitude = serializers.DecimalField(max_digits=9, decimal_places=6)
+    accuracy = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True
+    )
+    location_name = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=255
+    )
+    source = serializers.ChoiceField(
+        choices=[c for c in LOCATION_SOURCE_CHOICES if c[0]],
+        required=False,
+        default='gps',
+    )
+
+
+class LocationPreferenceSaveAsPlaceSerializer(serializers.Serializer):
+    label = serializers.CharField(max_length=100)
+    full_address = serializers.CharField(required=False, allow_blank=True, default='')
+    formatted_address = serializers.CharField(
+        max_length=512, required=False, allow_blank=True, default=''
+    )
+    latitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+    longitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+    location_source = serializers.ChoiceField(
+        choices=[c for c in LOCATION_SOURCE_CHOICES if c[0]],
+        required=False,
+        default='gps',
+    )
+    location_accuracy = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True
+    )
+    city = serializers.CharField(max_length=100, required=False, allow_blank=True, default='Dhaka')
+    area = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
+    building_name = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
+    floor = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
+    flat_number = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
+    landmark = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
+    set_as_active = serializers.BooleanField(required=False, default=True)
+    set_as_default_delivery_place = serializers.BooleanField(required=False, default=False)
+    set_lunch_default = serializers.BooleanField(required=False, default=False)
+    set_dinner_default = serializers.BooleanField(required=False, default=False)
+
+
+class GuestLocationOfferQuerySerializer(serializers.Serializer):
+    guest_session_id = serializers.CharField(max_length=64)
+
+
+class GuestLocationAcceptSerializer(serializers.Serializer):
+    guest_session_id = serializers.CharField(max_length=64)
+    label = serializers.CharField(max_length=100)
+    full_address = serializers.CharField(required=False, allow_blank=True, default='')
+    formatted_address = serializers.CharField(
+        max_length=512, required=False, allow_blank=True, default=''
+    )
+    set_as_default_delivery_place = serializers.BooleanField(required=False, default=False)
+    set_lunch_default = serializers.BooleanField(required=False, default=False)
+    set_dinner_default = serializers.BooleanField(required=False, default=False)
+
+
+class SetActivePlaceSerializer(serializers.Serializer):
+    place_id = serializers.UUIDField()
+
+
+class CustomerLocationSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerLocationSettings
+        fields = (
+            'duplicate_radius_km',
+            'max_active_delivery_places',
+            'location_refresh_interval_hours',
+            'updated_at',
+        )
+        read_only_fields = ('updated_at',)

@@ -3,6 +3,12 @@ from rest_framework.routers import DefaultRouter
 
 from .delivery_views import (
     CustomerDeliveryPlaceViewSet,
+    CustomerLocationGuestOfferView,
+    CustomerLocationPreferenceRefreshView,
+    CustomerLocationPreferenceSaveAsPlaceView,
+    CustomerLocationPreferenceView,
+    CustomerLocationSetActivePlaceView,
+    CustomerLocationSettingsView,
     MealDeliveryDayOverrideView,
     MealDeliveryPreferencePreviewView,
     MealDeliveryPreferenceView,
@@ -130,5 +136,35 @@ urlpatterns = [
         'customer/delivery-preferences/preview/',
         MealDeliveryPreferencePreviewView.as_view(),
         name='customer-delivery-preferences-preview',
+    ),
+    path(
+        'customer/location-preference/',
+        CustomerLocationPreferenceView.as_view(),
+        name='customer-location-preference',
+    ),
+    path(
+        'customer/location-preference/refresh/',
+        CustomerLocationPreferenceRefreshView.as_view(),
+        name='customer-location-preference-refresh',
+    ),
+    path(
+        'customer/location-preference/save-as-place/',
+        CustomerLocationPreferenceSaveAsPlaceView.as_view(),
+        name='customer-location-preference-save-as-place',
+    ),
+    path(
+        'customer/location-preference/guest-offer/',
+        CustomerLocationGuestOfferView.as_view(),
+        name='customer-location-guest-offer',
+    ),
+    path(
+        'customer/location-preference/set-active-place/',
+        CustomerLocationSetActivePlaceView.as_view(),
+        name='customer-location-set-active-place',
+    ),
+    path(
+        'admin/location-settings/',
+        CustomerLocationSettingsView.as_view(),
+        name='admin-location-settings',
     ),
 ] + router.urls

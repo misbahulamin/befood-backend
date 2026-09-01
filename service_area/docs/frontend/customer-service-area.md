@@ -38,6 +38,22 @@ Target client: customer web (`befood_frontend`).
 
 `location_name` may be `null`.
 
+## Additive response field (authenticated)
+
+When the caller is a logged-in customer, check may also return:
+
+```json
+"saved_location": {
+  "exists": true,
+  "address_id": "d906e339-95a9-42cf-a417-1d414767d14f",
+  "stale": false
+}
+```
+
+This refers to the customer’s **saved** delivery place from location preference — not last-detected-only GPS. Guests and older clients can ignore unknown keys. Existing fields (`verified`, `service_available`, `customer_location`, hubs, `warning_code`) are unchanged.
+
+For save / refresh / permission UX see `user_management/docs/frontend/customer-location-preference.md`.
+
 ## UI states
 
 | State | Condition | UI |

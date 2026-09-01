@@ -1,5 +1,7 @@
 from django.contrib.auth.models import User
+from django.core.validators import MinValueValidator
 from django.db import models
+from decimal import Decimal
 
 from core.models import PublicIdMixin
 from user_management.services.profile_picture import profile_picture_upload_path
@@ -125,6 +127,13 @@ class CustomerAddress(PublicIdMixin, TimeStampedModel):
 class CustomerDeliveryPlace(PublicIdMixin, TimeStampedModel):
     """Labeled delivery destination (Home, Office, …), separate from present/permanent."""
 
+    class LocationSource(models.TextChoices):
+        GPS = 'gps', 'GPS'
+        MANUAL = 'manual', 'Manual'
+        MAP_PIN = 'map_pin', 'Map pin'
+        SEARCH = 'search', 'Search'
+        GUEST_MIGRATION = 'guest_migration', 'Guest migration'
+
     customer_profile = models.ForeignKey(
         CustomerProfile,
         on_delete=models.CASCADE,
@@ -140,6 +149,22 @@ class CustomerDeliveryPlace(PublicIdMixin, TimeStampedModel):
     landmark = models.CharField(max_length=255, blank=True)
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    location_source = models.CharField(
+        max_length=32,
+        choices=LocationSource.choices,
+        blank=True,
+        default='',
+        help_text='Blank for legacy places created before location enrichment.',
+    )
+    location_accuracy = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='GPS accuracy in meters when provided.',
+    )
+    formatted_address = models.CharField(max_length=512, blank=True, default='')
+    is_verified_location = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -217,6 +242,87 @@ class MealDeliveryDayOverride(TimeStampedModel):
             f'{self.customer_profile.user.email} '
             f'{self.meal_period} weekday={self.weekday} → {self.place.label}'
         )
+
+
+class CustomerLocationSettings(models.Model):
+    """Singleton: duplicate radius, max places, and location refresh interval."""
+
+    duplicate_radius_km = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=Decimal('0.50'),
+        validators=[MinValueValidator(Decimal('0.01'))],
+        help_text='Reject new/updated places within this distance (km) of another active place.',
+    )
+    max_active_delivery_places = models.PositiveSmallIntegerField(
+        default=3,
+        validators=[MinValueValidator(1)],
+        help_text='Maximum active delivery places per customer.',
+    )
+    location_refresh_interval_hours = models.PositiveIntegerField(
+        default=24,
+        validators=[MinValueValidator(1)],
+        help_text='Hours after last detection before clients should prompt GPS again.',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Customer location settings'
+        verbose_name_plural = 'Customer location settings'
+
+    def __str__(self):
+        return (
+            f'Location settings dupe={self.duplicate_radius_km}km '
+            f'max={self.max_active_delivery_places} refresh={self.location_refresh_interval_hours}h'
+        )
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls) -> 'CustomerLocationSettings':
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
+class CustomerLocationPreference(TimeStampedModel):
+    """Per-customer cached saved delivery location vs last-detected GPS."""
+
+    customer_profile = models.OneToOneField(
+        CustomerProfile,
+        on_delete=models.CASCADE,
+        related_name='location_preference',
+    )
+    active_delivery_place = models.ForeignKey(
+        CustomerDeliveryPlace,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='active_location_preferences',
+    )
+    saved_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    saved_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    saved_location_name = models.CharField(max_length=255, blank=True, default='')
+    saved_at = models.DateTimeField(null=True, blank=True)
+    last_detected_latitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    last_detected_longitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    last_detected_location_name = models.CharField(max_length=255, blank=True, default='')
+    last_detected_accuracy = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    detected_at = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f'Location preference for {self.customer_profile.user.email}'
 
 
 class RiderProfile(PublicIdMixin, TimeStampedModel):

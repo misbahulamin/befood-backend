@@ -65,6 +65,7 @@ class ServiceAreaCheckResponseSerializer(serializers.Serializer):
         allow_null=True,
         required=False,
     )
+    saved_location = serializers.DictField(required=False)
 
 
 class ServiceAreaAdminSerializer(serializers.ModelSerializer):

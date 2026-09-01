@@ -5,12 +5,13 @@ from django.urls import reverse
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
-from orders.models import Order, OrderDelivery
+from orders.models import CustomerSubscription, Order, OrderDelivery
 from orders.services.delivery_address import resync_future_scheduled_deliveries
 from orders.services.order_delivery import generate_order_deliveries
 from user_management.models import (
     CustomerAddress,
     CustomerDeliveryPlace,
+    CustomerLocationSettings,
     CustomerProfile,
     MealDeliveryPreference,
 )
@@ -100,6 +101,9 @@ class DeliveryAddressAPITests(APITestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_soft_cap(self):
+        settings_obj = CustomerLocationSettings.load()
+        settings_obj.max_active_delivery_places = MAX_ACTIVE_DELIVERY_PLACES
+        settings_obj.save()
         for i in range(MAX_ACTIVE_DELIVERY_PLACES):
             create_delivery_place(
                 self.profile,
@@ -111,7 +115,8 @@ class DeliveryAddressAPITests(APITestCase):
             {'label': 'Overflow', 'full_address': 'Too many'},
             format='json',
         )
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.data.get('error_code'), 'ADDRESS_LIMIT_REACHED')
 
     def test_delete_blocked_when_in_use(self):
         home = self._create_place('Home')
@@ -320,6 +325,84 @@ class DeliveryAddressAPITests(APITestCase):
         self.assertGreaterEqual(updated, 1)
         delivery.refresh_from_db()
         self.assertEqual(delivery.delivery_label_snapshot, 'Office')
+
+    def test_subscription_owned_resync_and_preferences_put(self):
+        """
+        Preference PUT + resync must succeed on Postgres when deliveries have
+        subscription set and order null (nullable outer-join + FOR UPDATE).
+        """
+        from decimal import Decimal
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from meals.models import MealCategory
+
+        home = create_delivery_place(self.profile, label='Home', full_address='Home Addr')
+        office = create_delivery_place(self.profile, label='Office', full_address='Office Addr')
+        set_meal_delivery_preferences(
+            self.profile, lunch_place=home, dinner_place=home
+        )
+
+        thumb = SimpleUploadedFile('t3.jpg', b'fake', content_type='image/jpeg')
+        meal = MealCategory.objects.create(
+            meal_name='SubPkg',
+            total_price=Decimal('350.00'),
+            meal_thumbnail=thumb,
+            meal_type=MealCategory.MealType.DAILY,
+            meal_period=MealCategory.MealPeriod.LUNCH,
+            is_active=True,
+        )
+        future = date.today() + timedelta(days=5)
+        subscription = CustomerSubscription.objects.create(
+            customer=self.profile,
+            meal=meal,
+            meal_name_snapshot=meal.meal_name,
+            meal_period_snapshot='lunch',
+            status=CustomerSubscription.Status.ACTIVE,
+            started_on=date.today(),
+        )
+        delivery = OrderDelivery.objects.create(
+            order=None,
+            subscription=subscription,
+            service_date=future,
+            meal_period=OrderDelivery.MealPeriod.LUNCH,
+            status=OrderDelivery.DeliveryStatus.SCHEDULED,
+            delivery_label_snapshot='Home',
+            delivery_full_address_snapshot='Home Addr',
+        )
+
+        response = self.client.put(
+            self.prefs_url,
+            {
+                'lunch_place_id': str(office.public_id),
+                'dinner_place_id': str(office.public_id),
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(str(response.data['lunch_place_id']), str(office.public_id))
+
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.delivery_label_snapshot, 'Office')
+        self.assertEqual(delivery.delivery_full_address_snapshot, 'Office Addr')
+
+        # Day-override PUT also triggers resync; must not 500 on the same join shape.
+        override_response = self.client.put(
+            self.overrides_url,
+            {
+                'overrides': [
+                    {
+                        'meal_period': 'lunch',
+                        'weekday': future.weekday(),
+                        'place_id': str(home.public_id),
+                    }
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(override_response.status_code, 200, override_response.data)
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.delivery_label_snapshot, 'Home')
 
     def test_backfill_from_present_default(self):
         CustomerAddress.objects.create(

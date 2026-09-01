@@ -58,6 +58,7 @@ def _build_response(
     location_name: str | None,
     match: MatchResult,
     location_reliable: bool,
+    customer_profile=None,
 ) -> dict:
     warning_code = None if location_reliable else LOW_LOCATION_ACCURACY
     payload = {
@@ -79,6 +80,12 @@ def _build_response(
         payload['matched_service_area'] = _hub_payload(match.matched_area)
     else:
         payload['nearest_service_area'] = _hub_payload(match.nearest_area)
+
+    if customer_profile is not None:
+        from user_management.services.location_preference import saved_location_hint_for_check
+
+        payload['saved_location'] = saved_location_hint_for_check(customer_profile)
+
     return payload
 
 
@@ -132,6 +139,7 @@ def check_service_area(
         location_name=location_name,
         match=match,
         location_reliable=reliable,
+        customer_profile=customer_profile,
     )
 
 

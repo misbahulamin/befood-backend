@@ -8,6 +8,8 @@ from .models import (
     CustomerAddress,
     CustomerAuthOTP,
     CustomerDeliveryPlace,
+    CustomerLocationPreference,
+    CustomerLocationSettings,
     CustomerProfile,
     MealDeliveryDayOverride,
     MealDeliveryPreference,
@@ -89,16 +91,50 @@ class CustomerDeliveryPlaceAdmin(admin.ModelAdmin):
         'label',
         'city',
         'area',
+        'location_source',
+        'is_verified_location',
         'is_active',
         'created_at',
     )
-    list_filter = ('is_active', 'city')
+    list_filter = ('is_active', 'city', 'location_source', 'is_verified_location')
     search_fields = (
         'customer_profile__user__email',
         'label',
         'full_address',
         'area',
     )
+
+
+@admin.register(CustomerLocationSettings)
+class CustomerLocationSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        'duplicate_radius_km',
+        'max_active_delivery_places',
+        'location_refresh_interval_hours',
+        'updated_at',
+    )
+    readonly_fields = ('updated_at',)
+
+    def has_add_permission(self, request):
+        return not CustomerLocationSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CustomerLocationPreference)
+class CustomerLocationPreferenceAdmin(admin.ModelAdmin):
+    list_display = (
+        'customer_profile',
+        'active_delivery_place',
+        'saved_at',
+        'detected_at',
+        'is_active',
+        'updated_at',
+    )
+    search_fields = ('customer_profile__user__email',)
+    autocomplete_fields = ('customer_profile', 'active_delivery_place')
+    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(MealDeliveryPreference)
