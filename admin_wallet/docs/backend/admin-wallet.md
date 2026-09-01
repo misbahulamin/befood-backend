@@ -40,20 +40,21 @@ BeFood’s **platform cash ledger** for verified admins. Separate from customer 
 
 ### Customer recharge → Admin Wallet credit
 
-On successful `recharge_wallet`:
+On successful **approved** customer recharge (`approve_recharge`):
 
 - Credit type `customer_funding`, method `manual`
 - Idempotency: `customer-recharge:{wallet_txn.public_id}`
-- Same atomic block as customer credit
+- Same atomic block as customer credit on approve (pending submit does not credit)
 - Flag: `ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED` (default `True`)
 
 ### Customer withdraw → Admin Wallet debit
 
-On successful `withdraw_wallet`:
+On successful **approved** customer withdraw (`approve_withdraw`):
 
 - Debit type `customer_withdraw`
 - Idempotency: `customer-withdraw:{wallet_txn.public_id}`
-- If Admin Wallet float is insufficient → `PlatformFloatError` → customer API `409`; customer balance unchanged
+- Pending withdraw create reserves customer balance only; custody debit happens on approve
+- If Admin Wallet float is insufficient at approve → `PlatformFloatError` → admin API `409`; request stays pending; reservation untouched
 
 ### Meal delivery charge → no cash credit
 

@@ -16,3 +16,13 @@ from wallet.services.ledger import (  # noqa: F401
     validate_amount,
     withdraw_wallet,
 )
+from wallet.services.funding import (  # noqa: F401
+    DuplicateProviderRefError,
+    FundingRequestConflictError,
+    approve_recharge,
+    approve_withdraw,
+    reject_recharge,
+    reject_withdraw,
+    request_recharge,
+    request_withdraw,
+)

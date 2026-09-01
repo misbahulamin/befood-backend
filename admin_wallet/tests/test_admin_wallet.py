@@ -27,14 +27,30 @@ from orders.services.order_delivery import DeliveryError, mark_delivery
 from orders.services.order_service import create_meal_order
 from user_management.models import AdminProfile, CustomerProfile
 from wallet.models import WalletTransaction
+from wallet.services.funding import (
+    approve_recharge,
+    approve_withdraw,
+    request_recharge,
+    request_withdraw,
+)
 from wallet.services.ledger import (
     PlatformFloatError,
     credit_wallet,
     debit_wallet,
     get_or_create_wallet,
-    recharge_wallet,
-    withdraw_wallet,
 )
+
+
+def _approved_recharge(profile, amount, admin_user, *, trx_suffix, note='', idempotency_key=None):
+    _, txn, _ = request_recharge(
+        profile,
+        amount,
+        payment_method='bkash',
+        transaction_id=f'AW-{trx_suffix}',
+        note=note,
+        idempotency_key=idempotency_key,
+    )
+    return approve_recharge(txn, reviewed_by=admin_user)
 
 
 def make_test_image(name='meal.jpg', size=(100, 100), color='red'):
@@ -281,7 +297,13 @@ class AdminWalletIngestionTests(APITestCase):
         platform.total_customer_funding = Decimal('0.00')
         platform.save()
 
-        recharge_wallet(self.customer_profile, Decimal('200.00'), note='fund')
+        _approved_recharge(
+            self.customer_profile,
+            Decimal('200.00'),
+            self.admin_user,
+            trx_suffix='meal-fund',
+            note='fund',
+        )
         after_funding = get_or_create_platform_wallet().balance
         self.assertEqual(after_funding, Decimal('200.00'))
 
@@ -325,7 +347,13 @@ class AdminWalletIngestionTests(APITestCase):
         AdminWalletTransaction.objects.filter(
             type=AdminWalletTransaction.Type.CUSTOMER_FUNDING,
         ).delete()
-        _, txn = recharge_wallet(self.customer_profile, Decimal('50.00'), note='topup')
+        txn = _approved_recharge(
+            self.customer_profile,
+            Decimal('50.00'),
+            self.admin_user,
+            trx_suffix='topup-50',
+            note='topup',
+        )
         platform = get_or_create_platform_wallet()
         self.assertEqual(platform.balance, before + Decimal('50.00'))
         credit = AdminWalletTransaction.objects.get(
@@ -336,19 +364,25 @@ class AdminWalletIngestionTests(APITestCase):
         self.assertEqual(credit.direction, AdminWalletTransaction.Direction.CREDIT)
 
     def test_customer_recharge_idempotent_admin_credit(self):
-        _, txn = recharge_wallet(
+        txn = _approved_recharge(
             self.customer_profile,
             Decimal('40.00'),
+            self.admin_user,
+            trx_suffix='idem-40',
             note='once',
             idempotency_key='aw-recharge-idem-1',
         )
         before = get_or_create_platform_wallet().balance
-        recharge_wallet(
+        _, replay, created = request_recharge(
             self.customer_profile,
             Decimal('40.00'),
+            payment_method='bkash',
+            transaction_id='AW-idem-40',
             note='once',
             idempotency_key='aw-recharge-idem-1',
         )
+        self.assertFalse(created)
+        self.assertEqual(replay.public_id, txn.public_id)
         self.assertEqual(get_or_create_platform_wallet().balance, before)
         self.assertEqual(
             AdminWalletTransaction.objects.filter(
@@ -359,9 +393,15 @@ class AdminWalletIngestionTests(APITestCase):
         )
 
     def test_customer_withdraw_debits_admin_wallet(self):
-        recharge_wallet(self.customer_profile, Decimal('80.00'))
+        _approved_recharge(
+            self.customer_profile,
+            Decimal('80.00'),
+            self.admin_user,
+            trx_suffix='wd-80',
+        )
         before = get_or_create_platform_wallet().balance
-        _, txn = withdraw_wallet(self.customer_profile, Decimal('30.00'))
+        _, pending, _ = request_withdraw(self.customer_profile, Decimal('30.00'))
+        txn = approve_withdraw(pending, reviewed_by=self.admin_user)
         platform = get_or_create_platform_wallet()
         self.assertEqual(platform.balance, before - Decimal('30.00'))
         debit = AdminWalletTransaction.objects.get(
@@ -370,22 +410,25 @@ class AdminWalletIngestionTests(APITestCase):
         )
         self.assertEqual(debit.amount, Decimal('30.00'))
 
-    def test_insufficient_admin_float_blocks_customer_withdraw(self):
+    def test_insufficient_admin_float_blocks_customer_withdraw_approve(self):
         # Bypass custody: customer has balance, Admin Wallet empty.
         credit_wallet(self.wallet, Decimal('25.00'))
         platform = get_or_create_platform_wallet()
         platform.balance = Decimal('0.00')
         platform.save(update_fields=['balance', 'updated_at'])
+        _, pending, _ = request_withdraw(self.customer_profile, Decimal('10.00'))
         customer_before = get_or_create_wallet(self.customer_profile).balance
         withdraw_count = AdminWalletTransaction.objects.filter(
             type=AdminWalletTransaction.Type.CUSTOMER_WITHDRAW,
         ).count()
         with self.assertRaises(PlatformFloatError):
-            withdraw_wallet(self.customer_profile, Decimal('10.00'))
+            approve_withdraw(pending, reviewed_by=self.admin_user)
         self.assertEqual(
             get_or_create_wallet(self.customer_profile).balance,
             customer_before,
         )
+        pending.refresh_from_db()
+        self.assertEqual(pending.status, WalletTransaction.Status.PENDING)
         self.assertEqual(
             AdminWalletTransaction.objects.filter(
                 type=AdminWalletTransaction.Type.CUSTOMER_WITHDRAW,

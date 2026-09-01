@@ -6,23 +6,34 @@ from rest_framework.views import APIView
 
 from orders.api.permissions import IsVerifiedCustomer
 from wallet.models import WalletTransaction
+from wallet.services.funding import (
+    DuplicateProviderRefError,
+    FundingRequestConflictError,
+    approve_recharge,
+    approve_withdraw,
+    reject_recharge,
+    reject_withdraw,
+    request_recharge,
+    request_withdraw,
+)
 from wallet.services.ledger import (
     IdempotencyConflictError,
     InsufficientFundsError,
     InvalidAmountError,
     ManualFundingDisabledError,
+    PendingTransactionError,
     PlatformFloatError,
     WalletFrozenError,
     get_or_create_wallet,
-    recharge_wallet,
-    withdraw_wallet,
 )
 
 from .serializers import (
-    FundingRequestSerializer,
+    FundingRejectSerializer,
     FundingResponseSerializer,
+    RechargeRequestSerializer,
     WalletSerializer,
     WalletTransactionSerializer,
+    WithdrawRequestSerializer,
 )
 
 
@@ -37,12 +48,22 @@ def _customer_profile(request):
 
 
 def _funding_error_response(exc):
-    if isinstance(exc, (IdempotencyConflictError, PlatformFloatError)):
+    if isinstance(
+        exc,
+        (
+            IdempotencyConflictError,
+            PlatformFloatError,
+            DuplicateProviderRefError,
+            FundingRequestConflictError,
+        ),
+    ):
         return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
     if isinstance(exc, (InvalidAmountError, InsufficientFundsError, WalletFrozenError)):
         return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     if isinstance(exc, ManualFundingDisabledError):
         return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+    if isinstance(exc, PendingTransactionError):
+        return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -70,21 +91,6 @@ class WalletDetailView(APIView):
             401: OpenApiResponse(description='Unauthenticated'),
             403: OpenApiResponse(description='Not a verified customer'),
         },
-        examples=[
-            OpenApiExample(
-                'Wallet with order eligibility floor',
-                value={
-                    'public_id': 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-                    'balance': '0.00',
-                    'currency': 'BDT',
-                    'status': 'active',
-                    'min_wallet_balance_to_order': '500.00',
-                    'created_at': '2026-07-27T10:00:00Z',
-                    'updated_at': '2026-07-27T10:00:00Z',
-                },
-                response_only=True,
-            ),
-        ],
     )
     def get(self, request):
         profile = _customer_profile(request)
@@ -118,25 +124,9 @@ class WalletTransactionViewSet(
     @extend_schema(
         tags=['Customer Wallet'],
         summary='List wallet transactions',
-        description=(
-            'Paginated ledger for the caller\'s wallet, newest first. '
-            'Meal-delivery payment debits include a structured meal_payment object '
-            '(meal name, service date, lunch/dinner, order and delivery public ids); '
-            'other transaction types return meal_payment as null.'
-        ),
         parameters=[
-            OpenApiParameter(
-                name='page',
-                type=int,
-                location=OpenApiParameter.QUERY,
-                description='Page number (1-based).',
-            ),
-            OpenApiParameter(
-                name='page_size',
-                type=int,
-                location=OpenApiParameter.QUERY,
-                description='Page size (default 20, max 50).',
-            ),
+            OpenApiParameter(name='page', type=int, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='page_size', type=int, location=OpenApiParameter.QUERY),
         ],
         responses={200: WalletTransactionSerializer(many=True)},
     )
@@ -146,11 +136,6 @@ class WalletTransactionViewSet(
     @extend_schema(
         tags=['Customer Wallet'],
         summary='Get wallet transaction by public_id',
-        description=(
-            'Retrieve a single ledger row belonging to the caller\'s wallet. '
-            'Foreign public_id values return 404. '
-            'Payment rows for delivered meals include meal_payment context.'
-        ),
         responses={
             200: WalletTransactionSerializer,
             404: OpenApiResponse(description='Transaction not found for this wallet'),
@@ -165,33 +150,39 @@ class WalletRechargeView(APIView):
 
     @extend_schema(
         tags=['Customer Wallet'],
-        summary='Recharge wallet (manual credit)',
+        summary='Submit wallet recharge request (manual verification)',
         description=(
-            'Credits the caller\'s wallet immediately with method=manual and status=completed. '
-            'Optional Idempotency-Key header (or body field) prevents double-credit on retries. '
-            'Clients must not send a payment gateway method; the server sets manual.'
+            'Creates a pending recharge request. Balance is NOT credited until a verified '
+            'admin approves. Requires payment_method (bkash|nagad|bank) and transaction_id. '
+            'Optional Idempotency-Key prevents duplicate creates on retries.'
         ),
-        request=FundingRequestSerializer,
+        request=RechargeRequestSerializer,
         parameters=[
             OpenApiParameter(
                 name='Idempotency-Key',
                 type=str,
                 location=OpenApiParameter.HEADER,
                 required=False,
-                description='Optional idempotency key unique per wallet funding request.',
             ),
         ],
         responses={
             200: FundingResponseSerializer,
-            400: OpenApiResponse(description='Invalid amount, frozen wallet, or insufficient funds'),
+            400: OpenApiResponse(description='Invalid amount/method/transaction_id or frozen wallet'),
             401: OpenApiResponse(description='Unauthenticated'),
             403: OpenApiResponse(description='Manual funding disabled or not verified customer'),
-            409: OpenApiResponse(description='Idempotency key reused with different amount'),
+            409: OpenApiResponse(
+                description='Idempotency conflict or duplicate provider transaction id'
+            ),
         },
         examples=[
             OpenApiExample(
-                'Recharge 500',
-                value={'amount': '500.00', 'note': 'Cash top-up'},
+                'Recharge via bKash',
+                value={
+                    'amount': '500.00',
+                    'payment_method': 'bkash',
+                    'transaction_id': 'TX123456',
+                    'note': 'Sent from personal bKash',
+                },
                 request_only=True,
             ),
         ],
@@ -203,18 +194,21 @@ class WalletRechargeView(APIView):
                 {'detail': 'Customer profile is required.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        serializer = FundingRequestSerializer(data=request.data)
+        serializer = RechargeRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         idempotency_key = _resolve_idempotency_key(request, serializer.validated_data)
         try:
-            wallet, txn = recharge_wallet(
+            wallet, txn, _created = request_recharge(
                 profile,
                 serializer.validated_data['amount'],
+                payment_method=serializer.validated_data['payment_method'],
+                transaction_id=serializer.validated_data['transaction_id'],
                 note=serializer.validated_data.get('note') or '',
                 idempotency_key=idempotency_key,
             )
         except (
             IdempotencyConflictError,
+            DuplicateProviderRefError,
             InvalidAmountError,
             InsufficientFundsError,
             WalletFrozenError,
@@ -236,38 +230,32 @@ class WalletWithdrawView(APIView):
 
     @extend_schema(
         tags=['Customer Wallet'],
-        summary='Withdraw from wallet (manual debit)',
+        summary='Submit wallet withdraw request (manual verification)',
         description=(
-            'Debits the caller\'s wallet immediately with method=manual and status=completed. '
-            'This is a ledger balance reduction; real MFS/bank payout is a future payments change. '
-            'Optional Idempotency-Key header (or body field) prevents double-debit on retries.'
+            'Creates a pending withdraw with method=manual and immediately reserves '
+            '(debits) spendable balance. Admin Wallet custody is debited only on approve. '
+            'Reject restores the reservation.'
         ),
-        request=FundingRequestSerializer,
+        request=WithdrawRequestSerializer,
         parameters=[
             OpenApiParameter(
                 name='Idempotency-Key',
                 type=str,
                 location=OpenApiParameter.HEADER,
                 required=False,
-                description='Optional idempotency key unique per wallet funding request.',
             ),
         ],
         responses={
             200: FundingResponseSerializer,
-            400: OpenApiResponse(description='Invalid amount, frozen wallet, or insufficient funds'),
+            400: OpenApiResponse(description='Invalid amount, insufficient balance, or frozen wallet'),
             401: OpenApiResponse(description='Unauthenticated'),
             403: OpenApiResponse(description='Manual funding disabled or not verified customer'),
-            409: OpenApiResponse(
-                description=(
-                    'Idempotency key reused with different amount, '
-                    'or platform Admin Wallet float insufficient for custody debit'
-                ),
-            ),
+            409: OpenApiResponse(description='Idempotency key conflict'),
         },
         examples=[
             OpenApiExample(
                 'Withdraw 500',
-                value={'amount': '500.00', 'note': 'Balance reduction'},
+                value={'amount': '500.00'},
                 request_only=True,
             ),
         ],
@@ -279,11 +267,11 @@ class WalletWithdrawView(APIView):
                 {'detail': 'Customer profile is required.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        serializer = FundingRequestSerializer(data=request.data)
+        serializer = WithdrawRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         idempotency_key = _resolve_idempotency_key(request, serializer.validated_data)
         try:
-            wallet, txn = withdraw_wallet(
+            wallet, txn, _created = request_withdraw(
                 profile,
                 serializer.validated_data['amount'],
                 note=serializer.validated_data.get('note') or '',

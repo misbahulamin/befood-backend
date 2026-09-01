@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
 
@@ -59,6 +60,9 @@ class WalletTransaction(PublicIdMixin, TimeStampedModel):
         MANUAL = 'manual', 'Manual'
         BKASH = 'bkash', 'bKash'
         NAGAD = 'nagad', 'Nagad'
+        BANK = 'bank', 'Bank'
+
+    PROVIDER_RECHARGE_METHODS = (Method.BKASH, Method.NAGAD, Method.BANK)
 
     wallet = models.ForeignKey(
         Wallet,
@@ -92,6 +96,15 @@ class WalletTransaction(PublicIdMixin, TimeStampedModel):
     idempotency_key = models.CharField(max_length=64, null=True, blank=True)
     note = models.CharField(max_length=255, blank=True, default='')
     metadata = models.JSONField(default=dict, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_wallet_transactions',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.CharField(max_length=500, blank=True, default='')
 
     class Meta:
         ordering = ['-created_at']
@@ -101,11 +114,21 @@ class WalletTransaction(PublicIdMixin, TimeStampedModel):
                 condition=models.Q(idempotency_key__isnull=False),
                 name='wallet_txn_unique_idempotency_per_wallet',
             ),
+            models.UniqueConstraint(
+                fields=['method', 'external_ref'],
+                condition=(
+                    models.Q(type='recharge')
+                    & models.Q(method__in=['bkash', 'nagad', 'bank'])
+                    & ~models.Q(external_ref='')
+                ),
+                name='wallet_txn_unique_provider_recharge_ref',
+            ),
         ]
         indexes = [
             models.Index(fields=['wallet', '-created_at']),
             models.Index(fields=['status']),
             models.Index(fields=['type']),
+            models.Index(fields=['type', 'status', '-created_at']),
         ]
 
     def __str__(self):
