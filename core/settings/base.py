@@ -5,6 +5,8 @@ from decouple import Csv, config
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-befood-development-key')
 DEBUG = True
+CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = True
 ALLOWED_HOSTS = ["api.befood.com.bd",'localhost', '127.0.0.1']
 
 INSTALLED_APPS = [
@@ -299,6 +301,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://api.befood.com.bd",
     "http://127.0.0.1:8000",
     "http://localhost:8000",
+    "https://api.befood.com.bd",
 ]
 
 # --------------------------
