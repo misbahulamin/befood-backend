@@ -50,7 +50,7 @@ Allowlisted only; unknown keys → `400`.
 
 | Param | Notes |
 |-------|-------|
-| `q` | Search name, email, phone |
+| `q` | Search name, email, phone (national digits, or `+880` / `880` prefixed international) |
 | `is_active` | `User.is_active` |
 | `is_email_verified` | Email verification |
 | `has_active_subscription` | Active `CustomerSubscription` |
@@ -63,6 +63,12 @@ Allowlisted only; unknown keys → `400`.
 | `registered_from` / `registered_to` | `User.date_joined` date range |
 | `sort` | `date_joined`, `-date_joined` (default), `created_at`, `-created_at`, `email`, `-email` |
 | `page` / `page_size` | Default 20, max 100 |
+
+## Phone field (list + detail)
+
+- **Storage:** `CustomerProfile.phone` remains 10 national digits (BD mobile).
+- **Admin response:** `phone` is E.164-style Bangladesh: `+880` + 10 digits (e.g. `+8801712345678`), or `null` when unset.
+- **Search (`q`):** Matches name/email on the raw term; for phone, optional leading `+880` / `880` is stripped so international paste still hits stored national digits.
 
 ## Detail overview (`GET .../{public_id}/`)
 

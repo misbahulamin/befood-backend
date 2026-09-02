@@ -12,7 +12,7 @@ from orders.api.serializers import MarkDeliverySerializer, MealOffRequestSeriali
 from orders.filters import CustomerSubscriptionFilter
 from orders.models import CustomerSubscription, OrderDelivery
 from orders.services.meal_off import MealOffError, customer_meal_off, customer_meal_on
-from orders.services.order_delivery import DeliveryError, mark_delivery
+from orders.services.order_delivery import DeliveryError, mark_delivery_and_notify
 from orders.services.subscription_service import (
     cancel_subscription,
     ensure_subscription_deliveries,
@@ -345,7 +345,7 @@ class AdminSubscriptionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
         serializer = MarkDeliverySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            updated = mark_delivery(
+            updated = mark_delivery_and_notify(
                 delivery,
                 to_status=serializer.validated_data['status'],
                 marked_by=request.user,

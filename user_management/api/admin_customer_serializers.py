@@ -10,6 +10,7 @@ from user_management.services.admin_customer import (
     build_wallet_summary,
     get_customer_wallet,
 )
+from user_management.validators import format_bd_phone_e164
 from wallet.models import WalletTransaction
 
 
@@ -36,6 +37,7 @@ class AdminCustomerAddressSerializer(serializers.ModelSerializer):
 class AdminCustomerListSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()
     email = serializers.EmailField(source='user.email', read_only=True)
+    phone = serializers.SerializerMethodField()
     is_active = serializers.BooleanField(source='user.is_active', read_only=True)
     account_status = serializers.SerializerMethodField()
     verification_status = serializers.SerializerMethodField()
@@ -66,6 +68,9 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
     def get_name(self, obj):
         full = f'{obj.user.first_name} {obj.user.last_name}'.strip()
         return full or obj.user.email
+
+    def get_phone(self, obj):
+        return format_bd_phone_e164(obj.phone)
 
     def get_account_status(self, obj):
         return 'active' if obj.user.is_active else 'inactive'

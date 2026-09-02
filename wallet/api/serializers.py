@@ -22,6 +22,8 @@ class MealPaymentInfoSerializer(serializers.Serializer):
 
 class WalletSerializer(serializers.ModelSerializer):
     min_wallet_balance_to_order = serializers.SerializerMethodField()
+    low_balance_reminder_threshold = serializers.SerializerMethodField()
+    meal_stop_threshold = serializers.SerializerMethodField()
 
     class Meta:
         model = Wallet
@@ -31,15 +33,24 @@ class WalletSerializer(serializers.ModelSerializer):
             'currency',
             'status',
             'min_wallet_balance_to_order',
+            'low_balance_reminder_threshold',
+            'meal_stop_threshold',
             'created_at',
             'updated_at',
         )
         read_only_fields = fields
 
-    def get_min_wallet_balance_to_order(self, obj):
-        amount = get_order_wallet_settings().min_wallet_balance_to_order.quantize(Decimal('0.01'))
-        return f'{amount:.2f}'
+    def _threshold_str(self, amount: Decimal) -> str:
+        return f'{amount.quantize(Decimal("0.01")):.2f}'
 
+    def get_min_wallet_balance_to_order(self, obj):
+        return self._threshold_str(get_order_wallet_settings().min_wallet_balance_to_order)
+
+    def get_low_balance_reminder_threshold(self, obj):
+        return self._threshold_str(get_order_wallet_settings().low_balance_reminder_threshold)
+
+    def get_meal_stop_threshold(self, obj):
+        return self._threshold_str(get_order_wallet_settings().meal_stop_threshold)
 
 class WalletTransactionSerializer(serializers.ModelSerializer):
     """Customer-facing ledger row (no reviewer identity)."""

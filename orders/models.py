@@ -346,7 +346,7 @@ class MealOffSettings(models.Model):
 
 
 class OrderWalletSettings(models.Model):
-    """Singleton: minimum wallet balance required to subscribe to a meal plan."""
+    """Singleton: wallet balance thresholds for subscribe, reminder, and meal-stop."""
 
     min_wallet_balance_to_order = models.DecimalField(
         max_digits=12,
@@ -355,6 +355,20 @@ class OrderWalletSettings(models.Model):
         validators=[MinValueValidator(Decimal('0.00'))],
         help_text='Minimum wallet balance (BDT) required to subscribe to a meal plan.',
     )
+    low_balance_reminder_threshold = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('300.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Send low-balance reminder when spendable balance is strictly below this amount (BDT).',
+    )
+    meal_stop_threshold = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('200.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Block automated meal delivery when spendable balance is strictly below this amount (BDT).',
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -362,7 +376,10 @@ class OrderWalletSettings(models.Model):
         verbose_name_plural = 'Order wallet settings'
 
     def __str__(self):
-        return f'Order wallet min balance={self.min_wallet_balance_to_order}'
+        return (
+            f'Order wallet thresholds subscribe={self.min_wallet_balance_to_order} '
+            f'reminder={self.low_balance_reminder_threshold} stop={self.meal_stop_threshold}'
+        )
 
     def save(self, *args, **kwargs):
         self.pk = 1

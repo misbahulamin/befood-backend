@@ -129,6 +129,28 @@ def credit_wallet(
         metadata=metadata or {},
     )
     wallet.balance = new_balance
+
+    customer_id = locked.customer_id
+
+    def _resume_meal_service():
+        try:
+            from orders.services.wallet_balance_thresholds import maybe_resume_after_wallet_credit
+            from user_management.models import CustomerProfile
+
+            customer = CustomerProfile.objects.filter(pk=customer_id).first()
+            maybe_resume_after_wallet_credit(customer)
+        except Exception:
+            # Never fail a successful credit because of resume side effects.
+            import logging
+
+            logging.getLogger(__name__).exception(
+                'Meal-stop resume after credit failed wallet_id=%s',
+                locked.pk,
+            )
+
+    if status == WalletTransaction.Status.COMPLETED:
+        transaction.on_commit(_resume_meal_service)
+
     return txn
 
 

@@ -7,7 +7,7 @@ Admin/Kitchen tooling that turns order deliveries + meal-offs into **expected / 
 | Method | Path | Who | Purpose |
 |--------|------|-----|---------|
 | GET | `/orders/meal-statistics/` | Verified admin | Date/period/package demand analytics |
-| GET | `/orders/kitchen/today-meal-requirement/` | Verified admin | Lean today (or override) cook headcount + ingredients |
+| GET | `/orders/kitchen/today-meal-requirement/` | Verified admin | Cook headcount, package-wise summary, item-wise contributions + kg |
 | GET | `/orders/meal-history/` | Verified admin | Persisted snapshots (not live recalculation) |
 | GET | `/api/v1/web/orders/meal-statistics/` | Verified admin | Same handlers (web-prefixed alias) |
 | GET | `/api/v1/web/orders/kitchen/today-meal-requirement/` | Verified admin | Same handlers (web-prefixed alias) |
@@ -50,7 +50,10 @@ For each package with `final_cooking_count > 0`, load the **published** `Monthly
 
 - If ingredient has kg pair (`customers_per_kg`): `kg_per_person = 1 / customers_per_kg`, `quantity = kg_per_person × package_final`
 - Aggregate same ingredient across packages
-- Flat-cost-only ingredients: listed with `quantity_available=false`, `quantity=null`
+- Each ingredient also exposes:
+  - `customer_count` — sum of contributing packages’ `final_cooking_count`
+  - `package_contributions[]` — `{ package_public_id, package_name, customer_count }` per package that includes the item
+- Flat-cost-only ingredients: listed with `quantity_available=false`, `quantity=null`, but still include headcount/contributions
 - Missing published slot → `ingredients_incomplete=true`
 
 Uses `Decimal` (not float). Quantities serialized as decimal strings.
@@ -103,7 +106,9 @@ Uses `Decimal` (not float). Quantities serialized as decimal strings.
 
 ## Kitchen today requirement
 
-**Query:** optional `service_date`, `meal_period` overrides.
+**Query:** optional `service_date`, `meal_period`, `package_public_id` overrides.
+
+When `service_date` and `meal_period` are omitted, the server uses the default kitchen slot (today + lunch/dinner from meal-off clock). `package_public_id` scopes both `packages[]` and ingredient aggregation. Unknown package → `404`.
 
 **Success 200**
 
@@ -112,23 +117,56 @@ Uses `Decimal` (not float). Quantities serialized as decimal strings.
   "service_date": "2026-08-05",
   "meal_period": "lunch",
   "confirmation_status": "confirmed",
-  "expected_meal_count": 500,
-  "meal_off_count": 50,
-  "final_cooking_count": 450,
-  "total_customers": 500,
+  "expected_meal_count": 13,
+  "meal_off_count": 0,
+  "final_cooking_count": 13,
+  "total_customers": 13,
+  "packages": [
+    {
+      "package_public_id": "...",
+      "package_name": "Student Package",
+      "total_customers": 10,
+      "expected_meal_count": 10,
+      "meal_off_count": 0,
+      "final_cooking_count": 10
+    },
+    {
+      "package_public_id": "...",
+      "package_name": "Regular Package",
+      "total_customers": 3,
+      "expected_meal_count": 3,
+      "meal_off_count": 0,
+      "final_cooking_count": 3
+    }
+  ],
   "ingredients_incomplete": false,
   "ingredients": [
     {
       "ingredient_public_id": "...",
-      "name": "Rice",
+      "name": "Dal",
       "unit": "kg",
-      "quantity": "135.000000",
-      "kg_per_person": "0.300000",
-      "quantity_available": true
+      "quantity": "1.300000",
+      "kg_per_person": "0.100000",
+      "quantity_available": true,
+      "customer_count": 13,
+      "package_contributions": [
+        {
+          "package_public_id": "...",
+          "package_name": "Student Package",
+          "customer_count": 10
+        },
+        {
+          "package_public_id": "...",
+          "package_name": "Regular Package",
+          "customer_count": 3
+        }
+      ]
     }
   ]
 }
 ```
+
+**Printable sheet:** the Admin Kitchen Today UI prints/downloads from this same filtered payload (no separate print API). History snapshots still store the lean ingredient quantity shape without contribution fields.
 
 ## History
 
@@ -151,7 +189,7 @@ Only writes when `confirmation_status=confirmed` for the slot. Second run `updat
 |--------|------|
 | 400 | Bad date / meal_period |
 | 403 | Non-admin |
-| 404 | Unknown `package_public_id` on statistics |
+| 404 | Unknown `package_public_id` on statistics or kitchen today |
 
 ## How to verify
 

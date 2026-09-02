@@ -1,0 +1,29 @@
+{% extends "emails/base_branded_email.html" %}
+
+{% block title %}Wallet balance low — {{ brand_name }}{% endblock %}
+
+{% block preheader %}Your wallet balance is ৳{{ balance }}. Please recharge to keep receiving meals.{% endblock %}
+
+{% block headline %}Your wallet balance is low{% endblock %}
+
+{% block subheadline %}Please recharge soon{% endblock %}
+
+{% block body %}
+Your current wallet balance is <strong>৳{{ balance }}</strong>, which is below the reminder threshold of ৳{{ reminder_threshold }}.
+<br><br>
+Please recharge your wallet to continue receiving meals. If your balance goes below <strong>৳{{ meal_stop_threshold }}</strong>, meal service will stop automatically until you recharge.
+{% endblock %}
+
+{% block cta_url %}{{ frontend_url }}/wallet{% endblock %}
+
+{% block cta_label %}Recharge Wallet{% endblock %}
+
+{% block cta_hint %}Or open the {{ brand_name }} app to recharge.{% endblock %}
+
+{% block security_note %}
+This is an automated reminder from {{ brand_name }}.
+{% endblock %}
+
+{% block ignore_note %}
+If you already recharged, you can ignore this message.
+{% endblock %}

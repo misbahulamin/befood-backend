@@ -93,6 +93,19 @@ class CustomerProfile(PublicIdMixin, TimeStampedModel):
     profile_completed = models.BooleanField(default=False)
     profile_completion_percentage = models.PositiveIntegerField(default=0)
 
+    # Low-balance meal-stop automation (see orders.services.wallet_balance_thresholds).
+    meal_service_blocked_low_balance = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='When true, automated meal delivery is blocked until wallet balance recovers.',
+    )
+    meal_service_blocked_at = models.DateTimeField(null=True, blank=True)
+    last_low_balance_reminder_on = models.DateField(
+        null=True,
+        blank=True,
+        help_text='Asia/Dhaka business date of the last low-balance reminder (push/email).',
+    )
+
     def __str__(self):
         return self.user.email
 

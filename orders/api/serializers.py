@@ -167,11 +167,13 @@ class OrderWalletSettingsSerializer(serializers.ModelSerializer):
         model = OrderWalletSettings
         fields = (
             'min_wallet_balance_to_order',
+            'low_balance_reminder_threshold',
+            'meal_stop_threshold',
             'updated_at',
         )
         read_only_fields = ('updated_at',)
 
-    def validate_min_wallet_balance_to_order(self, value):
+    def _validate_amount(self, value):
         try:
             amount = value if isinstance(value, Decimal) else Decimal(str(value))
         except (InvalidOperation, TypeError, ValueError) as exc:
@@ -181,6 +183,38 @@ class OrderWalletSettingsSerializer(serializers.ModelSerializer):
         if amount.as_tuple().exponent < -2:
             raise serializers.ValidationError('Amount must have at most 2 decimal places.')
         return amount.quantize(Decimal('0.01'))
+
+    def validate_min_wallet_balance_to_order(self, value):
+        return self._validate_amount(value)
+
+    def validate_low_balance_reminder_threshold(self, value):
+        return self._validate_amount(value)
+
+    def validate_meal_stop_threshold(self, value):
+        return self._validate_amount(value)
+
+    def validate(self, attrs):
+        instance = getattr(self, 'instance', None)
+        next_min = attrs.get(
+            'min_wallet_balance_to_order',
+            getattr(instance, 'min_wallet_balance_to_order', None),
+        )
+        next_reminder = attrs.get(
+            'low_balance_reminder_threshold',
+            getattr(instance, 'low_balance_reminder_threshold', None),
+        )
+        next_stop = attrs.get(
+            'meal_stop_threshold',
+            getattr(instance, 'meal_stop_threshold', None),
+        )
+        if next_min is None or next_reminder is None or next_stop is None:
+            return attrs
+        if not (next_min > next_reminder > next_stop >= 0):
+            raise serializers.ValidationError(
+                'Thresholds must satisfy: subscription minimum > '
+                'low balance reminder > meal stop ≥ 0.'
+            )
+        return attrs
 
 
 class OrderListSerializer(OrderProgressMixin, serializers.ModelSerializer):
@@ -369,6 +403,12 @@ class MealDemandPackageSerializer(serializers.Serializer):
     final_cooking_count = serializers.IntegerField()
 
 
+class PackageContributionSerializer(serializers.Serializer):
+    package_public_id = serializers.UUIDField()
+    package_name = serializers.CharField()
+    customer_count = serializers.IntegerField()
+
+
 class MealDemandPeriodSerializer(serializers.Serializer):
     service_date = serializers.DateField()
     meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'])
@@ -394,6 +434,8 @@ class IngredientRequirementSerializer(serializers.Serializer):
     quantity = serializers.CharField(allow_null=True)
     kg_per_person = serializers.CharField(allow_null=True)
     quantity_available = serializers.BooleanField()
+    customer_count = serializers.IntegerField()
+    package_contributions = PackageContributionSerializer(many=True)
 
 
 class KitchenTodayRequirementSerializer(serializers.Serializer):
@@ -404,6 +446,7 @@ class KitchenTodayRequirementSerializer(serializers.Serializer):
     meal_off_count = serializers.IntegerField()
     final_cooking_count = serializers.IntegerField()
     total_customers = serializers.IntegerField()
+    packages = MealDemandPackageSerializer(many=True)
     ingredients_incomplete = serializers.BooleanField()
     ingredients = IngredientRequirementSerializer(many=True)
 

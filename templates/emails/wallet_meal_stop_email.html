@@ -1,0 +1,29 @@
+{% extends "emails/base_branded_email.html" %}
+
+{% block title %}Meal service stopped — {{ brand_name }}{% endblock %}
+
+{% block preheader %}Your balance is ৳{{ balance }}. Meal delivery is paused until you recharge.{% endblock %}
+
+{% block headline %}Meal service has stopped{% endblock %}
+
+{% block subheadline %}Recharge to resume meals{% endblock %}
+
+{% block body %}
+Your wallet balance is <strong>৳{{ balance }}</strong>, which is below the meal-stop threshold of ৳{{ meal_stop_threshold }}.
+<br><br>
+Automated meal delivery is paused for your account. Please recharge your wallet. Once your balance is at or above ৳{{ meal_stop_threshold }}, meal service can resume automatically.
+{% endblock %}
+
+{% block cta_url %}{{ frontend_url }}/wallet{% endblock %}
+
+{% block cta_label %}Recharge Wallet{% endblock %}
+
+{% block cta_hint %}Or open the {{ brand_name }} app to recharge.{% endblock %}
+
+{% block security_note %}
+This is an automated notice from {{ brand_name }}.
+{% endblock %}
+
+{% block ignore_note %}
+If you already recharged above ৳{{ meal_stop_threshold }}, service should resume on the next check.
+{% endblock %}

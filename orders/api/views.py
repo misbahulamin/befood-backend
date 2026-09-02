@@ -27,7 +27,7 @@ from orders.services.meal_off import (
     meal_off_business_now,
     update_meal_off_settings,
 )
-from orders.services.order_delivery import DeliveryError, mark_delivery
+from orders.services.order_delivery import DeliveryError, mark_delivery_and_notify
 from orders.services.subscription_parent import live_delivery_q
 from orders.services.order_service import SUBSCRIBE_REQUIRED_ERROR, get_current_package
 from orders.services.subscription_service import (
@@ -140,7 +140,7 @@ def _mark_order_delivery(request, order, delivery_id):
     serializer = MarkDeliverySerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     try:
-        updated = mark_delivery(
+        updated = mark_delivery_and_notify(
             delivery,
             to_status=serializer.validated_data['status'],
             marked_by=request.user,
@@ -686,11 +686,11 @@ class OrderWalletSettingsView(APIView):
 
     @extend_schema(
         tags=['Admin Order Management'],
-        summary='Get order wallet minimum balance settings',
+        summary='Get order wallet balance threshold settings',
         description=(
-            'Returns the minimum wallet balance (BDT) a verified customer must have '
-            'before placing a meal package order. Eligibility check only — order create '
-            'does not debit the wallet.'
+            'Returns wallet thresholds (BDT): subscription minimum, low-balance reminder, '
+            'and meal-stop. Subscription eligibility uses min_wallet_balance_to_order only '
+            '(inclusive). Reminder and meal-stop drive twice-daily automation.'
         ),
         responses={
             200: OrderWalletSettingsSerializer,
@@ -699,7 +699,12 @@ class OrderWalletSettingsView(APIView):
         examples=[
             OpenApiExample(
                 'Default settings',
-                value={'min_wallet_balance_to_order': '500.00', 'updated_at': '2026-07-29T10:00:00Z'},
+                value={
+                    'min_wallet_balance_to_order': '500.00',
+                    'low_balance_reminder_threshold': '300.00',
+                    'meal_stop_threshold': '200.00',
+                    'updated_at': '2026-07-29T10:00:00Z',
+                },
                 response_only=True,
             ),
         ],
@@ -710,26 +715,47 @@ class OrderWalletSettingsView(APIView):
 
     @extend_schema(
         tags=['Admin Order Management'],
-        summary='Update order wallet minimum balance settings',
+        summary='Update order wallet balance threshold settings',
         description=(
-            'Partially update the minimum wallet balance required to place an order. '
-            'Amount must be >= 0 with at most 2 decimal places.'
+            'Partially update wallet thresholds. Amounts must be >= 0 with at most 2 decimal '
+            'places. Merged result must satisfy: subscription minimum > low balance reminder '
+            '> meal stop ≥ 0.'
         ),
         request=OrderWalletSettingsSerializer,
         responses={
             200: OrderWalletSettingsSerializer,
-            400: OpenApiResponse(description='Validation error (negative or too many decimals)'),
+            400: OpenApiResponse(description='Validation error (negative, decimals, or ordering)'),
             403: OpenApiResponse(description='Admin required'),
         },
         examples=[
             OpenApiExample(
-                'Raise minimum to 600',
+                'Raise subscription minimum to 600',
                 value={'min_wallet_balance_to_order': '600.00'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Update all thresholds',
+                value={
+                    'min_wallet_balance_to_order': '500.00',
+                    'low_balance_reminder_threshold': '300.00',
+                    'meal_stop_threshold': '200.00',
+                },
                 request_only=True,
             ),
             OpenApiExample(
                 'Negative rejected',
                 value={'min_wallet_balance_to_order': ['Amount must be greater than or equal to zero.']},
+                response_only=True,
+                status_codes=['400'],
+            ),
+            OpenApiExample(
+                'Ordering conflict rejected',
+                value={
+                    'non_field_errors': [
+                        'Thresholds must satisfy: subscription minimum > '
+                        'low balance reminder > meal stop ≥ 0.'
+                    ]
+                },
                 response_only=True,
                 status_codes=['400'],
             ),
@@ -741,6 +767,10 @@ class OrderWalletSettingsView(APIView):
         serializer.is_valid(raise_exception=True)
         updated = update_order_wallet_settings(
             min_wallet_balance_to_order=serializer.validated_data.get('min_wallet_balance_to_order'),
+            low_balance_reminder_threshold=serializer.validated_data.get(
+                'low_balance_reminder_threshold'
+            ),
+            meal_stop_threshold=serializer.validated_data.get('meal_stop_threshold'),
         )
         return Response(OrderWalletSettingsSerializer(updated).data)
 
@@ -870,17 +900,25 @@ class KitchenTodayMealRequirementView(APIView):
         tags=['Admin Order Management'],
         summary='Kitchen today cooking requirement',
         description=(
-            'Lean cooking headcount + ingredient quantities. Defaults to today and lunch '
-            'before dinner_off_time, else dinner. Override with service_date / meal_period.'
+            'Cooking headcount, package-wise summary, and ingredient quantities with '
+            'cross-package headcount contributions. Defaults to today and lunch before '
+            'dinner_off_time, else dinner. Override with service_date / meal_period; '
+            'optional package_public_id scopes packages and item aggregation.'
         ),
         parameters=[
             OpenApiParameter(name='service_date', type=str, description='YYYY-MM-DD override'),
             OpenApiParameter(name='meal_period', type=str, description='lunch|dinner override'),
+            OpenApiParameter(
+                name='package_public_id',
+                type=str,
+                description='Optional meal package UUID filter',
+            ),
         ],
         responses={
             200: KitchenTodayRequirementSerializer,
             400: OpenApiResponse(description='Invalid filter'),
             403: OpenApiResponse(description='Admin required'),
+            404: OpenApiResponse(description='package_public_id not found'),
         },
         examples=[
             OpenApiExample(
@@ -893,6 +931,16 @@ class KitchenTodayMealRequirementView(APIView):
                     'meal_off_count': 50,
                     'final_cooking_count': 450,
                     'total_customers': 500,
+                    'packages': [
+                        {
+                            'package_public_id': '22222222-2222-2222-2222-222222222222',
+                            'package_name': 'Student Package',
+                            'total_customers': 10,
+                            'expected_meal_count': 10,
+                            'meal_off_count': 0,
+                            'final_cooking_count': 10,
+                        }
+                    ],
                     'ingredients_incomplete': False,
                     'ingredients': [
                         {
@@ -902,6 +950,14 @@ class KitchenTodayMealRequirementView(APIView):
                             'quantity': '135.000000',
                             'kg_per_person': '0.300000',
                             'quantity_available': True,
+                            'customer_count': 450,
+                            'package_contributions': [
+                                {
+                                    'package_public_id': '22222222-2222-2222-2222-222222222222',
+                                    'package_name': 'Student Package',
+                                    'customer_count': 450,
+                                }
+                            ],
                         }
                     ],
                 },
@@ -913,6 +969,14 @@ class KitchenTodayMealRequirementView(APIView):
         settings_obj = get_meal_off_settings()
         raw_date = request.query_params.get('service_date')
         raw_period = request.query_params.get('meal_period')
+        package_public_id = request.query_params.get('package_public_id')
+
+        if package_public_id:
+            if not MealCategory.objects.filter(public_id=package_public_id).exists():
+                return Response(
+                    {'detail': 'package_public_id not found.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
         if raw_date or raw_period:
             if raw_date:
@@ -942,6 +1006,7 @@ class KitchenTodayMealRequirementView(APIView):
         payload = build_kitchen_requirement(
             service_date,
             meal_period,
+            package_public_id=package_public_id,
             settings_obj=settings_obj,
         )
         return Response(payload)

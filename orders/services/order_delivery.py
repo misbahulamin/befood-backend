@@ -305,6 +305,32 @@ def mark_delivery(
     return locked
 
 
+def mark_delivery_and_notify(
+    delivery: OrderDelivery,
+    to_status: str,
+    marked_by=None,
+    note: str = '',
+) -> OrderDelivery:
+    """
+    Mark delivery then best-effort notify on a real transition to delivered.
+
+    Keeps money/status atomic inside mark_delivery; notification never rolls back.
+    """
+    before_status = (
+        OrderDelivery.objects.filter(pk=delivery.pk).values_list('status', flat=True).first()
+    )
+    updated = mark_delivery(delivery, to_status, marked_by=marked_by, note=note)
+    if (
+        to_status == OrderDelivery.DeliveryStatus.DELIVERED
+        and before_status != OrderDelivery.DeliveryStatus.DELIVERED
+        and updated.status == OrderDelivery.DeliveryStatus.DELIVERED
+    ):
+        from notifications.services.meal_delivery_notifications import notify_meal_delivered
+
+        notify_meal_delivered(updated)
+    return updated
+
+
 @transaction.atomic
 def sync_order_lifecycle(reference_date: date | None = None, changed_by=None) -> dict:
     today = reference_date or timezone.localdate()

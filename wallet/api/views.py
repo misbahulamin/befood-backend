@@ -82,8 +82,8 @@ class WalletDetailView(APIView):
         description=(
             'Returns the authenticated verified customer\'s wallet. '
             'Creates an active BDT wallet with balance 0.00 on first access. '
-            'Includes min_wallet_balance_to_order (admin-configured floor required '
-            'before placing a meal package order; eligibility only, not a debit). '
+            'Includes admin-configured thresholds: min_wallet_balance_to_order '
+            '(subscribe floor), low_balance_reminder_threshold, and meal_stop_threshold. '
             'Clients must use public_id, never the integer primary key.'
         ),
         responses={

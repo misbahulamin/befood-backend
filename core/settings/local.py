@@ -17,14 +17,21 @@ ALLOWED_HOSTS = [
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'postgres',       # Database name you created on RDS
-        'USER': 'befood_postgres',   # The username you set for RDS
-        'PASSWORD': 'Befood459',  # The password you set for RDS
-        'HOST': 'befood.czais0km2ult.ap-south-1.rds.amazonaws.com',  # RDS endpoint
-        'PORT': '5432',  # Default PostgreSQL port
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'postgres',       # Database name you created on RDS
+#         'USER': 'befood_postgres',   # The username you set for RDS
+#         'PASSWORD': 'Befood459',  # The password you set for RDS
+#         'HOST': 'befood.czais0km2ult.ap-south-1.rds.amazonaws.com',  # RDS endpoint
+#         'PORT': '5432',  # Default PostgreSQL port
+#     }
+# }
 
 # DATABASES = {
 #     'default': {

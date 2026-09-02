@@ -53,6 +53,13 @@ class DemandResult:
 
 
 @dataclass
+class PackageContribution:
+    package_public_id: str
+    package_name: str
+    customer_count: int
+
+
+@dataclass
 class IngredientQty:
     ingredient_id: int
     ingredient_public_id: str
@@ -61,6 +68,8 @@ class IngredientQty:
     quantity: Decimal | None
     kg_per_person: Decimal | None
     quantity_available: bool
+    customer_count: int = 0
+    package_contributions: list[PackageContribution] = field(default_factory=list)
 
 
 def confirmation_status(
@@ -252,8 +261,19 @@ def get_ingredient_requirements(
                     'kg_per_person': None,
                     'quantity_available': False,
                     'seen_without_qty': False,
+                    'contributions': [],
+                    'contribution_package_ids': set(),
                 },
             )
+            if pkg.package_id not in entry['contribution_package_ids']:
+                entry['contribution_package_ids'].add(pkg.package_id)
+                entry['contributions'].append(
+                    PackageContribution(
+                        package_public_id=pkg.package_public_id,
+                        package_name=pkg.package_name,
+                        customer_count=pkg.final_cooking_count,
+                    )
+                )
             if ingredient.has_kg_pricing and ingredient.customers_per_kg:
                 kg_per_person = _quantize_kg(
                     Decimal('1') / Decimal(ingredient.customers_per_kg)
@@ -271,6 +291,7 @@ def get_ingredient_requirements(
         ingredient = entry['ingredient']
         available = bool(entry['quantity_available'])
         quantity = _quantize_kg(entry['total_kg']) if available else None
+        contributions: list[PackageContribution] = entry['contributions']
         results.append(
             IngredientQty(
                 ingredient_id=ingredient.pk,
@@ -280,6 +301,8 @@ def get_ingredient_requirements(
                 quantity=quantity,
                 kg_per_person=entry['kg_per_person'],
                 quantity_available=available,
+                customer_count=sum(c.customer_count for c in contributions),
+                package_contributions=contributions,
             )
         )
 
@@ -312,8 +335,12 @@ def demand_to_dict(demand: DemandResult) -> dict[str, Any]:
     }
 
 
-def ingredient_qty_to_dict(row: IngredientQty) -> dict[str, Any]:
-    return {
+def ingredient_qty_to_dict(
+    row: IngredientQty,
+    *,
+    include_contributions: bool = True,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         'ingredient_public_id': row.ingredient_public_id,
         'name': row.name,
         'unit': row.unit,
@@ -323,18 +350,31 @@ def ingredient_qty_to_dict(row: IngredientQty) -> dict[str, Any]:
         ),
         'quantity_available': row.quantity_available,
     }
+    if include_contributions:
+        payload['customer_count'] = row.customer_count
+        payload['package_contributions'] = [
+            {
+                'package_public_id': c.package_public_id,
+                'package_name': c.package_name,
+                'customer_count': c.customer_count,
+            }
+            for c in row.package_contributions
+        ]
+    return payload
 
 
 def build_kitchen_requirement(
     service_date: date,
     meal_period: str,
     *,
+    package_public_id: UUID | str | None = None,
     now: datetime | None = None,
     settings_obj: MealOffSettings | None = None,
 ) -> dict[str, Any]:
     demand = get_demand(
         service_date,
         meal_period,
+        package_public_id=package_public_id,
         now=now,
         settings_obj=settings_obj,
     )
@@ -347,13 +387,27 @@ def build_kitchen_requirement(
         'meal_off_count': demand.meal_off_count,
         'final_cooking_count': demand.final_cooking_count,
         'total_customers': demand.total_customers,
+        'packages': [
+            {
+                'package_public_id': row.package_public_id,
+                'package_name': row.package_name,
+                'total_customers': row.total_customers,
+                'expected_meal_count': row.expected_meal_count,
+                'meal_off_count': row.meal_off_count,
+                'final_cooking_count': row.final_cooking_count,
+            }
+            for row in demand.packages
+        ],
         'ingredients_incomplete': incomplete,
         'ingredients': [ingredient_qty_to_dict(row) for row in ingredients],
     }
 
 
 def _freeze_ingredients(ingredients: list[IngredientQty]) -> list[dict[str, Any]]:
-    return [ingredient_qty_to_dict(row) for row in ingredients]
+    # History snapshots keep the lean quantity shape (omit contribution fields in v1).
+    return [
+        ingredient_qty_to_dict(row, include_contributions=False) for row in ingredients
+    ]
 
 
 @transaction.atomic

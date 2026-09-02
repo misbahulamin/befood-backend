@@ -229,6 +229,13 @@ MEAL_DELIVERY_WALLET_CHARGE_ENABLED = config(
     cast=bool,
 )
 
+# Cron/management auto mark-delivered for scheduled lunch/dinner slots.
+AUTO_MEAL_DELIVERY_ENABLED = config(
+    'AUTO_MEAL_DELIVERY_ENABLED',
+    default=True,
+    cast=bool,
+)
+
 # Deprecated for cash accounting: meal charges must not cash-credit Admin Wallet
 # (custody credits happen on customer recharge). Keep False unless emergency rollback.
 ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED = config(

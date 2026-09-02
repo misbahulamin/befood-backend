@@ -59,13 +59,28 @@ class CustomerProfileAdmin(admin.ModelAdmin):
         'gender',
         'is_bachelor',
         'is_email_verified',
+        'meal_service_blocked_low_balance',
         'profile_completion_percentage',
         'profile_completed',
         'created_at',
     )
     search_fields = ('user__email', 'phone', 'user__first_name', 'user__last_name', 'public_id')
-    list_filter = ('occupation', 'is_bachelor', 'is_email_verified', 'gender', 'profile_completed')
-    readonly_fields = ('public_id', 'created_at', 'updated_at', 'email_verified_at')
+    list_filter = (
+        'occupation',
+        'is_bachelor',
+        'is_email_verified',
+        'gender',
+        'profile_completed',
+        'meal_service_blocked_low_balance',
+    )
+    readonly_fields = (
+        'public_id',
+        'created_at',
+        'updated_at',
+        'email_verified_at',
+        'meal_service_blocked_at',
+        'last_low_balance_reminder_on',
+    )
 
 
 @admin.register(CustomerAddress)

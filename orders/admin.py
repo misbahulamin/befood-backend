@@ -178,7 +178,12 @@ class MealOffSettingsAdmin(admin.ModelAdmin):
 
 @admin.register(OrderWalletSettings)
 class OrderWalletSettingsAdmin(admin.ModelAdmin):
-    list_display = ('min_wallet_balance_to_order', 'updated_at')
+    list_display = (
+        'min_wallet_balance_to_order',
+        'low_balance_reminder_threshold',
+        'meal_stop_threshold',
+        'updated_at',
+    )
     readonly_fields = ('updated_at',)
 
 

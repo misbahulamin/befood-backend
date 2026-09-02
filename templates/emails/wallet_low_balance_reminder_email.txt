@@ -1,0 +1,11 @@
+{{ greeting }}
+
+Your {{ brand_name }} wallet balance is low.
+
+Current balance: ৳{{ balance }}
+Reminder threshold: ৳{{ reminder_threshold }}
+Meal stop threshold: ৳{{ meal_stop_threshold }}
+
+Please recharge your wallet to continue receiving meals. If your balance goes below ৳{{ meal_stop_threshold }}, meal service will stop automatically until you recharge.
+
+{{ frontend_url }}/wallet

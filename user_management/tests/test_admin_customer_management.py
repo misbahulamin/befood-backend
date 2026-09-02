@@ -253,7 +253,7 @@ class AdminCustomerManagementAPITests(APITestCase):
         self.assertGreaterEqual(response.data['count'], 4)
         row = next(item for item in response.data['results'] if item['email'] == 'alice@example.com')
         self.assertEqual(row['name'], 'Alice Active')
-        self.assertEqual(row['phone'], '1711111111')
+        self.assertEqual(row['phone'], '+8801711111111')
         self.assertIsNone(row['profile_picture_url'])
         self.assertEqual(row['verification_status'], 'verified')
         self.assertEqual(row['account_status'], 'active')
@@ -273,6 +273,12 @@ class AdminCustomerManagementAPITests(APITestCase):
         by_phone = self.client.get(self.list_url, {'q': '1722222222'})
         self.assertEqual(by_phone.data['count'], 1)
         self.assertEqual(by_phone.data['results'][0]['email'], 'bob@example.com')
+        by_e164 = self.client.get(self.list_url, {'q': '+8801722222222'})
+        self.assertEqual(by_e164.data['count'], 1)
+        self.assertEqual(by_e164.data['results'][0]['email'], 'bob@example.com')
+        by_cc = self.client.get(self.list_url, {'q': '8801722222222'})
+        self.assertEqual(by_cc.data['count'], 1)
+        self.assertEqual(by_cc.data['results'][0]['email'], 'bob@example.com')
 
     def test_filters_active_verified_and_subscription(self):
         self._auth_admin()

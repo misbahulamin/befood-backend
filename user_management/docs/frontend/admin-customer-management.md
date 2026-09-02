@@ -49,6 +49,7 @@ When `summary.has_legacy_orders === true`, show a **collapsed** "Legacy monthly 
 | Allergies | `has_allergy`, `allergy_details`, `restricted_foods` |
 | Meal row key | `public_id` |
 | Subscription status | `status` (render raw value; tolerate unknown enums) |
+| Phone (list + overview) | `phone` as E.164 `+880…` (or `null`); render as WhatsApp link via `https://wa.me/<digits>` |
 
 ## Wallet support scenario
 

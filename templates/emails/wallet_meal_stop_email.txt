@@ -1,0 +1,10 @@
+{{ greeting }}
+
+Your {{ brand_name }} meal service has stopped.
+
+Current balance: ৳{{ balance }}
+Meal stop threshold: ৳{{ meal_stop_threshold }}
+
+Automated meal delivery is paused until you recharge. Once your balance is at or above ৳{{ meal_stop_threshold }}, meal service can resume automatically.
+
+{{ frontend_url }}/wallet

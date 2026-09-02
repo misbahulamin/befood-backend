@@ -240,8 +240,112 @@ class MealDemandServiceTestCase(TestCase):
         # 0.2 kg × 4 people (2 premium + 2 regular final)
         self.assertEqual(by_name['Rice Demand'].quantity, Decimal('0.800000'))
         self.assertEqual(by_name['Rice Demand'].kg_per_person, Decimal('0.200000'))
+        self.assertEqual(by_name['Rice Demand'].customer_count, 4)
+        self.assertEqual(len(by_name['Rice Demand'].package_contributions), 2)
         self.assertFalse(by_name['Spice Demand'].quantity_available)
         self.assertIsNone(by_name['Spice Demand'].quantity)
+        self.assertEqual(by_name['Spice Demand'].customer_count, 4)
+
+    def test_item_wise_contributions_shared_and_exclusive(self):
+        """Student-style vs Regular-style menus: shared Dal/Rice, exclusive Vegetable/Fish."""
+        dal = Ingredient.objects.create(
+            name='Dal Shared',
+            price_per_kg=Decimal('100.00'),
+            customers_per_kg=Decimal('10.00'),
+            is_active=True,
+        )
+        vegetable = Ingredient.objects.create(
+            name='Vegetable Only',
+            price_per_kg=Decimal('60.00'),
+            customers_per_kg=Decimal('5.00'),
+            is_active=True,
+        )
+        fish = Ingredient.objects.create(
+            name='Fish Only',
+            price_per_kg=Decimal('400.00'),
+            customers_per_kg=Decimal('2.00'),
+            is_active=True,
+        )
+        MonthlyMenuSlotItem.objects.filter(slot__service_date=self.service_date).delete()
+        premium_slot = MonthlyMenuSlot.objects.get(
+            schedule__plan__meal_category=self.premium,
+            service_date=self.service_date,
+        )
+        regular_slot = MonthlyMenuSlot.objects.get(
+            schedule__plan__meal_category=self.regular,
+            service_date=self.service_date,
+        )
+        for ingredient in (dal, vegetable, self.rice):
+            MonthlyMenuSlotItem.objects.create(slot=premium_slot, ingredient=ingredient)
+        for ingredient in (dal, fish, self.rice):
+            MonthlyMenuSlotItem.objects.create(slot=regular_slot, ingredient=ingredient)
+
+        demand = get_demand(self.service_date, 'dinner', settings_obj=self.settings_obj)
+        ingredients, incomplete = get_ingredient_requirements(demand)
+        self.assertFalse(incomplete)
+        by_name = {row.name: row for row in ingredients}
+
+        self.assertEqual(by_name['Dal Shared'].customer_count, 4)
+        dal_by_pkg = {
+            c.package_name: c.customer_count
+            for c in by_name['Dal Shared'].package_contributions
+        }
+        self.assertEqual(dal_by_pkg['Premium Package'], 2)
+        self.assertEqual(dal_by_pkg['Regular Package'], 2)
+
+        self.assertEqual(by_name['Rice Demand'].customer_count, 4)
+        self.assertEqual(by_name['Vegetable Only'].customer_count, 2)
+        self.assertEqual(len(by_name['Vegetable Only'].package_contributions), 1)
+        self.assertEqual(
+            by_name['Vegetable Only'].package_contributions[0].package_name,
+            'Premium Package',
+        )
+        self.assertEqual(by_name['Fish Only'].customer_count, 2)
+        self.assertEqual(
+            by_name['Fish Only'].package_contributions[0].package_name,
+            'Regular Package',
+        )
+        # 0.1 kg × 4 for Dal
+        self.assertEqual(by_name['Dal Shared'].quantity, Decimal('0.400000'))
+
+    def test_build_kitchen_requirement_packages_and_filter(self):
+        from orders.services.meal_demand import build_kitchen_requirement
+
+        payload = build_kitchen_requirement(
+            self.service_date,
+            'dinner',
+            settings_obj=self.settings_obj,
+        )
+        self.assertEqual(len(payload['packages']), 2)
+        self.assertEqual(payload['final_cooking_count'], 4)
+        rice = next(i for i in payload['ingredients'] if i['name'] == 'Rice Demand')
+        self.assertEqual(rice['customer_count'], 4)
+        self.assertEqual(len(rice['package_contributions']), 2)
+        self.assertIn('quantity_available', rice)
+
+        filtered = build_kitchen_requirement(
+            self.service_date,
+            'dinner',
+            package_public_id=self.premium.public_id,
+            settings_obj=self.settings_obj,
+        )
+        self.assertEqual(len(filtered['packages']), 1)
+        self.assertEqual(filtered['packages'][0]['package_name'], 'Premium Package')
+        self.assertEqual(filtered['final_cooking_count'], 2)
+        rice_f = next(i for i in filtered['ingredients'] if i['name'] == 'Rice Demand')
+        self.assertEqual(rice_f['customer_count'], 2)
+        self.assertEqual(len(rice_f['package_contributions']), 1)
+
+    def test_freeze_ingredients_omits_contributions(self):
+        demand = get_demand(self.service_date, 'dinner', settings_obj=self.settings_obj)
+        ingredients, _ = get_ingredient_requirements(demand)
+        from orders.services.meal_demand import _freeze_ingredients
+
+        frozen = _freeze_ingredients(ingredients)
+        self.assertTrue(frozen)
+        self.assertNotIn('customer_count', frozen[0])
+        self.assertNotIn('package_contributions', frozen[0])
+        self.assertIn('quantity_available', frozen[0])
 
     def test_missing_menu_marks_incomplete(self):
         MonthlyMenuSlot.objects.filter(service_date=self.service_date).delete()
@@ -384,6 +488,7 @@ class MealDemandAPITestCase(APITestCase):
         self.assertEqual(response.data['meal_period'], 'lunch')
         self.assertEqual(response.data['final_cooking_count'], 1)
         self.assertIn('ingredients', response.data)
+        self.assertIn('packages', response.data)
 
     @patch('orders.services.meal_demand.meal_off_business_now')
     def test_kitchen_default_afternoon_dinner(self, mock_now):
@@ -402,6 +507,54 @@ class MealDemandAPITestCase(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['meal_period'], 'lunch')
+        self.assertIn('packages', response.data)
+        self.assertEqual(len(response.data['packages']), 1)
+        self.assertEqual(response.data['packages'][0]['final_cooking_count'], 1)
+
+    def test_kitchen_package_filter(self):
+        self._auth(self.admin_token)
+        response = self.client.get(
+            self.kitchen_url,
+            {
+                'service_date': '2026-08-05',
+                'meal_period': 'lunch',
+                'package_public_id': str(self.meal.public_id),
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['packages']), 1)
+        self.assertEqual(
+            str(response.data['packages'][0]['package_public_id']),
+            str(self.meal.public_id),
+        )
+
+    def test_kitchen_package_filter_not_found(self):
+        self._auth(self.admin_token)
+        response = self.client.get(
+            self.kitchen_url,
+            {
+                'service_date': '2026-08-05',
+                'meal_period': 'lunch',
+                'package_public_id': '00000000-0000-0000-0000-000000000099',
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_kitchen_invalid_meal_period(self):
+        self._auth(self.admin_token)
+        response = self.client.get(
+            self.kitchen_url,
+            {'service_date': '2026-08-05', 'meal_period': 'brunch'},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_kitchen_invalid_service_date(self):
+        self._auth(self.admin_token)
+        response = self.client.get(
+            self.kitchen_url,
+            {'service_date': '08-05-2026', 'meal_period': 'lunch'},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_kitchen_customer_denied(self):
         self._auth(self.customer_token)

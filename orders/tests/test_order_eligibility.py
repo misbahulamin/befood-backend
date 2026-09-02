@@ -35,8 +35,21 @@ def make_test_image(name='meal.jpg', size=(100, 100), color='red'):
 
 
 def _set_wallet_min(amount: Decimal) -> OrderWalletSettings:
+    """Test helper: set subscribe minimum and keep threshold ordering when amount > 0."""
     settings_obj = OrderWalletSettings.load()
     settings_obj.min_wallet_balance_to_order = amount
+    if amount > 0:
+        rem = (amount * Decimal('0.60')).quantize(Decimal('0.01'))
+        stop = (amount * Decimal('0.40')).quantize(Decimal('0.01'))
+        if not (amount > rem > stop >= 0):
+            rem = max(amount - Decimal('0.02'), Decimal('0.01'))
+            stop = max(rem - Decimal('0.01'), Decimal('0.00'))
+        settings_obj.low_balance_reminder_threshold = rem
+        settings_obj.meal_stop_threshold = stop
+    else:
+        # Bypass ordering for tests that disable the subscribe gate via 0.
+        settings_obj.low_balance_reminder_threshold = Decimal('0.00')
+        settings_obj.meal_stop_threshold = Decimal('0.00')
     settings_obj.save()
     return settings_obj
 
@@ -187,6 +200,8 @@ class OrderWalletEligibilityTests(APITestCase):
         response = self.client.get(self.settings_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['min_wallet_balance_to_order'], '500.00')
+        self.assertEqual(response.data['low_balance_reminder_threshold'], '300.00')
+        self.assertEqual(response.data['meal_stop_threshold'], '200.00')
 
     def test_admin_can_patch_minimum(self):
         self._auth(self.admin_token)
@@ -200,11 +215,36 @@ class OrderWalletEligibilityTests(APITestCase):
 
         lowered = self.client.patch(
             self.settings_url,
-            {'min_wallet_balance_to_order': '300.00'},
+            {
+                'min_wallet_balance_to_order': '400.00',
+                'low_balance_reminder_threshold': '250.00',
+                'meal_stop_threshold': '100.00',
+            },
             format='json',
         )
         self.assertEqual(lowered.status_code, status.HTTP_200_OK)
-        self.assertEqual(lowered.data['min_wallet_balance_to_order'], '300.00')
+        self.assertEqual(lowered.data['min_wallet_balance_to_order'], '400.00')
+        self.assertEqual(lowered.data['low_balance_reminder_threshold'], '250.00')
+        self.assertEqual(lowered.data['meal_stop_threshold'], '100.00')
+
+    def test_admin_rejects_threshold_ordering_conflict(self):
+        self._auth(self.admin_token)
+        before = OrderWalletSettings.load()
+        response = self.client.patch(
+            self.settings_url,
+            {
+                'min_wallet_balance_to_order': '200.00',
+                'low_balance_reminder_threshold': '500.00',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        after = OrderWalletSettings.load()
+        self.assertEqual(after.min_wallet_balance_to_order, before.min_wallet_balance_to_order)
+        self.assertEqual(
+            after.low_balance_reminder_threshold,
+            before.low_balance_reminder_threshold,
+        )
 
     def test_admin_rejects_negative_minimum(self):
         self._auth(self.admin_token)
