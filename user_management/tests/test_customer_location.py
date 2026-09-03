@@ -57,6 +57,9 @@ class CustomerLocationAPITests(APITestCase):
         self.refresh_url = reverse('user_management:customer-location-preference-refresh')
         self.save_url = reverse('user_management:customer-location-preference-save-as-place')
         self.guest_url = reverse('user_management:customer-location-guest-offer')
+        self.guest_decline_url = reverse(
+            'user_management:customer-location-guest-offer-decline'
+        )
         self.places_url = reverse('user_management:customer-delivery-place-list')
         self.prefs_url = reverse('user_management:customer-delivery-preferences')
 
@@ -372,6 +375,7 @@ class CustomerLocationAPITests(APITestCase):
         offer = self.client.get(self.guest_url, {'guest_session_id': 'guest-session-1'})
         self.assertEqual(offer.status_code, 200)
         self.assertTrue(offer.data['exists'])
+        self.assertEqual(offer.data['status'], 'pending')
 
         accept = self.client.post(
             self.guest_url,
@@ -384,8 +388,16 @@ class CustomerLocationAPITests(APITestCase):
         )
         self.assertEqual(accept.status_code, 201, accept.data)
         self.assertEqual(accept.data['place']['location_source'], 'guest_migration')
+        self.assertTrue(accept.data['location_confirmed'])
+        self.assertTrue(accept.data['has_saved_location'])
 
-        # Duplicate accept blocked
+        # After accept, offer is consumed (no re-prompt on "re-login" GET)
+        offer_again = self.client.get(self.guest_url, {'guest_session_id': 'guest-session-1'})
+        self.assertEqual(offer_again.status_code, 200)
+        self.assertFalse(offer_again.data['exists'])
+        self.assertEqual(offer_again.data['status'], 'accepted')
+
+        # Duplicate accept blocked as already resolved
         blocked = self.client.post(
             self.guest_url,
             {
@@ -395,12 +407,127 @@ class CustomerLocationAPITests(APITestCase):
             },
             format='json',
         )
-        self.assertEqual(blocked.status_code, 422)
-        self.assertEqual(blocked.data['error_code'], LOCATION_ALREADY_EXISTS)
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.data['error_code'], 'GUEST_OFFER_ALREADY_RESOLVED')
 
         empty = self.client.get(self.guest_url, {'guest_session_id': 'missing'})
         self.assertEqual(empty.status_code, 200)
         self.assertFalse(empty.data['exists'])
+        self.assertEqual(empty.data['status'], 'none')
+
+    def test_guest_offer_decline_persists(self):
+        ServiceAreaRequest.objects.create(
+            guest_session_id='guest-decline-1',
+            latitude=Decimal('22.357825'),
+            longitude=Decimal('91.846267'),
+            detected_location_name='Chawkbazar',
+            formatted_address='Chawkbazar, Chattogram',
+            is_serviceable=True,
+            request_kind=ServiceAreaRequest.RequestKind.CHECK,
+        )
+        places_before = CustomerDeliveryPlace.objects.filter(
+            customer_profile=self.profile
+        ).count()
+
+        decline = self.client.post(
+            self.guest_decline_url,
+            {'guest_session_id': 'guest-decline-1'},
+            format='json',
+        )
+        self.assertEqual(decline.status_code, 200, decline.data)
+        self.assertFalse(decline.data['exists'])
+        self.assertEqual(decline.data['status'], 'declined')
+        self.assertEqual(
+            CustomerDeliveryPlace.objects.filter(customer_profile=self.profile).count(),
+            places_before,
+        )
+
+        offer = self.client.get(self.guest_url, {'guest_session_id': 'guest-decline-1'})
+        self.assertEqual(offer.status_code, 200)
+        self.assertFalse(offer.data['exists'])
+        self.assertEqual(offer.data['status'], 'declined')
+
+        # Idempotent decline
+        decline_again = self.client.post(
+            self.guest_decline_url,
+            {'guest_session_id': 'guest-decline-1'},
+            format='json',
+        )
+        self.assertEqual(decline_again.status_code, 200)
+        self.assertEqual(decline_again.data['status'], 'declined')
+
+    def test_guest_offer_suppressed_when_duplicate_place(self):
+        create_delivery_place(
+            self.profile,
+            label='Home',
+            full_address='Chawkbazar',
+            latitude=Decimal('22.357825'),
+            longitude=Decimal('91.846267'),
+            location_source='gps',
+        )
+        ServiceAreaRequest.objects.create(
+            guest_session_id='guest-dup-1',
+            latitude=Decimal('22.357900'),
+            longitude=Decimal('91.846300'),
+            detected_location_name='Near home',
+            formatted_address='Near home',
+            is_serviceable=True,
+            request_kind=ServiceAreaRequest.RequestKind.CHECK,
+        )
+        offer = self.client.get(self.guest_url, {'guest_session_id': 'guest-dup-1'})
+        self.assertEqual(offer.status_code, 200)
+        self.assertFalse(offer.data['exists'])
+        self.assertEqual(offer.data['status'], 'suppressed')
+
+    def test_guest_offer_pending_first_time(self):
+        ServiceAreaRequest.objects.create(
+            guest_session_id='guest-pending-1',
+            latitude=Decimal('22.400000'),
+            longitude=Decimal('91.900000'),
+            detected_location_name='Far',
+            formatted_address='Far address',
+            is_serviceable=True,
+            request_kind=ServiceAreaRequest.RequestKind.CHECK,
+        )
+        offer = self.client.get(self.guest_url, {'guest_session_id': 'guest-pending-1'})
+        self.assertEqual(offer.status_code, 200)
+        self.assertTrue(offer.data['exists'])
+        self.assertEqual(offer.data['status'], 'pending')
+
+    def test_location_confirmation_flags_and_clear(self):
+        empty = self.client.get(self.pref_url)
+        self.assertEqual(empty.status_code, 200)
+        self.assertFalse(empty.data.get('location_confirmed', False))
+        self.assertFalse(empty.data.get('has_saved_location', False))
+
+        save = self.client.post(
+            self.save_url,
+            {
+                'label': 'Home',
+                'full_address': 'Chawkbazar',
+                'latitude': '22.357825',
+                'longitude': '91.846267',
+                'location_source': 'gps',
+            },
+            format='json',
+        )
+        self.assertEqual(save.status_code, 201, save.data)
+        self.assertTrue(save.data['location_confirmed'])
+        self.assertTrue(save.data['has_saved_location'])
+
+        me = self.client.get(reverse('user_management:me'))
+        self.assertEqual(me.status_code, 200)
+        self.assertTrue(me.data['location_confirmation']['location_confirmed'])
+        self.assertTrue(me.data['location_confirmation']['has_saved_location'])
+
+        cleared = self.client.delete(self.pref_url)
+        self.assertEqual(cleared.status_code, 200)
+        self.assertFalse(cleared.data['location_confirmed'])
+        self.assertFalse(cleared.data['has_saved_location'])
+
+        me_after = self.client.get(reverse('user_management:me'))
+        self.assertEqual(me_after.status_code, 200)
+        self.assertFalse(me_after.data['location_confirmation']['location_confirmed'])
 
     def test_guest_check_creates_no_place(self):
         before = CustomerDeliveryPlace.objects.count()

@@ -340,6 +340,58 @@ class CustomerLocationPreference(TimeStampedModel):
         return f'Location preference for {self.customer_profile.user.email}'
 
 
+class GuestLocationOfferResolution(TimeStampedModel):
+    """Durable per-customer resolution of a guest-session location migration offer."""
+
+    class Status(models.TextChoices):
+        ACCEPTED = 'accepted', 'Accepted'
+        DECLINED = 'declined', 'Declined'
+        SUPPRESSED = 'suppressed', 'Suppressed'
+
+    customer_profile = models.ForeignKey(
+        CustomerProfile,
+        on_delete=models.CASCADE,
+        related_name='guest_location_offer_resolutions',
+    )
+    guest_session_id = models.CharField(max_length=64, db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices)
+    resolved_at = models.DateTimeField()
+    service_area_request = models.ForeignKey(
+        'service_area.ServiceAreaRequest',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='guest_offer_resolutions',
+    )
+    delivery_place = models.ForeignKey(
+        CustomerDeliveryPlace,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='guest_offer_resolutions',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['customer_profile', 'guest_session_id'],
+                name='unique_guest_location_offer_resolution',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['customer_profile', 'guest_session_id'],
+                name='um_guest_offer_cust_sess_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'Guest offer {self.status} for {self.customer_profile.user.email} '
+            f'session={self.guest_session_id}'
+        )
+
+
 class RiderProfile(PublicIdMixin, TimeStampedModel):
     """Delivery Man profile (API paths use deliveryman; ORM related_name stays rider_profile)."""
 

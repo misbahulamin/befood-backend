@@ -1080,7 +1080,7 @@ class KitchenTodayOrderDetailsView(APIView):
                     'customers': [
                         {
                             'name': 'Towaha',
-                            'phone': '1894126298',
+                            'phone': '+8801894126298',
                             'package_name': 'Student Package',
                             'address': 'Chittagong, Chawkbazar',
                         }

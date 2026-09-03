@@ -49,7 +49,7 @@ When `summary.has_legacy_orders === true`, show a **collapsed** "Legacy monthly 
 | Allergies | `has_allergy`, `allergy_details`, `restricted_foods` |
 | Meal row key | `public_id` |
 | Subscription status | `status` (render raw value; tolerate unknown enums) |
-| Phone (list + overview) | `phone` as E.164 `+880…` (or `null`); render as WhatsApp link via `https://wa.me/<digits>` |
+| Phone (list + overview) | `phone` as E.164 `+880…` (or `null`); display **as-is** — do **not** prepend another `+880`. WhatsApp links: derive digits from the E.164 value (e.g. `CustomerPhoneWhatsAppLink` / `wa.me`) |
 
 ## Wallet support scenario
 

@@ -15,6 +15,7 @@ from orders.models import CustomerSubscription, OrderWalletSettings
 from orders.services.meal_off import get_meal_off_settings, meal_off_business_now
 from orders.services.order_wallet_settings import get_order_wallet_settings
 from user_management.models import CustomerAddress, CustomerProfile
+from user_management.validators import format_bd_phone_readable
 from wallet.models import Wallet
 from wallet.services.ledger import get_or_create_wallet
 
@@ -98,7 +99,8 @@ def customer_display_name(customer: CustomerProfile) -> str:
 
 
 def customer_phone(customer: CustomerProfile) -> str:
-    return (customer.phone or '').strip() or 'N/A'
+    formatted = format_bd_phone_readable(customer.phone)
+    return formatted or 'N/A'
 
 
 def customer_address_text(customer: CustomerProfile) -> str:

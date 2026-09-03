@@ -221,7 +221,7 @@ class RechargeApprovalNotificationTests(TestCase):
         self.assertEqual(ctx['payment_reference'], 'NOTIFY-TX-5')
         self.assertEqual(ctx['customer_name'], 'Rahim Khan')
         self.assertEqual(ctx['customer_email'], self.user.email)
-        self.assertEqual(ctx['customer_phone'], '1712222222')
+        self.assertEqual(ctx['customer_phone'], '+880-1712-222222')
         self.assertIn('Approved', ctx['invoice_status'])
         self.assertEqual(ctx['currency_symbol'], '৳')
 

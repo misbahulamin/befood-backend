@@ -45,21 +45,45 @@ POST /api/v1/service-areas/check/
 ### Guest → login migration
 
 1. Guest: `POST /api/v1/service-areas/check/` with `X-Guest-Session-Id`
-2. User logs in / registers (keep the same session id in client storage)
+2. User logs in / registers (keep the same session id until the offer is resolved)
 3. `GET .../location-preference/guest-offer/?guest_session_id=`
-4. If `exists=true` → popup → accept via `POST .../location-preference/guest-offer/` or decline (no call / ignore)
+4. Show the confirmation popup **only** when `exists: true` and `status: "pending"`
+5. Accept: `POST .../location-preference/guest-offer/` **or** decline: `POST .../location-preference/guest-offer/decline/` with `{ "guest_session_id": "..." }`
+6. After accept **or** decline succeeds, **clear or rotate** the local guest session id so future anonymous checks start a fresh session
+
+**Skip popup when GET returns `exists: false`.** Possible `status` values:
+
+| status | Meaning |
+|--------|---------|
+| `pending` | Show offer (`exists: true`) |
+| `accepted` | Already saved from this guest session |
+| `declined` | User already dismissed |
+| `suppressed` | Equivalent saved place / preference already exists |
+| `none` | No guest history for this session |
+
+Do **not** rely on in-memory or sessionStorage-only decline. Always call the decline API.
+
+Login / `GET .../me/` may include additive:
+
+```json
+"location_confirmation": {
+  "has_saved_location": true,
+  "location_confirmed": true
+}
+```
 
 ## Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/user_management/customer/location-preference/` | Saved vs detected + freshness |
-| DELETE | `/user_management/customer/location-preference/` | Clear active saved preference (places kept) |
+| GET | `/user_management/customer/location-preference/` | Saved vs detected + freshness + confirmation flags |
+| DELETE | `/user_management/customer/location-preference/` | Clear active saved preference (places kept; confirmation becomes false) |
 | PATCH | `/user_management/customer/location-preference/refresh/` | Update **detected only** |
 | POST | `/user_management/customer/location-preference/save-as-place/` | Create delivery place + update saved |
 | POST | `/user_management/customer/location-preference/set-active-place/` | Point active saved at existing place `{ "place_id": "<uuid>" }` |
 | GET | `/user_management/customer/location-preference/guest-offer/?guest_session_id=` | Offer after login |
 | POST | `/user_management/customer/location-preference/guest-offer/` | Accept offer (`location_source=guest_migration`) |
+| POST | `/user_management/customer/location-preference/guest-offer/decline/` | Decline offer (durable; no place created) |
 | CRUD | `/user_management/customer/delivery-places/` | Address book (now with geo metadata) |
 
 Admin:
@@ -75,6 +99,8 @@ Admin:
 {
   "exists": true,
   "is_active": true,
+  "has_saved_location": true,
+  "location_confirmed": true,
   "saved": {
     "exists": true,
     "address_id": "d906e339-95a9-42cf-a417-1d414767d14f",
@@ -98,11 +124,52 @@ Admin:
 }
 ```
 
+`location_confirmed` / `has_saved_location` mean an **active saved** preference exists. They are unrelated to `is_verified_location` on a delivery place.
+
 When nothing is set:
 
 ```json
-{ "exists": false }
+{
+  "exists": false,
+  "has_saved_location": false,
+  "location_confirmed": false
+}
 ```
+
+### Guest offer GET examples
+
+Pending:
+
+```json
+{
+  "exists": true,
+  "status": "pending",
+  "guest_session_id": "…",
+  "latitude": "22.357825",
+  "longitude": "91.846267",
+  "location_name": "Chawkbazar",
+  "formatted_address": "Chawkbazar, Chattogram",
+  "is_serviceable": true
+}
+```
+
+Already resolved / suppressed:
+
+```json
+{
+  "exists": false,
+  "status": "accepted",
+  "guest_session_id": "…"
+}
+```
+
+### Decline body
+
+```json
+{ "guest_session_id": "…" }
+```
+
+Response `200` with `exists: false` and `status: "declined"` (or the existing non-pending status if already resolved).
 
 ## PATCH refresh (detected only)
 
@@ -176,6 +243,7 @@ On create/update of `/customer/delivery-places/`:
 |------|------------|------|
 | 422 | `LOCATION_ALREADY_EXISTS` | New/updated coords within admin duplicate radius of **another** place (self excluded on update) |
 | 422 | `ADDRESS_LIMIT_REACHED` | Active places ≥ admin max (default 3) |
+| 409 | `GUEST_OFFER_ALREADY_RESOLVED` | Accept attempted after offer already accepted/declined |
 | 422 | `LOW_LOCATION_ACCURACY` | Soft warning on refresh/save (also returned as `warning_code` on success) |
 
 Envelope:

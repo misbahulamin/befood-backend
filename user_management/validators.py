@@ -15,7 +15,7 @@ def validate_bangladesh_phone(value, field_name='phone'):
 
 
 def format_bd_phone_e164(national):
-    """Format a stored BD national phone for admin API responses.
+    """Format a stored BD national phone for API read responses.
 
     Storage remains 10 digits. Returns ``+880XXXXXXXXXX`` when valid,
     ``None`` when empty, and the stripped raw value for non-conforming data.
@@ -32,6 +32,24 @@ def format_bd_phone_e164(national):
     if value.isdigit() and len(value) == 10:
         return f'{BD_PHONE_E164_PREFIX}{value}'
     return value
+
+
+def format_bd_phone_readable(e164_or_national):
+    """Human-readable BD phone for print/email (``+880-XXXX-XXXXXX``).
+
+    Normalizes via ``format_bd_phone_e164`` first. Returns ``None`` when empty.
+    """
+    e164 = format_bd_phone_e164(e164_or_national)
+    if e164 is None:
+        return None
+    if (
+        e164.startswith(BD_PHONE_E164_PREFIX)
+        and len(e164) == 14
+        and e164[1:].isdigit()
+    ):
+        national = e164[len(BD_PHONE_E164_PREFIX) :]
+        return f'{BD_PHONE_E164_PREFIX}-{national[:4]}-{national[4:]}'
+    return e164
 
 
 def normalize_phone_search_term(q: str) -> str:

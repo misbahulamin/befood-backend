@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from orders.services.meal_payment import MEAL_DELIVERY_PURPOSE
 from orders.services.order_wallet_settings import get_order_wallet_settings
+from user_management.validators import format_bd_phone_e164
 from wallet.models import Wallet, WalletTransaction
 from wallet.services.funding import PROVIDER_RECHARGE_METHODS, sanitize_transaction_id
 from wallet.services.ledger import MAX_FUNDING_AMOUNT, MIN_FUNDING_AMOUNT
@@ -194,6 +195,7 @@ class AdminFundingRequestSerializer(serializers.ModelSerializer):
     customer_public_id = serializers.SerializerMethodField()
     customer_email = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
+    customer_phone = serializers.SerializerMethodField()
     reviewed_by_email = serializers.SerializerMethodField()
     reviewed_by_id = serializers.IntegerField(read_only=True, allow_null=True)
 
@@ -212,6 +214,7 @@ class AdminFundingRequestSerializer(serializers.ModelSerializer):
             'customer_public_id',
             'customer_email',
             'customer_name',
+            'customer_phone',
             'reviewed_by_id',
             'reviewed_by_email',
             'reviewed_at',
@@ -235,6 +238,9 @@ class AdminFundingRequestSerializer(serializers.ModelSerializer):
     def get_customer_name(self, obj):
         user = obj.wallet.customer.user
         return (user.get_full_name() or user.username or '').strip()
+
+    def get_customer_phone(self, obj):
+        return format_bd_phone_e164(obj.wallet.customer.phone)
 
     def get_reviewed_by_email(self, obj):
         if obj.reviewed_by_id is None:

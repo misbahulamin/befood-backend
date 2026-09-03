@@ -12,6 +12,7 @@ from .models import (
     CustomerLocationSettings,
     CustomerProfile,
     DeviceToken,
+    GuestLocationOfferResolution,
     MealDeliveryDayOverride,
     MealDeliveryPreference,
     PendingCustomerRegistration,
@@ -154,6 +155,25 @@ class CustomerLocationPreferenceAdmin(admin.ModelAdmin):
     search_fields = ('customer_profile__user__email',)
     autocomplete_fields = ('customer_profile', 'active_delivery_place')
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(GuestLocationOfferResolution)
+class GuestLocationOfferResolutionAdmin(admin.ModelAdmin):
+    list_display = (
+        'customer_profile',
+        'guest_session_id',
+        'status',
+        'resolved_at',
+        'delivery_place',
+        'updated_at',
+    )
+    list_filter = ('status',)
+    search_fields = (
+        'customer_profile__user__email',
+        'guest_session_id',
+    )
+    autocomplete_fields = ('customer_profile', 'delivery_place', 'service_area_request')
+    readonly_fields = ('created_at', 'updated_at', 'resolved_at')
 
 
 @admin.register(MealDeliveryPreference)

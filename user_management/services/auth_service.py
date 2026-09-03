@@ -4,6 +4,8 @@ from django.utils.text import slugify
 from rest_framework.authtoken.models import Token
 
 from .pending_registration import send_pending_activation_email, upsert_pending_registration
+from .profile_onboarding import get_onboarding_completion
+from user_management.validators import format_bd_phone_e164
 
 
 def build_username(email):
@@ -31,21 +33,22 @@ def register_customer(validated_data, request):
 
 
 def get_login_response(user):
-    from .profile_onboarding import get_onboarding_completion
-
     token, _ = Token.objects.get_or_create(user=user)
     profile = user.customer_profile
+    from user_management.services.location_preference import get_location_confirmation_summary
+
     return {
         'token': token.key,
         'user': {'id': user.id, 'email': user.email, 'first_name': user.first_name, 'last_name': user.last_name},
         'groups': list(user.groups.values_list('name', flat=True)),
         'customer_profile': {
-            'phone': profile.phone,
+            'phone': format_bd_phone_e164(profile.phone),
             'occupation': profile.occupation,
             'is_bachelor': profile.is_bachelor,
             'is_email_verified': profile.is_email_verified,
         },
         'onboarding_completion': get_onboarding_completion(user, profile),
+        'location_confirmation': get_location_confirmation_summary(profile),
     }
 
 

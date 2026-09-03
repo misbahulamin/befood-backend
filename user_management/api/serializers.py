@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from ..models import CustomerProfile, DeviceToken, PendingCustomerRegistration
 from ..services.pending_registration import email_owned_by_verified_customer
+from ..validators import format_bd_phone_e164
 
 
 class CustomerProfileSerializer(serializers.ModelSerializer):
@@ -188,6 +189,7 @@ class CurrentUserSerializer(serializers.Serializer):
     groups = serializers.SerializerMethodField()
     customer_profile = serializers.SerializerMethodField()
     onboarding_completion = serializers.SerializerMethodField()
+    location_confirmation = serializers.SerializerMethodField()
     is_authenticated = serializers.SerializerMethodField()
 
     def get_user(self, obj):
@@ -200,7 +202,7 @@ class CurrentUserSerializer(serializers.Serializer):
     def get_customer_profile(self, obj):
         profile = obj.customer_profile
         return {
-            'phone': profile.phone,
+            'phone': format_bd_phone_e164(profile.phone),
             'occupation': profile.occupation,
             'is_bachelor': profile.is_bachelor,
             'is_email_verified': profile.is_email_verified,
@@ -213,6 +215,13 @@ class CurrentUserSerializer(serializers.Serializer):
         from ..services.profile_onboarding import get_onboarding_completion
 
         return get_onboarding_completion(obj)
+
+    def get_location_confirmation(self, obj):
+        from user_management.services.location_preference import get_location_confirmation_summary
+
+        if not hasattr(obj, 'customer_profile'):
+            return {'has_saved_location': False, 'location_confirmed': False}
+        return get_location_confirmation_summary(obj.customer_profile)
 
     def get_is_authenticated(self, obj):
         return obj.is_authenticated

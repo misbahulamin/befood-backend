@@ -16,6 +16,7 @@ from orders.services.order_service import (
     SUBSCRIBE_REQUIRED_ERROR,
     SubscribeRequiredError,
 )
+from user_management.validators import format_bd_phone_e164
 
 
 class OrderCreateSerializer(serializers.Serializer):
@@ -274,7 +275,7 @@ class AdminOrderListSerializer(OrderProgressMixin, serializers.ModelSerializer):
     meal_public_id = serializers.UUIDField(source='meal.public_id', read_only=True)
     customer_id = serializers.IntegerField(read_only=True)
     customer_email = serializers.EmailField(source='customer.user.email', read_only=True)
-    customer_phone = serializers.CharField(source='customer.phone', read_only=True)
+    customer_phone = serializers.SerializerMethodField()
     expected_deliveries = serializers.SerializerMethodField()
     delivered_count = serializers.SerializerMethodField()
     remaining_count = serializers.SerializerMethodField()
@@ -312,6 +313,11 @@ class AdminOrderListSerializer(OrderProgressMixin, serializers.ModelSerializer):
 
     def get_meal_type_display(self, obj):
         return dict(MealCategory.MealType.choices).get(obj.meal_type_snapshot, obj.meal_type_snapshot)
+
+    def get_customer_phone(self, obj):
+        if obj.customer_id is None:
+            return None
+        return format_bd_phone_e164(obj.customer.phone)
 
 
 class AdminOrderDetailSerializer(AdminOrderListSerializer):

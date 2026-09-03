@@ -74,16 +74,16 @@ def _assert_geo_payload(*, location_source, latitude, longitude, full_address, f
         )
 
 
-def assert_not_duplicate_location(
+def find_nearby_active_place(
     customer_profile,
     *,
     latitude,
     longitude,
     exclude_place_id=None,
 ):
-    """Reject when within duplicate radius of another active place with coordinates."""
+    """Return the first active place within duplicate radius, or None."""
     if latitude is None or longitude is None:
-        return
+        return None
     lat, lng = validate_location_coordinates(latitude, longitude)
     radius = get_duplicate_radius_km()
     qs = _owned_place_qs(customer_profile).filter(
@@ -97,10 +97,29 @@ def assert_not_duplicate_location(
     for other in qs:
         distance = calculate_distance(lat, lng, other.latitude, other.longitude)
         if distance <= radius:
-            raise DeliveryPlaceError(
-                'A delivery address already exists near this location.',
-                code=LOCATION_ALREADY_EXISTS,
-            )
+            return other
+    return None
+
+
+def assert_not_duplicate_location(
+    customer_profile,
+    *,
+    latitude,
+    longitude,
+    exclude_place_id=None,
+):
+    """Reject when within duplicate radius of another active place with coordinates."""
+    other = find_nearby_active_place(
+        customer_profile,
+        latitude=latitude,
+        longitude=longitude,
+        exclude_place_id=exclude_place_id,
+    )
+    if other is not None:
+        raise DeliveryPlaceError(
+            'A delivery address already exists near this location.',
+            code=LOCATION_ALREADY_EXISTS,
+        )
 
 
 def create_delivery_place(customer_profile, *, label, full_address, **address_fields):

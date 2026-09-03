@@ -35,6 +35,7 @@ class AdminCustomerAddressSerializer(serializers.ModelSerializer):
 
 
 class AdminCustomerListSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(read_only=True)
     name = serializers.SerializerMethodField()
     email = serializers.EmailField(source='user.email', read_only=True)
     phone = serializers.SerializerMethodField()
@@ -50,6 +51,7 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
         model = CustomerProfile
         fields = (
             'public_id',
+            'user_id',
             'name',
             'email',
             'phone',

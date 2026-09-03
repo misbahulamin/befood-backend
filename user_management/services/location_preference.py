@@ -5,15 +5,21 @@ from django.db import transaction
 from django.utils import timezone
 
 from service_area.models import ServiceAreaRequest
-from user_management.models import CustomerLocationPreference, CustomerLocationSettings
+from user_management.models import (
+    CustomerLocationPreference,
+    CustomerLocationSettings,
+    GuestLocationOfferResolution,
+)
 from user_management.services.delivery_place import (
     DeliveryPlaceError,
     create_delivery_place,
+    find_nearby_active_place,
     get_place_or_error,
 )
 from user_management.services.delivery_preference import set_meal_delivery_preferences
 from user_management.services.location_service import (
     accuracy_warning_code,
+    calculate_distance,
     normalize_accuracy,
     validate_location_coordinates,
 )
@@ -57,13 +63,24 @@ def _freshness(detected_at):
     }
 
 
+def _saved_location_confirmed(pref: CustomerLocationPreference | None) -> bool:
+    if pref is None or not pref.is_active:
+        return False
+    return pref.saved_latitude is not None and pref.saved_longitude is not None
+
+
 def serialize_location_preference(pref: CustomerLocationPreference | None) -> dict:
     if pref is None or (not pref.is_active and pref.saved_at is None and pref.detected_at is None):
-        return {'exists': False}
+        return {
+            'exists': False,
+            'has_saved_location': False,
+            'location_confirmed': False,
+        }
 
     freshness = _freshness(pref.detected_at)
     place = pref.active_delivery_place
     saved_exists = pref.saved_latitude is not None and pref.saved_longitude is not None
+    confirmed = _saved_location_confirmed(pref)
     detected_exists = (
         pref.last_detected_latitude is not None and pref.last_detected_longitude is not None
     )
@@ -71,6 +88,8 @@ def serialize_location_preference(pref: CustomerLocationPreference | None) -> di
     return {
         'exists': True,
         'is_active': pref.is_active,
+        'has_saved_location': confirmed,
+        'location_confirmed': confirmed,
         'saved': {
             'exists': saved_exists,
             'address_id': str(place.public_id) if place_id_safe(place) else None,
@@ -94,6 +113,16 @@ def serialize_location_preference(pref: CustomerLocationPreference | None) -> di
     }
 
 
+def get_location_confirmation_summary(customer_profile) -> dict:
+    """Lean confirmation flags for login / me responses."""
+    payload = get_location_preference_payload(customer_profile)
+    confirmed = bool(payload.get('location_confirmed'))
+    return {
+        'has_saved_location': confirmed,
+        'location_confirmed': confirmed,
+    }
+
+
 def place_id_safe(place) -> bool:
     return place is not None and getattr(place, 'public_id', None) is not None
 
@@ -104,7 +133,11 @@ def get_location_preference_payload(customer_profile) -> dict:
             customer_profile=customer_profile
         )
     except CustomerLocationPreference.DoesNotExist:
-        return {'exists': False}
+        return {
+            'exists': False,
+            'has_saved_location': False,
+            'location_confirmed': False,
+        }
     return serialize_location_preference(pref)
 
 
@@ -305,19 +338,125 @@ def clear_location_preference(customer_profile) -> CustomerLocationPreference:
     return pref
 
 
-def get_guest_location_offer(guest_session_id: str) -> dict:
+def _latest_guest_service_area_request(guest_session_id: str):
     session_id = (guest_session_id or '').strip()
     if not session_id:
-        return {'exists': False}
-    row = (
+        return None
+    return (
         ServiceAreaRequest.objects.filter(guest_session_id=session_id)
         .order_by('-requested_at')
         .first()
     )
+
+
+def _get_offer_resolution(customer_profile, guest_session_id: str):
+    return (
+        GuestLocationOfferResolution.objects.filter(
+            customer_profile=customer_profile,
+            guest_session_id=guest_session_id,
+        )
+        .select_related('delivery_place', 'service_area_request')
+        .first()
+    )
+
+
+def upsert_guest_offer_resolution(
+    customer_profile,
+    *,
+    guest_session_id: str,
+    status: str,
+    service_area_request=None,
+    delivery_place=None,
+) -> GuestLocationOfferResolution:
+    session_id = (guest_session_id or '').strip()
+    now = timezone.now()
+    resolution, created = GuestLocationOfferResolution.objects.get_or_create(
+        customer_profile=customer_profile,
+        guest_session_id=session_id,
+        defaults={
+            'status': status,
+            'resolved_at': now,
+            'service_area_request': service_area_request,
+            'delivery_place': delivery_place,
+        },
+    )
+    if created:
+        return resolution
+
+    update_fields = ['status', 'resolved_at', 'updated_at']
+    resolution.status = status
+    resolution.resolved_at = now
+    if service_area_request is not None:
+        resolution.service_area_request = service_area_request
+        update_fields.append('service_area_request')
+    if delivery_place is not None:
+        resolution.delivery_place = delivery_place
+        update_fields.append('delivery_place')
+    resolution.save(update_fields=update_fields)
+    return resolution
+
+
+def _guest_coords_match_saved_preference(customer_profile, latitude, longitude) -> bool:
+    """True when guest coords are within duplicate radius of active saved preference."""
+    if latitude is None or longitude is None:
+        return False
+    try:
+        pref = CustomerLocationPreference.objects.get(customer_profile=customer_profile)
+    except CustomerLocationPreference.DoesNotExist:
+        return False
+    if not _saved_location_confirmed(pref):
+        return False
+    from user_management.services.delivery_place import get_duplicate_radius_km
+
+    radius = get_duplicate_radius_km()
+    distance = calculate_distance(latitude, longitude, pref.saved_latitude, pref.saved_longitude)
+    return distance <= radius
+
+
+def _resolved_offer_payload(*, guest_session_id: str, status: str) -> dict:
+    return {
+        'exists': False,
+        'status': status,
+        'guest_session_id': guest_session_id,
+    }
+
+
+def get_guest_location_offer(customer_profile, guest_session_id: str) -> dict:
+    session_id = (guest_session_id or '').strip()
+    if not session_id:
+        return {'exists': False, 'status': 'none'}
+
+    resolution = _get_offer_resolution(customer_profile, session_id)
+    if resolution is not None:
+        return _resolved_offer_payload(guest_session_id=session_id, status=resolution.status)
+
+    row = _latest_guest_service_area_request(session_id)
     if row is None:
-        return {'exists': False}
+        return {'exists': False, 'status': 'none', 'guest_session_id': session_id}
+
+    nearby = find_nearby_active_place(
+        customer_profile,
+        latitude=row.latitude,
+        longitude=row.longitude,
+    )
+    if nearby is not None or _guest_coords_match_saved_preference(
+        customer_profile, row.latitude, row.longitude
+    ):
+        upsert_guest_offer_resolution(
+            customer_profile,
+            guest_session_id=session_id,
+            status=GuestLocationOfferResolution.Status.SUPPRESSED,
+            service_area_request=row,
+            delivery_place=nearby,
+        )
+        return _resolved_offer_payload(
+            guest_session_id=session_id,
+            status=GuestLocationOfferResolution.Status.SUPPRESSED,
+        )
+
     return {
         'exists': True,
+        'status': 'pending',
         'guest_session_id': session_id,
         'latitude': row.latitude,
         'longitude': row.longitude,
@@ -327,6 +466,29 @@ def get_guest_location_offer(guest_session_id: str) -> dict:
         'requested_at': row.requested_at,
         'is_serviceable': row.is_serviceable,
     }
+
+
+@transaction.atomic
+def decline_guest_location_offer(customer_profile, *, guest_session_id: str) -> dict:
+    session_id = (guest_session_id or '').strip()
+    if not session_id:
+        raise LocationPreferenceError('guest_session_id is required.', code='validation')
+
+    existing = _get_offer_resolution(customer_profile, session_id)
+    if existing is not None:
+        return _resolved_offer_payload(guest_session_id=session_id, status=existing.status)
+
+    row = _latest_guest_service_area_request(session_id)
+    upsert_guest_offer_resolution(
+        customer_profile,
+        guest_session_id=session_id,
+        status=GuestLocationOfferResolution.Status.DECLINED,
+        service_area_request=row,
+    )
+    return _resolved_offer_payload(
+        guest_session_id=session_id,
+        status=GuestLocationOfferResolution.Status.DECLINED,
+    )
 
 
 @transaction.atomic
@@ -341,19 +503,38 @@ def accept_guest_location_offer(
     set_dinner_default: bool = False,
     set_as_default_delivery_place: bool = False,
 ) -> tuple[object, CustomerLocationPreference, str | None]:
-    offer = get_guest_location_offer(guest_session_id)
+    session_id = (guest_session_id or '').strip()
+    offer = get_guest_location_offer(customer_profile, session_id)
     if not offer.get('exists'):
+        status = offer.get('status') or 'none'
+        if status == GuestLocationOfferResolution.Status.ACCEPTED:
+            raise LocationPreferenceError(
+                'Guest location offer was already accepted.',
+                code='already_resolved',
+            )
+        if status == GuestLocationOfferResolution.Status.DECLINED:
+            raise LocationPreferenceError(
+                'Guest location offer was already declined.',
+                code='already_resolved',
+            )
+        if status == GuestLocationOfferResolution.Status.SUPPRESSED:
+            raise LocationPreferenceError(
+                'A delivery address already exists near this location.',
+                code='LOCATION_ALREADY_EXISTS',
+            )
         raise LocationPreferenceError(
             'No guest location found for this session.',
             code='not_found',
         )
+
+    row = _latest_guest_service_area_request(session_id)
     address_text = (
         (full_address or '').strip()
         or (formatted_address or '').strip()
         or (offer.get('formatted_address') or '')
         or (offer.get('location_name') or '')
     )
-    return save_detected_as_place(
+    place, pref, warning = save_detected_as_place(
         customer_profile,
         label=label,
         full_address=address_text,
@@ -367,6 +548,14 @@ def accept_guest_location_offer(
         set_as_default_delivery_place=set_as_default_delivery_place,
         set_as_active=True,
     )
+    upsert_guest_offer_resolution(
+        customer_profile,
+        guest_session_id=session_id,
+        status=GuestLocationOfferResolution.Status.ACCEPTED,
+        service_area_request=row,
+        delivery_place=place,
+    )
+    return place, pref, warning
 
 
 def saved_location_hint_for_check(customer_profile) -> dict:

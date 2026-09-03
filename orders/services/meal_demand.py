@@ -26,6 +26,7 @@ from orders.services.subscription_parent import (
     delivery_meal_name,
     live_delivery_q,
 )
+from user_management.validators import format_bd_phone_e164
 
 CONFIRMATION_ESTIMATED = 'estimated'
 CONFIRMATION_CONFIRMED = 'confirmed'
@@ -464,7 +465,11 @@ def build_kitchen_order_details(
         customers.append(
             {
                 'name': _customer_display_name(customer),
-                'phone': (customer.phone or '') if customer is not None else '',
+                'phone': (
+                    (format_bd_phone_e164(customer.phone) or '')
+                    if customer is not None
+                    else ''
+                ),
                 'package_name': delivery_meal_name(delivery) or '',
                 'address': _delivery_address_for_sheet(delivery),
             }

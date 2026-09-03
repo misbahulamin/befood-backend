@@ -10,6 +10,7 @@
 | Helpers | `user_management/services/location_service.py` |
 | Place rules | `user_management/services/delivery_place.py` |
 | Preference flows | `user_management/services/location_preference.py` |
+| Guest offer resolution | `GuestLocationOfferResolution` + `docs/backend/guest-location-offer-resolution.md` |
 
 ## Permissions
 

@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .delivery_views import (
     CustomerDeliveryPlaceViewSet,
+    CustomerLocationGuestOfferDeclineView,
     CustomerLocationGuestOfferView,
     CustomerLocationPreferenceRefreshView,
     CustomerLocationPreferenceSaveAsPlaceView,
@@ -156,6 +157,11 @@ urlpatterns = [
         'customer/location-preference/guest-offer/',
         CustomerLocationGuestOfferView.as_view(),
         name='customer-location-guest-offer',
+    ),
+    path(
+        'customer/location-preference/guest-offer/decline/',
+        CustomerLocationGuestOfferDeclineView.as_view(),
+        name='customer-location-guest-offer-decline',
     ),
     path(
         'customer/location-preference/set-active-place/',

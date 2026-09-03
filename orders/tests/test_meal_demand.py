@@ -584,7 +584,7 @@ class MealDemandAPITestCase(APITestCase):
         self.assertEqual(response.data['count'], 1)
         row = response.data['customers'][0]
         self.assertEqual(row['name'], 'Towaha')
-        self.assertEqual(row['phone'], '1711999888')
+        self.assertEqual(row['phone'], '+8801711999888')
         self.assertEqual(row['package_name'], 'Demand Meal')
         self.assertEqual(row['address'], 'Chittagong, Chawkbazar')
 

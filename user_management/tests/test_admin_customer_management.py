@@ -261,9 +261,13 @@ class AdminCustomerManagementAPITests(APITestCase):
         self.assertEqual(row['current_package']['remaining_meals'], 1)
         self.assertEqual(row['wallet_balance'], '500.00')
         self.assertEqual(str(row['public_id']), str(self.customer_a.public_id))
+        self.assertEqual(row['user_id'], self.customer_a.user_id)
+        self.assertIsInstance(row['user_id'], int)
+        self.assertGreater(row['user_id'], 0)
 
         sub_row = next(item for item in response.data['results'] if item['email'] == 'dave@example.com')
         self.assertEqual(sub_row['current_package']['subscription_public_id'], str(self.subscription_d.public_id))
+        self.assertEqual(sub_row['user_id'], self.customer_d.user_id)
 
     def test_search_by_email_and_phone(self):
         self._auth_admin()
@@ -321,6 +325,9 @@ class AdminCustomerManagementAPITests(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['verification_status'], 'verified')
+        self.assertEqual(response.data['user_id'], self.customer_a.user_id)
+        self.assertIsInstance(response.data['user_id'], int)
+        self.assertGreater(response.data['user_id'], 0)
         summary = response.data['summary']
         self.assertEqual(summary['total_orders'], 1)
         self.assertEqual(summary['total_meals_delivered'], 1)

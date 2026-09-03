@@ -8,6 +8,7 @@ from typing import Any, Optional
 from django.utils import timezone
 
 from wallet.models import WalletTransaction
+from user_management.validators import format_bd_phone_readable
 
 # Metadata keys written at approve time (stable contract for templates/retries).
 META_PREVIOUS_BALANCE = 'previous_balance'
@@ -113,7 +114,7 @@ def build_invoice_context(txn: WalletTransaction) -> dict[str, Any]:
         ),
         'customer_name': _customer_display_name(user),
         'customer_email': (getattr(user, 'email', None) or '').strip(),
-        'customer_phone': (getattr(customer, 'phone', None) or '').strip(),
+        'customer_phone': format_bd_phone_readable(getattr(customer, 'phone', None)) or '',
         'amount': _format_money(txn.amount),
         'previous_balance': _format_money(previous),
         'updated_balance': _format_money(updated),

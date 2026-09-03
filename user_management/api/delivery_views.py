@@ -43,6 +43,7 @@ from user_management.services.location_preference import (
     LocationPreferenceError,
     accept_guest_location_offer,
     clear_location_preference,
+    decline_guest_location_offer,
     get_guest_location_offer,
     get_location_preference_payload,
     get_location_settings,
@@ -80,6 +81,11 @@ def _map_pref_error(exc: DeliveryPreferenceError | DeliveryPlaceError | Location
     code = getattr(exc, 'code', None)
     if code == 'not_found':
         raise NotFound(str(exc)) from exc
+    if code == 'already_resolved':
+        return Response(
+            _error_payload(str(exc), 'GUEST_OFFER_ALREADY_RESOLVED'),
+            status=status.HTTP_409_CONFLICT,
+        )
     if code in (LOCATION_ALREADY_EXISTS, ADDRESS_LIMIT_REACHED):
         return Response(
             _error_payload(str(exc), code),
@@ -413,7 +419,12 @@ class CustomerLocationGuestOfferView(APIView):
     def get(self, request):
         query = GuestLocationOfferQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
-        return Response(get_guest_location_offer(query.validated_data['guest_session_id']))
+        return Response(
+            get_guest_location_offer(
+                request.user.customer_profile,
+                query.validated_data['guest_session_id'],
+            )
+        )
 
     @extend_schema(
         tags=['Customer Location'],
@@ -422,6 +433,7 @@ class CustomerLocationGuestOfferView(APIView):
         responses={
             201: OpenApiResponse(description='Place created'),
             404: OpenApiResponse(description='No guest history'),
+            409: OpenApiResponse(description='Offer already resolved'),
             422: OpenApiResponse(description='Duplicate or address limit'),
         },
     )
@@ -455,6 +467,31 @@ class CustomerLocationGuestOfferView(APIView):
             place=place,
             http_status=status.HTTP_201_CREATED,
         )
+
+
+class CustomerLocationGuestOfferDeclineView(APIView):
+    permission_classes = [HasCustomerProfile]
+
+    @extend_schema(
+        tags=['Customer Location'],
+        summary='Decline guest location offer (durable; no delivery place created)',
+        request=GuestLocationOfferQuerySerializer,
+        responses={200: OpenApiResponse(description='Offer declined / already resolved')},
+    )
+    def post(self, request):
+        serializer = GuestLocationOfferQuerySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            payload = decline_guest_location_offer(
+                request.user.customer_profile,
+                guest_session_id=serializer.validated_data['guest_session_id'],
+            )
+        except LocationPreferenceError as exc:
+            mapped = _map_pref_error(exc)
+            if isinstance(mapped, Response):
+                return mapped
+            raise
+        return Response(payload)
 
 
 class CustomerLocationSetActivePlaceView(APIView):

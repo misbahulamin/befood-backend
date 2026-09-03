@@ -16,7 +16,7 @@ from ..services.profile_picture import (
     validate_image_extension,
     validate_image_size,
 )
-from ..validators import validate_bangladesh_phone
+from ..validators import format_bd_phone_e164, validate_bangladesh_phone
 
 
 class CustomerAddressSerializer(serializers.ModelSerializer):
@@ -108,6 +108,8 @@ class CustomerAddressCreateUpdateSerializer(serializers.ModelSerializer):
 
 class CustomerProfileFieldsSerializer(serializers.ModelSerializer):
     profile_image_url = serializers.SerializerMethodField()
+    phone = serializers.SerializerMethodField()
+    emergency_contact_phone = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomerProfile
@@ -143,12 +145,19 @@ class CustomerProfileFieldsSerializer(serializers.ModelSerializer):
             'occupation',
             'is_bachelor',
             'is_email_verified',
+            'emergency_contact_phone',
             'profile_image_url',
             'profile_completed',
             'profile_completion_percentage',
             'created_at',
             'updated_at',
         )
+
+    def get_phone(self, profile):
+        return format_bd_phone_e164(profile.phone)
+
+    def get_emergency_contact_phone(self, profile):
+        return format_bd_phone_e164(profile.emergency_contact_phone)
 
     def get_profile_image_url(self, profile):
         return get_profile_picture_url(profile, request=self.context.get('request'))

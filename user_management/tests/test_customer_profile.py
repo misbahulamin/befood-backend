@@ -34,6 +34,10 @@ class CustomerProfileAPITests(APITestCase):
         response = self.client.get(self.profile_url)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['user']['email'], 'customer1@example.com')
+        self.assertEqual(
+            response.data['customer_profile']['phone'],
+            '+8801712345678',
+        )
         self.assertIn('addresses', response.data)
         self.assertIn('profile_completion_percentage', response.data)
 
