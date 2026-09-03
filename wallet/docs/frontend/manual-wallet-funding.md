@@ -76,3 +76,12 @@ Status mapping for UI: `completed` ≈ approved, `failed` ≈ rejected.
 - After recharge submit, show “pending verification”, not “balance updated”.
 - After withdraw submit, balance drop is expected (held funds).
 - Idempotent retries may return `completed`/`failed` if admin already acted — use returned `status`, do not assume still pending.
+
+## Post-approve customer notifications (no admin UI change)
+
+`POST .../approve/` on a **pending recharge** is unchanged for the admin panel. After a successful approve the backend automatically:
+
+1. Sends the customer an FCM push (`type=wallet_recharge_approved`)
+2. Emails a branded wallet recharge invoice
+
+Admin UI should **not** show a separate “send invoice” control for this release. Failures of push/email do not change the approve API success response. See `wallet/docs/backend/wallet-recharge-approval-notifications.md` and the mobile FCM section in that doc.

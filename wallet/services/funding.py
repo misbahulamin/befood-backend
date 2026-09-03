@@ -152,6 +152,25 @@ def _schedule_funding_notification(txn_id: int, kind: str) -> None:
     transaction.on_commit(_send)
 
 
+def _schedule_customer_recharge_approved_notification(txn_id: int) -> None:
+    """Schedule customer push + invoice email after commit; never raise."""
+
+    def _send():
+        try:
+            from wallet.services.funding_customer_notifications import (
+                notify_customer_recharge_approved,
+            )
+
+            notify_customer_recharge_approved(txn_id)
+        except Exception:
+            logger.exception(
+                'Failed customer recharge-approved notification for txn_id=%s',
+                txn_id,
+            )
+
+    transaction.on_commit(_send)
+
+
 @transaction.atomic
 def request_recharge(
     customer_profile,
@@ -335,6 +354,8 @@ def request_withdraw(
 @transaction.atomic
 def approve_recharge(txn: WalletTransaction, *, reviewed_by) -> WalletTransaction:
     """Approve pending recharge: credit customer + Admin Wallet custody."""
+    from wallet.services.transaction_invoice import ensure_invoice_for_recharge
+
     locked_txn = WalletTransaction.objects.select_for_update().get(pk=txn.pk)
     if locked_txn.type != WalletTransaction.Type.RECHARGE:
         raise PendingTransactionError('Not a recharge funding request.')
@@ -344,7 +365,8 @@ def approve_recharge(txn: WalletTransaction, *, reviewed_by) -> WalletTransactio
     wallet = Wallet.objects.select_for_update().get(pk=locked_txn.wallet_id)
     # Admin resolution allowed even if wallet is frozen after submit.
 
-    new_balance = wallet.balance + locked_txn.amount
+    previous_balance = wallet.balance
+    new_balance = previous_balance + locked_txn.amount
     wallet.balance = new_balance
     wallet.save(update_fields=['balance', 'updated_at'])
 
@@ -364,7 +386,9 @@ def approve_recharge(txn: WalletTransaction, *, reviewed_by) -> WalletTransactio
             'updated_at',
         ]
     )
+    ensure_invoice_for_recharge(locked_txn, previous_balance=previous_balance)
     _sync_admin_wallet_recharge(locked_txn)
+    _schedule_customer_recharge_approved_notification(locked_txn.pk)
     return locked_txn
 
 

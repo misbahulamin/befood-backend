@@ -105,6 +105,13 @@ class WalletTransaction(PublicIdMixin, TimeStampedModel):
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.CharField(max_length=500, blank=True, default='')
+    invoice_number = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        unique=True,
+        help_text='Unique receipt identity for completed funding invoices (e.g. recharge).',
+    )
 
     class Meta:
         ordering = ['-created_at']

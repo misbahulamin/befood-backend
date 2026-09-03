@@ -1,0 +1,71 @@
+{% comment %}
+Reusable invoice detail table for branded emails.
+Expects: invoice_number, invoice_status, invoice_date_display, customer_*,
+amount, previous_balance, updated_balance, currency_symbol,
+payment_method, payment_reference, line_title
+{% endcomment %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;border-collapse:collapse;text-align:left;">
+  <tr>
+    <td colspan="2" style="padding:10px 0 6px 0;font-size:14px;font-weight:700;color:{{ brand_deep_ink }};border-bottom:2px solid {{ brand_yellow }};">
+      Invoice details
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;width:42%;vertical-align:top;">Invoice number</td>
+    <td style="padding:8px 0;font-size:13px;font-weight:600;color:{{ brand_deep_ink }};">{{ invoice_number }}</td>
+  </tr>
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;vertical-align:top;">Status</td>
+    <td style="padding:8px 0;font-size:13px;font-weight:600;color:{{ brand_deep_ink }};">{{ invoice_status }}</td>
+  </tr>
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;vertical-align:top;">Date</td>
+    <td style="padding:8px 0;font-size:13px;color:{{ brand_deep_ink }};">{{ invoice_date_display }}</td>
+  </tr>
+  <tr>
+    <td colspan="2" style="padding:14px 0 6px 0;font-size:14px;font-weight:700;color:{{ brand_deep_ink }};border-bottom:1px solid #ebe6dc;">
+      Customer
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;vertical-align:top;">Name</td>
+    <td style="padding:8px 0;font-size:13px;color:{{ brand_deep_ink }};">{{ customer_name }}</td>
+  </tr>
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;vertical-align:top;">Email</td>
+    <td style="padding:8px 0;font-size:13px;color:{{ brand_deep_ink }};">{{ customer_email }}</td>
+  </tr>
+  {% if customer_phone %}
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;vertical-align:top;">Phone</td>
+    <td style="padding:8px 0;font-size:13px;color:{{ brand_deep_ink }};">{{ customer_phone }}</td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td colspan="2" style="padding:14px 0 6px 0;font-size:14px;font-weight:700;color:{{ brand_deep_ink }};border-bottom:1px solid #ebe6dc;">
+      {{ line_title }}
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;vertical-align:top;">Payment method</td>
+    <td style="padding:8px 0;font-size:13px;color:{{ brand_deep_ink }};">{{ payment_method }}</td>
+  </tr>
+  {% if payment_reference %}
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;vertical-align:top;">Transaction ID</td>
+    <td style="padding:8px 0;font-size:13px;color:{{ brand_deep_ink }};">{{ payment_reference }}</td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;vertical-align:top;">Recharge amount</td>
+    <td style="padding:8px 0;font-size:15px;font-weight:700;color:{{ brand_deep_ink }};">{{ currency_symbol }}{{ amount }}</td>
+  </tr>
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;vertical-align:top;">Previous balance</td>
+    <td style="padding:8px 0;font-size:13px;color:{{ brand_deep_ink }};">{{ currency_symbol }}{{ previous_balance }}</td>
+  </tr>
+  <tr>
+    <td style="padding:8px 8px 8px 0;font-size:13px;color:#5c574f;vertical-align:top;">Updated balance</td>
+    <td style="padding:8px 0;font-size:15px;font-weight:700;color:{{ brand_deep_ink }};">{{ currency_symbol }}{{ updated_balance }}</td>
+  </tr>
+</table>

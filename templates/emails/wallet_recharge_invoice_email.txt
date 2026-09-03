@@ -1,0 +1,21 @@
+{{ greeting }}
+
+Your {{ brand_name }} wallet recharge was approved. This email is your invoice receipt.
+
+Invoice number: {{ invoice_number }}
+Status: {{ invoice_status }}
+Date: {{ invoice_date_display }}
+
+Customer
+- Name: {{ customer_name }}
+- Email: {{ customer_email }}
+{% if customer_phone %}- Phone: {{ customer_phone }}
+{% endif %}
+{{ line_title }}
+- Payment method: {{ payment_method }}
+{% if payment_reference %}- Transaction ID: {{ payment_reference }}
+{% endif %}- Recharge amount: {{ currency_symbol }}{{ amount }}
+- Previous balance: {{ currency_symbol }}{{ previous_balance }}
+- Updated balance: {{ currency_symbol }}{{ updated_balance }}
+
+{{ frontend_url }}/wallet

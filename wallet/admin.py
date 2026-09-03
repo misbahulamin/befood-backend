@@ -54,6 +54,7 @@ class WalletAdmin(admin.ModelAdmin):
 class WalletTransactionAdmin(admin.ModelAdmin):
     list_display = (
         'public_id',
+        'invoice_number',
         'wallet',
         'type',
         'direction',
@@ -66,6 +67,7 @@ class WalletTransactionAdmin(admin.ModelAdmin):
     list_filter = ('type', 'direction', 'status', 'method')
     search_fields = (
         'public_id',
+        'invoice_number',
         'external_ref',
         'idempotency_key',
         'note',
@@ -74,6 +76,7 @@ class WalletTransactionAdmin(admin.ModelAdmin):
     )
     readonly_fields = (
         'public_id',
+        'invoice_number',
         'wallet',
         'type',
         'direction',
