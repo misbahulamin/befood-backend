@@ -59,6 +59,16 @@ Process lock: `tmp/locks/auto_deliver_{period}.lock` (Python) + optional `flock`
 
 ## Managed cron install / verify / rollback
 
+### Production layout
+
+```text
+/home/ubuntu/
+├── befood-backend/     # PROJECT_DIR (manage.py, scripts/cron/)
+└── venv/               # sibling venv — NOT under the project
+```
+
+Wrappers source `scripts/cron/_cron_env.sh`, which picks an absolute Python in this order: `BEFOOD_VENV` / `VENV_PATH` → sibling `../venv` → `PROJECT_DIR/venv` → `PROJECT_DIR/.venv`. Cron must not depend on PATH for `python`. For local runs against a non-prod settings module: `DJANGO_ENV=local bash scripts/cron/run_auto_deliver.sh lunch`.
+
 ### Install (also runs on deploy)
 
 ```bash
@@ -66,15 +76,24 @@ bash scripts/cron/install_managed_cron.sh
 crontab -l   # expect BEGIN/END BEFOOD-MANAGED block, CRON_TZ=Asia/Dhaka, 15:00 lunch, 23:00 dinner
 ```
 
-Re-running the installer **replaces** the managed block (no duplicate lines).
+Re-running the installer **replaces** the managed block (no duplicate lines). **Do not edit** `.github/workflows/deploy.yml`.
 
 ### Verify
 
+Shell scripts under `scripts/cron/` MUST use LF line endings (enforced by root `.gitattributes`: `*.sh text eol=lf`). CRLF breaks Linux deploy (`set: pipefail: invalid option name`).
+
 ```bash
 bash -n scripts/cron/install_managed_cron.sh
+bash -n scripts/cron/_cron_env.sh
 bash -n scripts/cron/run_auto_deliver.sh
-python manage.py auto_deliver_meals --meal-period lunch --dry-run
+bash -n scripts/cron/run_wallet_threshold_check.sh
+# no CR characters:
+grep -r $'\r' scripts/cron/ && echo "CRLF found" || echo "LF OK"
+
+bash scripts/cron/run_auto_deliver.sh lunch
 tail -f logs/cron-auto-deliver-lunch.log
+
+python manage.py auto_deliver_meals --meal-period lunch --dry-run
 ```
 
 ### Rollback

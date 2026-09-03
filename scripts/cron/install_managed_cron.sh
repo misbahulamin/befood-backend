@@ -11,6 +11,7 @@ WALLET_THRESHOLD_RUNNER="${PROJECT_DIR}/scripts/cron/run_wallet_threshold_check.
 BEGIN_MARK="# BEGIN BEFOOD-MANAGED"
 END_MARK="# END BEFOOD-MANAGED"
 
+# Wrappers resolve venv via scripts/cron/_cron_env.sh (sibling ../venv on production).
 chmod +x "${AUTO_DELIVER_RUNNER}" 2>/dev/null || true
 chmod +x "${WALLET_THRESHOLD_RUNNER}" 2>/dev/null || true
 chmod +x "${SCRIPT_DIR}/install_managed_cron.sh" 2>/dev/null || true

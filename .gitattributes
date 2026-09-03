@@ -1,0 +1,3 @@
+# Force LF for shell scripts so Linux deploy/cron hosts can run them.
+# CRLF breaks bash option parsing (e.g. `set -euo pipefail` → `pipefail\r`).
+*.sh text eol=lf

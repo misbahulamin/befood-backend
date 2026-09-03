@@ -79,8 +79,11 @@ Ordering conflicts and negative / >2 decimal amounts return `400`.
 | Schedule | 08:00 and 20:00 Asia/Dhaka |
 | Command | `python manage.py check_wallet_balance_thresholds [--dry-run] [--date YYYY-MM-DD]` |
 | Wrapper | `scripts/cron/run_wallet_threshold_check.sh` |
+| Shared env | `scripts/cron/_cron_env.sh` (absolute venv Python; sibling `/home/ubuntu/venv` on production) |
 | Log | `logs/cron-wallet-threshold-check.log` |
 | Install | `scripts/cron/install_managed_cron.sh` (also keeps lunch/dinner auto-deliver) |
+
+**Production layout:** `/home/ubuntu/befood-backend` + sibling `/home/ubuntu/venv`. Wrappers must not rely on cron PATH for `python`.
 
 **Do not edit** `.github/workflows/deploy.yml` — deploy already runs the installer when present.
 
@@ -111,4 +114,14 @@ Admin report recipients: same resolution as wallet funding (`resolve_funding_adm
 
 - `orders.tests.test_order_eligibility.OrderWalletEligibilityTests` — settings ordering / defaults
 - `orders.tests.test_wallet_balance_thresholds.WalletBalanceThresholdTests` — reminder, stop, resume, admin mail, dry-run
-- `bash -n scripts/cron/install_managed_cron.sh scripts/cron/run_wallet_threshold_check.sh`
+- `bash -n scripts/cron/install_managed_cron.sh scripts/cron/_cron_env.sh scripts/cron/run_wallet_threshold_check.sh`
+- Confirm cron scripts are LF-only (`.gitattributes`: `*.sh text eol=lf`). `grep -r $'\r' scripts/cron/` should find nothing.
+- Manual smoke on the server (or a host with sibling/local venv):
+
+```bash
+bash scripts/cron/run_wallet_threshold_check.sh
+tail -n 50 logs/cron-wallet-threshold-check.log
+```
+
+- After landing on `main`, re-run production deploy; step 9 should install managed cron without editing `deploy.yml`.
+- Remaining risks: host crontab permissions; a wrong/empty sibling `../venv` (override with `BEFOOD_VENV=/path/to/venv` if needed).
