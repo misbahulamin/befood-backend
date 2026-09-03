@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'faqs',
     'blogs',
     'onahar',
+    'app_config',
 ]
 
 MIDDLEWARE = [
