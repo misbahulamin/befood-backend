@@ -12,7 +12,7 @@ Twice a day, production cron marks **eligible** `OrderDelivery` slots as `delive
 Wrappers: `scripts/cron/run_auto_deliver.sh lunch|dinner`  
 Installer: `scripts/cron/install_managed_cron.sh` (idempotent tagged crontab block)
 
-**Do not edit** `.github/workflows/deploy.yml`. Deploy already runs the installer when that script exists.
+Deploy (`.github/workflows/deploy.yml`) syncs the server with `git fetch` + `git reset --hard origin/main` (discards dirty tracked files such as local cron edits; keeps untracked `.env` / logs), then runs `install_managed_cron.sh` when present.
 
 ## Shared helpers (reuse — do not duplicate)
 
@@ -76,7 +76,7 @@ bash scripts/cron/install_managed_cron.sh
 crontab -l   # expect BEGIN/END BEFOOD-MANAGED block, CRON_TZ=Asia/Dhaka, 15:00 lunch, 23:00 dinner
 ```
 
-Re-running the installer **replaces** the managed block (no duplicate lines). **Do not edit** `.github/workflows/deploy.yml`.
+Re-running the installer **replaces** the managed block (no duplicate lines).
 
 ### Verify
 
@@ -94,6 +94,18 @@ bash scripts/cron/run_auto_deliver.sh lunch
 tail -f logs/cron-auto-deliver-lunch.log
 
 python manage.py auto_deliver_meals --meal-period lunch --dry-run
+```
+
+### Post-deploy production checks
+
+```bash
+cd /home/ubuntu/befood-backend
+git status                          # expect clean tracked tree
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" && echo "HEAD matches origin/main"
+crontab -l | sed -n '/# BEGIN BEFOOD-MANAGED/,/# END BEFOOD-MANAGED/p'
+test -f .env && echo ".env present"
+bash scripts/cron/run_auto_deliver.sh lunch
+tail -n 50 logs/cron-auto-deliver-lunch.log
 ```
 
 ### Rollback

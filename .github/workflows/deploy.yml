@@ -71,15 +71,30 @@ jobs:
 
 
             # ----------------------------------
-            # Update source code
+            # Update source code (deterministic sync)
+            # Always match origin/main. Discard local edits to tracked
+            # files (e.g. dirty cron scripts) so deploy never fails on
+            # "local changes would be overwritten by merge".
+            # Untracked files (.env, logs, sockets) are not removed.
             # ----------------------------------
-            echo "2. Fetching latest code from GitHub..."
+            echo "2. Syncing working tree to origin/main..."
 
             git fetch origin main
 
             git checkout main
 
-            git pull --ff-only origin main
+            echo "Working tree before reset (dirty tracked files will be discarded):"
+            git status --short || true
+
+            git reset --hard origin/main
+
+            if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+              echo "ERROR: HEAD does not match origin/main after reset."
+              exit 1
+            fi
+
+            echo "Synced to $(git rev-parse --short HEAD)"
+            git status --short || true
 
 
             # ----------------------------------

@@ -85,7 +85,7 @@ Ordering conflicts and negative / >2 decimal amounts return `400`.
 
 **Production layout:** `/home/ubuntu/befood-backend` + sibling `/home/ubuntu/venv`. Wrappers must not rely on cron PATH for `python`.
 
-**Do not edit** `.github/workflows/deploy.yml` — deploy already runs the installer when present.
+Deploy syncs with `git fetch` + `git reset --hard origin/main` (discards dirty tracked files; keeps untracked `.env` / logs), then runs `install_managed_cron.sh` when present.
 
 ### Dry-run
 
@@ -123,5 +123,17 @@ bash scripts/cron/run_wallet_threshold_check.sh
 tail -n 50 logs/cron-wallet-threshold-check.log
 ```
 
-- After landing on `main`, re-run production deploy; step 9 should install managed cron without editing `deploy.yml`.
+- After landing on `main`, re-run production deploy; sync step should hard-reset to `origin/main`, then step 9 installs managed cron.
+- Post-deploy on EC2:
+
+```bash
+cd /home/ubuntu/befood-backend
+git status
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" && echo "HEAD matches origin/main"
+crontab -l | sed -n '/# BEGIN BEFOOD-MANAGED/,/# END BEFOOD-MANAGED/p'
+bash scripts/cron/run_wallet_threshold_check.sh
+tail -n 50 logs/cron-wallet-threshold-check.log
+test -f .env && echo ".env present"
+```
+
 - Remaining risks: host crontab permissions; a wrong/empty sibling `../venv` (override with `BEFOOD_VENV=/path/to/venv` if needed).
