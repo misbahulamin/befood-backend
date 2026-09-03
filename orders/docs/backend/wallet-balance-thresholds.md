@@ -76,14 +76,17 @@ Ordering conflicts and negative / >2 decimal amounts return `400`.
 
 | Item | Value |
 |------|--------|
-| Schedule | 08:00 and 20:00 Asia/Dhaka |
-| Command | `python manage.py check_wallet_balance_thresholds [--dry-run] [--date YYYY-MM-DD]` |
+| Business schedule | 08:00 and 20:00 Asia/Dhaka |
+| Crontab (UTC) | `0 2 * * *` and `0 14 * * *` |
+| Command | `check_wallet_balance_thresholds [--dry-run] [--date YYYY-MM-DD]` |
 | Wrapper | `scripts/cron/run_wallet_threshold_check.sh` |
 | Shared env | `scripts/cron/_cron_env.sh` (absolute venv Python; sibling `/home/ubuntu/venv` on production) |
 | Log | `logs/cron-wallet-threshold-check.log` |
 | Install | `scripts/cron/install_managed_cron.sh` (also keeps lunch/dinner auto-deliver) |
 
-**Production layout:** `/home/ubuntu/befood-backend` + sibling `/home/ubuntu/venv`. Wrappers must not rely on cron PATH for `python`.
+**Timezone layers (production):** EC2 host = UTC (`Etc/UTC`). Crontab minute/hour fields are UTC (08:00 BD → 02:00 UTC, 20:00 BD → 14:00 UTC). Business dates inside the command remain Asia/Dhaka. **`CRON_TZ` is intentionally not used.**
+
+**Production layout:** `/home/ubuntu/befood-backend` + sibling `/home/ubuntu/venv`. Wrappers must not call bare `python` — they log `PYTHON_BIN=/absolute/path`.
 
 Deploy syncs with `git fetch` + `git reset --hard origin/main` (discards dirty tracked files; keeps untracked `.env` / logs), then runs `install_managed_cron.sh` when present.
 

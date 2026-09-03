@@ -4,10 +4,12 @@
 
 Twice a day, production cron marks **eligible** `OrderDelivery` slots as `delivered` using the **same** domain path as the admin **Delivered** button (`mark_delivery` → wallet charge → Onahar). A best-effort FCM notify runs after a real transition to `delivered` (manual admin mark and cron share `mark_delivery_and_notify`).
 
-| Job | Local time (`Asia/Dhaka`) | Command |
-|-----|---------------------------|---------|
-| Lunch | 15:00 | `python manage.py auto_deliver_meals --meal-period lunch` |
-| Dinner | 23:00 | `python manage.py auto_deliver_meals --meal-period dinner` |
+| Job | Business time (`Asia/Dhaka`) | Crontab (UTC) | Command |
+|-----|------------------------------|---------------|---------|
+| Lunch | 15:00 | `0 9 * * *` | `auto_deliver_meals --meal-period lunch` |
+| Dinner | 23:00 | `0 17 * * *` | `auto_deliver_meals --meal-period dinner` |
+
+**Timezone layers (production):** EC2 host = UTC (`Etc/UTC`). Ubuntu cron evaluates minute/hour in UTC. Business “today” / product times stay Asia/Dhaka inside Django. **`CRON_TZ` is intentionally not used** — schedules are hard-converted BD → UTC in `install_managed_cron.sh`.
 
 Wrappers: `scripts/cron/run_auto_deliver.sh lunch|dinner`  
 Installer: `scripts/cron/install_managed_cron.sh` (idempotent tagged crontab block)
@@ -73,10 +75,20 @@ Wrappers source `scripts/cron/_cron_env.sh`, which picks an absolute Python in t
 
 ```bash
 bash scripts/cron/install_managed_cron.sh
-crontab -l   # expect BEGIN/END BEFOOD-MANAGED block, CRON_TZ=Asia/Dhaka, 15:00 lunch, 23:00 dinner
+crontab -l
+# Expect managed block like:
+#   # BEGIN BEFOOD-MANAGED
+#   # Host cron timezone: UTC
+#   # Business timezone: Asia/Dhaka
+#   0 9 * * *  .../run_auto_deliver.sh lunch
+#   0 17 * * * .../run_auto_deliver.sh dinner
+#   0 2 * * *  .../run_wallet_threshold_check.sh
+#   0 14 * * * .../run_wallet_threshold_check.sh
+#   # END BEFOOD-MANAGED
+# Must NOT contain CRON_TZ=Asia/Dhaka or BD-hour fields (15/23/8/20).
 ```
 
-Re-running the installer **replaces** the managed block (no duplicate lines).
+Re-running the installer **replaces** the managed block (no duplicate lines; old `CRON_TZ` / BD hours are stripped).
 
 ### Verify
 
