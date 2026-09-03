@@ -9,6 +9,10 @@ Customers can verify email and reset passwords using **either**:
 
 Both channels are sent in the same email when a new OTP is issued. Link APIs are unchanged.
 
+**Deferred registration:** New customer signups store a `PendingCustomerRegistration` until OTP/link verification succeeds. Permanent `User` creation happens only on successful verify. See `deferred-customer-registration.md`.
+
+**Email subjects:** Activation and password-reset subjects start with the OTP (e.g. `723948 is your sign-in verification code`). Body templates are unchanged.
+
 | Area | Endpoints |
 |------|-----------|
 | Verify email (link) | `GET /user_management/verify-email/<uidb64>/<token>/` |

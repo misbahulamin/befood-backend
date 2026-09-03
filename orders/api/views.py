@@ -14,6 +14,7 @@ from orders.api.permissions import IsOrderOwnerOrAdmin, IsVerifiedCustomer
 from orders.filters import OrderFilter
 from orders.models import MealDemandSnapshot, Order, OrderDelivery
 from orders.services.meal_demand import (
+    build_kitchen_order_details,
     build_kitchen_requirement,
     demand_to_dict,
     get_demand,
@@ -47,6 +48,7 @@ from user_management.services.admin_access import is_verified_admin
 from .serializers import (
     AdminOrderDetailSerializer,
     AdminOrderListSerializer,
+    KitchenTodayOrderDetailsSerializer,
     KitchenTodayRequirementSerializer,
     MarkDeliverySerializer,
     MealDemandHistoryItemSerializer,
@@ -788,6 +790,66 @@ def _parse_demand_service_date(raw_value, *, settings_obj):
         )
 
 
+def _resolve_kitchen_today_slot(request):
+    """
+    Shared kitchen today filter resolution for requirement + order-details.
+
+    Returns (error_response | None, service_date, meal_period, package_public_id, settings_obj).
+    """
+    settings_obj = get_meal_off_settings()
+    raw_date = request.query_params.get('service_date')
+    raw_period = request.query_params.get('meal_period')
+    package_public_id = request.query_params.get('package_public_id')
+
+    if package_public_id:
+        if not MealCategory.objects.filter(public_id=package_public_id).exists():
+            return (
+                Response(
+                    {'detail': 'package_public_id not found.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                ),
+                None,
+                None,
+                None,
+                settings_obj,
+            )
+
+    if raw_date or raw_period:
+        if raw_date:
+            service_date, error = _parse_demand_service_date(
+                raw_date, settings_obj=settings_obj
+            )
+            if error is not None:
+                return error, None, None, None, settings_obj
+        else:
+            service_date = meal_off_business_now(settings_obj).date()
+
+        if raw_period:
+            if raw_period not in {
+                OrderDelivery.MealPeriod.LUNCH,
+                OrderDelivery.MealPeriod.DINNER,
+            }:
+                return (
+                    Response(
+                        {'detail': 'meal_period must be lunch or dinner.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    ),
+                    None,
+                    None,
+                    None,
+                    settings_obj,
+                )
+            meal_period = raw_period
+        else:
+            _, meal_period = resolve_default_kitchen_slot(settings_obj=settings_obj)
+    else:
+        service_date, meal_period = resolve_default_kitchen_slot(
+            settings_obj=settings_obj
+        )
+
+    return None, service_date, meal_period, package_public_id, settings_obj
+
+
 class MealStatisticsView(APIView):
     permission_classes = [IsVerifiedAdmin]
 
@@ -903,7 +965,9 @@ class KitchenTodayMealRequirementView(APIView):
             'Cooking headcount, package-wise summary, and ingredient quantities with '
             'cross-package headcount contributions. Defaults to today and lunch before '
             'dinner_off_time, else dinner. Override with service_date / meal_period; '
-            'optional package_public_id scopes packages and item aggregation.'
+            'optional package_public_id scopes packages and item aggregation. '
+            'Aggregate-only: per-customer name/phone/address lives on '
+            'kitchen/today-order-details/.'
         ),
         parameters=[
             OpenApiParameter(name='service_date', type=str, description='YYYY-MM-DD override'),
@@ -966,48 +1030,76 @@ class KitchenTodayMealRequirementView(APIView):
         ],
     )
     def get(self, request):
-        settings_obj = get_meal_off_settings()
-        raw_date = request.query_params.get('service_date')
-        raw_period = request.query_params.get('meal_period')
-        package_public_id = request.query_params.get('package_public_id')
-
-        if package_public_id:
-            if not MealCategory.objects.filter(public_id=package_public_id).exists():
-                return Response(
-                    {'detail': 'package_public_id not found.'},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-
-        if raw_date or raw_period:
-            if raw_date:
-                service_date, error = _parse_demand_service_date(
-                    raw_date, settings_obj=settings_obj
-                )
-                if error is not None:
-                    return error
-            else:
-                service_date = meal_off_business_now(settings_obj).date()
-
-            if raw_period:
-                if raw_period not in {
-                    OrderDelivery.MealPeriod.LUNCH,
-                    OrderDelivery.MealPeriod.DINNER,
-                }:
-                    return Response(
-                        {'detail': 'meal_period must be lunch or dinner.'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                meal_period = raw_period
-            else:
-                _, meal_period = resolve_default_kitchen_slot(settings_obj=settings_obj)
-        else:
-            service_date, meal_period = resolve_default_kitchen_slot(settings_obj=settings_obj)
-
+        error, service_date, meal_period, package_public_id, settings_obj = (
+            _resolve_kitchen_today_slot(request)
+        )
+        if error is not None:
+            return error
         payload = build_kitchen_requirement(
             service_date,
             meal_period,
             package_public_id=package_public_id,
             settings_obj=settings_obj,
+        )
+        return Response(payload)
+
+
+class KitchenTodayOrderDetailsView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=['Admin Order Management'],
+        summary='Kitchen today order details (customer list)',
+        description=(
+            'Per-customer cooking list for Order Details PDF: name, phone, package, '
+            'address. Same default slot and filters as today-meal-requirement. '
+            'Excludes meal-off / skipped deliveries. Does not alter aggregate kitchen math.'
+        ),
+        parameters=[
+            OpenApiParameter(name='service_date', type=str, description='YYYY-MM-DD override'),
+            OpenApiParameter(name='meal_period', type=str, description='lunch|dinner override'),
+            OpenApiParameter(
+                name='package_public_id',
+                type=str,
+                description='Optional meal package UUID filter',
+            ),
+        ],
+        responses={
+            200: KitchenTodayOrderDetailsSerializer,
+            400: OpenApiResponse(description='Invalid filter'),
+            403: OpenApiResponse(description='Admin required'),
+            404: OpenApiResponse(description='package_public_id not found'),
+        },
+        examples=[
+            OpenApiExample(
+                'Today lunch order details',
+                value={
+                    'service_date': '2026-08-05',
+                    'meal_period': 'lunch',
+                    'count': 1,
+                    'customers': [
+                        {
+                            'name': 'Towaha',
+                            'phone': '1894126298',
+                            'package_name': 'Student Package',
+                            'address': 'Chittagong, Chawkbazar',
+                        }
+                    ],
+                },
+                response_only=True,
+            ),
+        ],
+    )
+    def get(self, request):
+        error, service_date, meal_period, package_public_id, _settings_obj = (
+            _resolve_kitchen_today_slot(request)
+        )
+        if error is not None:
+            return error
+        payload = build_kitchen_order_details(
+            service_date,
+            meal_period,
+            package_public_id=package_public_id,
         )
         return Response(payload)
 

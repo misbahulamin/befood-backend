@@ -14,6 +14,7 @@ from .models import (
     DeviceToken,
     MealDeliveryDayOverride,
     MealDeliveryPreference,
+    PendingCustomerRegistration,
     RiderProfile,
     StaffProfile,
     UserActivityLog,
@@ -291,3 +292,45 @@ class CustomerAuthOTPAdmin(admin.ModelAdmin):
         'max_attempts',
     )
     ordering = ('-created_at',)
+
+
+@admin.register(PendingCustomerRegistration)
+class PendingCustomerRegistrationAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'email',
+        'first_name',
+        'last_name',
+        'phone',
+        'otp_created_at',
+        'otp_expires_at',
+        'expires_at',
+        'created_at',
+    )
+    search_fields = ('email', 'phone', 'first_name', 'last_name')
+    readonly_fields = (
+        'email',
+        'password_hash',
+        'first_name',
+        'last_name',
+        'phone',
+        'occupation',
+        'is_bachelor',
+        'otp_code_hash',
+        'otp_created_at',
+        'otp_expires_at',
+        'otp_attempt_count',
+        'otp_max_attempts',
+        'otp_issue_count',
+        'otp_window_started_at',
+        'created_at',
+        'updated_at',
+        'expires_at',
+    )
+    ordering = ('-created_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False

@@ -1,1 +1,1 @@
-Welcome to {{ brand_name }} — verify your email
+{{ otp_code }} is your sign-in verification code

@@ -1,7 +1,9 @@
+from decimal import Decimal
+
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator
 from django.db import models
-from decimal import Decimal
+from django.utils import timezone
 
 from core.models import PublicIdMixin
 from user_management.services.profile_picture import profile_picture_upload_path
@@ -445,3 +447,50 @@ class CustomerAuthOTP(models.Model):
     @property
     def is_consumed(self):
         return self.consumed_at is not None
+
+
+class PendingCustomerRegistration(models.Model):
+    """
+    Temporary customer signup before email verification.
+
+    No Django User is created until verification succeeds.
+    """
+
+    email = models.EmailField(unique=True, db_index=True)
+    password_hash = models.CharField(max_length=128)
+    first_name = models.CharField(max_length=150, blank=True, default='')
+    last_name = models.CharField(max_length=150, blank=True, default='')
+    phone = models.CharField(max_length=10, null=True, blank=True)
+    occupation = models.CharField(
+        max_length=30,
+        choices=CustomerProfile.Occupation.choices,
+        null=True,
+        blank=True,
+    )
+    is_bachelor = models.BooleanField(null=True, blank=True)
+
+    otp_code_hash = models.CharField(max_length=64, blank=True, default='')
+    otp_created_at = models.DateTimeField(null=True, blank=True)
+    otp_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    otp_attempt_count = models.PositiveSmallIntegerField(default=0)
+    otp_max_attempts = models.PositiveSmallIntegerField(default=5)
+    otp_issue_count = models.PositiveSmallIntegerField(default=0)
+    otp_window_started_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['expires_at'], name='pendingreg_expires_idx'),
+            models.Index(fields=['email', 'expires_at'], name='pendingreg_email_exp_idx'),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Pending registration for {self.email}'
+
+    @property
+    def is_expired(self):
+        return timezone.now() >= self.expires_at

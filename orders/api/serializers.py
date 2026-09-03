@@ -451,6 +451,20 @@ class KitchenTodayRequirementSerializer(serializers.Serializer):
     ingredients = IngredientRequirementSerializer(many=True)
 
 
+class KitchenOrderDetailsCustomerSerializer(serializers.Serializer):
+    name = serializers.CharField(allow_blank=True)
+    phone = serializers.CharField(allow_blank=True)
+    package_name = serializers.CharField(allow_blank=True)
+    address = serializers.CharField(allow_blank=True)
+
+
+class KitchenTodayOrderDetailsSerializer(serializers.Serializer):
+    service_date = serializers.DateField()
+    meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'])
+    count = serializers.IntegerField()
+    customers = KitchenOrderDetailsCustomerSerializer(many=True)
+
+
 class MealDemandHistoryItemSerializer(serializers.ModelSerializer):
     package_public_id = serializers.UUIDField(source='package.public_id', read_only=True)
     package_name = serializers.CharField(source='package.meal_name', read_only=True)

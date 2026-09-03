@@ -38,6 +38,8 @@ While `estimated`, copy should say numbers can still change until the meal-off d
      - `customer_count` (people across packages that include the item)
      - `package_contributions[]` breakdown
      - kg via `quantity` + `unit` when `quantity_available`
+4. **Chef** PDF uses this aggregate payload only (no per-customer rows).
+5. **Order Details** PDF: call `GET .../kitchen/today-order-details/` with the same filters; render `customers[]` (name, phone, package_name, address) as an Excel-style table. Do not embed the customer list into `today-meal-requirement`.
 4. Filters (Apply / Reset / Refresh):
    - `service_date`, `meal_period`, optional `package_public_id`
    - Package options: reuse packages seen on an unfiltered response (same pattern as Meal Demand), or clear package filter to refresh the list

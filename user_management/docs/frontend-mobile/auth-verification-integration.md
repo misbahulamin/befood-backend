@@ -7,6 +7,8 @@ BeFood supports **OTP + link** for:
 - Email verification after registration
 - Password reset
 
+**Important (deferred registration):** `POST /customer/register/` does **not** create a permanent account. The User exists only after successful OTP or link verification. Until then, login with that email returns invalid credentials (not `email_not_verified`). The `email_not_verified` login code still applies only to **legacy** inactive unverified users.
+
 OTP always supports **manual entry**. Platform autofill (SMS/email suggestion APIs) is **optional** — never rely on autofill alone.
 
 Public APIs need no `Authorization` header.
@@ -22,12 +24,14 @@ Base path: `/user_management/`
 
 ## React: registration → verify → login
 
-1. `POST /customer/register/` with `{ email, password }`
+1. `POST /customer/register/` with `{ email, password }` → pending signup only
 2. Show OTP screen (6 digits, **manual input**) and/or “open email link”
 3. Either:
    - `POST /verify-email/otp/` with `{ email, otp }`, or
    - Handle SPA route `/verify-email?...` / path segments and call existing link verify `GET /verify-email/<uidb64>/<token>/`
-4. `POST /login/` with email + password
+4. Account now exists → `POST /login/` with email + password
+
+Inbox tip: verification email **subject** starts with the 6-digit code so users can read it without opening the mail.
 
 ### Resend OTP
 
@@ -35,9 +39,9 @@ Base path: `/user_management/`
 - Body: `{ "email": "..." }`
 - Enforce **60s cooldown** in UI (disable resend button). Backend also enforces cooldown — may not send a second email within the window.
 
-### Unverified login
+### Unverified login (legacy only)
 
-If user tries login before verifying:
+If a **legacy** inactive user tries login before verifying:
 
 ```json
 {
@@ -47,6 +51,8 @@ If user tries login before verifying:
 ```
 
 Show verification UI. Backend may have just (re)sent email, or reused an active OTP within cooldown (no new mail).
+
+Pending-only emails (never verified under the new flow) look like wrong password: `{ "detail": "Invalid credentials." }`.
 
 Wrong password still returns `Invalid credentials` (no `email_not_verified` code).
 
@@ -94,6 +100,15 @@ Call the same public APIs as web.
 ### Password reset OTP
 
 Same as React: `request-otp` → (optional) `validate-otp` → **`confirm-otp` must include `otp` again**.
+
+### Device token after login (required for push)
+
+After **every** successful mobile login (including first login after website signup):
+
+1. Prefer calling `POST /notifications/device-token/` with the current FCM token (existing `syncTokenIfNeeded` path).
+2. Optionally also send `device_token` + `platform` on `POST /user_management/login/` — backend upserts the same way.
+
+Web register does **not** register device tokens. Push works after the user logs in on mobile and syncs the token.
 
 ---
 

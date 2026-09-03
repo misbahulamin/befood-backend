@@ -47,6 +47,24 @@ Location: `notifications/services/device_service.py`
 
 Future send code should call these helpers instead of querying `DeviceToken` directly.
 
+## Auth-time sync (login)
+
+Canonical upsert remains `POST /notifications/device-token/` (authenticated).
+
+Customers may also pass optional fields on login:
+
+```json
+POST /user_management/login/
+{
+  "email": "...",
+  "password": "...",
+  "device_token": "fcm_token",
+  "platform": "android"
+}
+```
+
+When both are present, login calls `register_device_token` (same upsert-by-token rules). Mobile apps that omit these fields **must** still call `/notifications/device-token/` after login so web→mobile users receive push.
+
 ## API endpoints
 
 Base path: `/notifications/`

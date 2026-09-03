@@ -21,7 +21,11 @@ from orders.services.meal_off import (
     meal_off_business_now,
     meal_off_deadline,
 )
-from orders.services.subscription_parent import live_delivery_q
+from orders.services.subscription_parent import (
+    delivery_customer,
+    delivery_meal_name,
+    live_delivery_q,
+)
 
 CONFIRMATION_ESTIMATED = 'estimated'
 CONFIRMATION_CONFIRMED = 'confirmed'
@@ -400,6 +404,78 @@ def build_kitchen_requirement(
         ],
         'ingredients_incomplete': incomplete,
         'ingredients': [ingredient_qty_to_dict(row) for row in ingredients],
+    }
+
+
+def _customer_display_name(customer) -> str:
+    if customer is None:
+        return ''
+    user = getattr(customer, 'user', None)
+    if user is not None:
+        full = (user.get_full_name() or '').strip()
+        if full:
+            return full
+        username = (user.username or '').strip()
+        if username:
+            return username
+    return ''
+
+
+def _delivery_address_for_sheet(delivery: OrderDelivery) -> str:
+    full = (delivery.delivery_full_address_snapshot or '').strip()
+    if full:
+        return full
+    parts = [
+        (delivery.delivery_label_snapshot or '').strip(),
+        (delivery.delivery_area_snapshot or '').strip(),
+        (delivery.delivery_city_snapshot or '').strip(),
+    ]
+    return ', '.join(part for part in parts if part)
+
+
+def build_kitchen_order_details(
+    service_date: date,
+    meal_period: str,
+    *,
+    package_public_id: UUID | str | None = None,
+) -> dict[str, Any]:
+    """
+    Per-customer cooking list for Order Details PDF.
+
+    Reuses the kitchen demand queryset (live parents only) and excludes meal-off
+    / skipped deliveries. Does not change aggregate kitchen requirement math.
+    """
+    qs = (
+        _demand_queryset(
+            service_date,
+            meal_period,
+            package_public_id=package_public_id,
+        )
+        .exclude(status=OrderDelivery.DeliveryStatus.SKIPPED)
+        .select_related(
+            'order__customer__user',
+            'subscription__customer__user',
+        )
+    )
+
+    customers: list[dict[str, str]] = []
+    for delivery in qs:
+        customer = delivery_customer(delivery)
+        customers.append(
+            {
+                'name': _customer_display_name(customer),
+                'phone': (customer.phone or '') if customer is not None else '',
+                'package_name': delivery_meal_name(delivery) or '',
+                'address': _delivery_address_for_sheet(delivery),
+            }
+        )
+
+    customers.sort(key=lambda row: (row['name'].casefold(), row['phone']))
+    return {
+        'service_date': service_date.isoformat(),
+        'meal_period': meal_period,
+        'count': len(customers),
+        'customers': customers,
     }
 
 

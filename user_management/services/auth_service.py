@@ -1,12 +1,9 @@
-from django.contrib.auth.models import Group, User
-from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.models import User
 from django.db import transaction
 from django.utils.text import slugify
 from rest_framework.authtoken.models import Token
-from rest_framework.exceptions import ValidationError
 
-from ..models import CustomerProfile
-from .email_verification import send_activation_email
+from .pending_registration import send_pending_activation_email, upsert_pending_registration
 
 
 def build_username(email):
@@ -21,30 +18,16 @@ def build_username(email):
 
 @transaction.atomic
 def register_customer(validated_data, request):
-    password = validated_data.pop('password')
-    email = validated_data['email'].lower()
-    first_name = validated_data.get('first_name') or ''
-    last_name = validated_data.get('last_name') or ''
-    user = User(
-        username=build_username(email),
-        email=email,
-        first_name=first_name,
-        last_name=last_name,
-        is_active=False,
-    )
-    user.set_password(password)
-    user.full_clean(exclude=['password'])
-    user.save()
-    profile = CustomerProfile.objects.create(
-        user=user,
-        phone=validated_data.get('phone'),
-        occupation=validated_data.get('occupation'),
-        is_bachelor=validated_data.get('is_bachelor'),
-    )
-    group, _ = Group.objects.get_or_create(name='CUSTOMER')
-    user.groups.add(group)
-    send_activation_email(request, user)
-    return user, profile
+    """
+    Store a pending registration and send verification email.
+
+    No permanent User/CustomerProfile is created until email verification succeeds.
+    Returns (pending, None) for call-site compatibility with (user, profile).
+    """
+    data = dict(validated_data)
+    pending = upsert_pending_registration(data)
+    send_pending_activation_email(request, pending)
+    return pending, None
 
 
 def get_login_response(user):

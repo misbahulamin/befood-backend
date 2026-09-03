@@ -447,7 +447,19 @@ class MealDemandAPITestCase(APITestCase):
 
         self.stats_url = reverse('orders:meal-statistics')
         self.kitchen_url = reverse('orders:kitchen-today-meal-requirement')
+        self.order_details_url = reverse('orders:kitchen-today-order-details')
         self.history_url = reverse('orders:meal-history')
+
+        self.customer_user.first_name = 'Towaha'
+        self.customer_user.last_name = ''
+        self.customer_user.save(update_fields=['first_name', 'last_name'])
+        lunch = OrderDelivery.objects.get(
+            order__customer=self.customer_profile,
+            service_date=self.service_date,
+            meal_period=OrderDelivery.MealPeriod.LUNCH,
+        )
+        lunch.delivery_full_address_snapshot = 'Chittagong, Chawkbazar'
+        lunch.save(update_fields=['delivery_full_address_snapshot'])
 
     def _auth(self, token):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
@@ -559,6 +571,71 @@ class MealDemandAPITestCase(APITestCase):
     def test_kitchen_customer_denied(self):
         self._auth(self.customer_token)
         response = self.client.get(self.kitchen_url)
+        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    @patch('orders.services.meal_demand.meal_off_business_now')
+    def test_order_details_default_morning_lunch(self, mock_now):
+        mock_now.return_value = datetime(2026, 8, 5, 10, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        self._auth(self.admin_token)
+        response = self.client.get(self.order_details_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['service_date'], '2026-08-05')
+        self.assertEqual(response.data['meal_period'], 'lunch')
+        self.assertEqual(response.data['count'], 1)
+        row = response.data['customers'][0]
+        self.assertEqual(row['name'], 'Towaha')
+        self.assertEqual(row['phone'], '1711999888')
+        self.assertEqual(row['package_name'], 'Demand Meal')
+        self.assertEqual(row['address'], 'Chittagong, Chawkbazar')
+
+    def test_order_details_excludes_meal_off(self):
+        self._auth(self.admin_token)
+        response = self.client.get(
+            self.order_details_url,
+            {'service_date': '2026-08-05', 'meal_period': 'dinner'},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 0)
+        self.assertEqual(response.data['customers'], [])
+
+    def test_order_details_package_filter(self):
+        self._auth(self.admin_token)
+        response = self.client.get(
+            self.order_details_url,
+            {
+                'service_date': '2026-08-05',
+                'meal_period': 'lunch',
+                'package_public_id': str(self.meal.public_id),
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+
+    def test_order_details_package_filter_not_found(self):
+        self._auth(self.admin_token)
+        response = self.client.get(
+            self.order_details_url,
+            {
+                'service_date': '2026-08-05',
+                'meal_period': 'lunch',
+                'package_public_id': '00000000-0000-0000-0000-000000000099',
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_order_details_empty_day(self):
+        self._auth(self.admin_token)
+        response = self.client.get(
+            self.order_details_url,
+            {'service_date': '2026-08-06', 'meal_period': 'lunch'},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 0)
+        self.assertEqual(response.data['customers'], [])
+
+    def test_order_details_customer_denied(self):
+        self._auth(self.customer_token)
+        response = self.client.get(self.order_details_url)
         self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
 
     def test_history_after_confirm_and_frozen_qty(self):

@@ -7,10 +7,12 @@ Admin/Kitchen tooling that turns order deliveries + meal-offs into **expected / 
 | Method | Path | Who | Purpose |
 |--------|------|-----|---------|
 | GET | `/orders/meal-statistics/` | Verified admin | Date/period/package demand analytics |
-| GET | `/orders/kitchen/today-meal-requirement/` | Verified admin | Cook headcount, package-wise summary, item-wise contributions + kg |
+| GET | `/orders/kitchen/today-meal-requirement/` | Verified admin | Cook headcount, package-wise summary, item-wise contributions + kg (aggregate only — no per-customer list) |
+| GET | `/orders/kitchen/today-order-details/` | Verified admin | Cooking customer rows for Order Details PDF (name, phone, package, address) |
 | GET | `/orders/meal-history/` | Verified admin | Persisted snapshots (not live recalculation) |
 | GET | `/api/v1/web/orders/meal-statistics/` | Verified admin | Same handlers (web-prefixed alias) |
 | GET | `/api/v1/web/orders/kitchen/today-meal-requirement/` | Verified admin | Same handlers (web-prefixed alias) |
+| GET | `/api/v1/web/orders/kitchen/today-order-details/` | Verified admin | Same handlers (web-prefixed alias) |
 | GET | `/api/v1/web/orders/meal-history/` | Verified admin | Same handlers (web-prefixed alias) |
 | — | `python manage.py confirm_meal_demand_snapshots` | Ops | Upsert confirmed snapshots |
 

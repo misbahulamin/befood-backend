@@ -29,6 +29,8 @@ Obtain the DRF auth token from the existing login endpoint (`POST /user_manageme
 2. Request FCM token from Firebase in Flutter (`FirebaseMessaging.instance.getToken()`).
 3. Call **register** (below) with the FCM token and platform.
 
+This step is required even when the account was created on the website. Optional: include `device_token` + `platform` on the login request body so the backend upserts in the same call — still keep the dedicated register call as the reliable path.
+
 ### 2. When FCM token refreshes
 
 Firebase may emit a new token while the app runs. Listen for token refresh and call **register** again with the new token. The backend upserts — no duplicate rows.

@@ -1,4 +1,3 @@
-from django.contrib.auth.models import User
 from django.contrib.auth import login as django_login
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import HttpResponse
@@ -14,11 +13,10 @@ from ..services.admin_access import is_verified_admin
 from ..services.auth_service import get_admin_login_response, get_login_response, register_customer
 from ..services.auth_otp import AuthOTPError
 from ..services.email_verification import (
-    get_user_from_uid,
-    mark_email_verified,
+    resend_verification_email,
     send_activation_email,
+    verify_email_link,
     verify_email_with_otp,
-    verify_token,
 )
 from ..services.password_reset import (
     PasswordResetError,
@@ -85,32 +83,40 @@ class CustomerRegistrationView(APIView):
             ),
         ],
         description=(
-            'Register a new customer with email and password. '
+            'Start customer registration with email and password. '
+            'Creates a temporary pending registration only; the permanent '
+            'User account is created after email verification succeeds. '
             'Profile fields are optional during the compatibility window. '
-            'Sends the existing verification email.'
+            'Sends the verification email (OTP + link).'
         ),
     )
     def post(self, request):
         serializer = CustomerRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user, _ = register_customer(serializer.validated_data, request)
-        return Response({'message': 'Registration successful. Please check your email to verify your account.', 'email': user.email}, status=status.HTTP_201_CREATED)
+        pending, _ = register_customer(serializer.validated_data, request)
+        return Response(
+            {
+                'message': 'Registration successful. Please check your email to verify your account.',
+                'email': pending.email,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class VerifyEmailView(APIView):
     permission_classes = [permissions.AllowAny]
 
-    @extend_schema(tags=['Customer Auth'], description='Verify customer email using uid and token.')
+    @extend_schema(
+        tags=['Customer Auth'],
+        description=(
+            'Verify customer email using uid and token. '
+            'For new signups this finalizes a pending registration into an active account. '
+            'Legacy inactive unverified users are still supported.'
+        ),
+    )
     def get(self, request, uidb64, token):
-        user = get_user_from_uid(uidb64)
-        if not user:
-            return Response({'detail': 'Invalid or expired verification link.'}, status=status.HTTP_400_BAD_REQUEST)
-        if hasattr(user, 'customer_profile') and user.customer_profile.is_email_verified:
-            return Response({'message': 'Email is already verified.'}, status=status.HTTP_200_OK)
-        if not verify_token(user, token):
-            return Response({'detail': 'Invalid or expired verification link.'}, status=status.HTTP_400_BAD_REQUEST)
-        mark_email_verified(user.customer_profile)
-        return Response({'message': 'Email verified successfully. You can now login.'})
+        body, http_status = verify_email_link(uidb64, token)
+        return Response(body, status=http_status)
 
 
 class ResendVerificationView(APIView):
@@ -120,20 +126,15 @@ class ResendVerificationView(APIView):
         tags=['Customer Auth'],
         request=ResendVerificationSerializer,
         description=(
-            'Resend the verification email (OTP + link) for an unverified account. '
-            'Respects OTP cooldown and hourly issue caps.'
+            'Resend the verification email (OTP + link) for a pending registration '
+            'or legacy unverified account. Respects OTP cooldown and hourly issue caps.'
         ),
     )
     def post(self, request):
         serializer = ResendVerificationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = User.objects.filter(email__iexact=serializer.validated_data['email']).first()
-        if not user or not hasattr(user, 'customer_profile'):
-            return Response({'message': 'If the account exists, verification instructions will be sent.'})
-        if user.customer_profile.is_email_verified:
-            return Response({'message': 'This email is already verified.'})
-        send_activation_email(request, user)
-        return Response({'message': 'Verification email has been sent again.'})
+        payload = resend_verification_email(request, serializer.validated_data['email'])
+        return Response(payload)
 
 
 class VerifyEmailOTPView(APIView):
@@ -142,7 +143,10 @@ class VerifyEmailOTPView(APIView):
     @extend_schema(
         tags=['Customer Auth'],
         request=EmailOTPVerifySerializer,
-        description='Verify customer email using a 6-digit OTP from the activation email.',
+        description=(
+            'Verify customer email using a 6-digit OTP from the activation email. '
+            'On success, creates the permanent customer account from the pending registration.'
+        ),
     )
     def post(self, request):
         serializer = EmailOTPVerifySerializer(data=request.data)
@@ -395,8 +399,10 @@ class CustomerLoginView(APIView):
         tags=['Customer Auth'],
         request=CustomerLoginSerializer,
         description=(
-            'Login customer using email and password. Unverified accounts receive a '
-            'not-verified error and a verification email when cooldown allows.'
+            'Login customer using email and password. Optional device_token + platform '
+            'upsert the FCM token after success. Unverified legacy accounts receive a '
+            'not-verified error and a verification email when cooldown allows. '
+            'Pending-only emails (never verified) return invalid credentials.'
         ),
     )
     def post(self, request):
@@ -417,7 +423,18 @@ class CustomerLoginView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        response_data = get_login_response(serializer.validated_data['user'])
+        user = serializer.validated_data['user']
+        response_data = get_login_response(user)
+        device_token = serializer.validated_data.get('device_token')
+        platform = serializer.validated_data.get('platform')
+        if device_token and platform:
+            from notifications.services.device_service import DeviceTokenError, register_device_token
+
+            try:
+                register_device_token(user, device_token, platform)
+            except DeviceTokenError:
+                # Login still succeeds; client can retry via /notifications/device-token/.
+                pass
         return Response(response_data)
 
 

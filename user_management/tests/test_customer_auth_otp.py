@@ -8,7 +8,7 @@ from django.utils import timezone
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
-from user_management.models import CustomerAuthOTP, CustomerProfile
+from user_management.models import CustomerAuthOTP, CustomerProfile, PendingCustomerRegistration
 from user_management.services.auth_otp import (
     PURPOSE_EMAIL_VERIFICATION,
     PURPOSE_PASSWORD_RESET,
@@ -289,9 +289,11 @@ class CustomerAuthOTPTests(TestCase):
         self.assertRegex(body, r'\b\d{6}\b')
         self.assertIn('/verify-email/', body)
         self.assertRegex(html, r'\d{6}')
-        user = User.objects.get(email='regotp@example.com')
-        row = CustomerAuthOTP.objects.get(user=user, purpose=PURPOSE_EMAIL_VERIFICATION)
-        self.assertNotRegex(row.code_hash, r'^\d{6}$')
+        self.assertRegex(mail.outbox[0].subject, r'^\d{6} is your sign-in verification code$')
+        self.assertFalse(User.objects.filter(email='regotp@example.com').exists())
+        pending = PendingCustomerRegistration.objects.get(email='regotp@example.com')
+        self.assertTrue(pending.otp_code_hash)
+        self.assertNotRegex(pending.otp_code_hash, r'^\d{6}$')
 
     def test_password_reset_request_email_includes_otp_and_link(self):
         user = self.create_verified_customer(email='resetmail@example.com')

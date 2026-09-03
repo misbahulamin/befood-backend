@@ -2,7 +2,8 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from ..models import CustomerProfile
+from ..models import CustomerProfile, DeviceToken, PendingCustomerRegistration
+from ..services.pending_registration import email_owned_by_verified_customer
 
 
 class CustomerProfileSerializer(serializers.ModelSerializer):
@@ -34,6 +35,12 @@ class CustomerRegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError('Phone must be exactly 10 digits and digits only.')
         if CustomerProfile.objects.filter(phone=value).exists():
             raise serializers.ValidationError('Phone already exists.')
+        pending_qs = PendingCustomerRegistration.objects.filter(phone=value)
+        email = (self.initial_data.get('email') or '').strip().lower()
+        if email:
+            pending_qs = pending_qs.exclude(email__iexact=email)
+        if pending_qs.exists():
+            raise serializers.ValidationError('Phone already exists.')
         return value
 
     def validate_occupation(self, value):
@@ -49,7 +56,11 @@ class CustomerRegistrationSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         value = value.lower()
-        if User.objects.filter(email__iexact=value).exists():
+        if email_owned_by_verified_customer(value):
+            raise serializers.ValidationError('Email already exists.')
+        # Non-customer accounts (admin/staff) still block the email.
+        user = User.objects.filter(email__iexact=value).first()
+        if user is not None and not hasattr(user, 'customer_profile'):
             raise serializers.ValidationError('Email already exists.')
         return value
 
@@ -67,6 +78,20 @@ from ..services.admin_access import is_verified_admin
 class CustomerLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+    device_token = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=255,
+        help_text='Optional FCM device token to upsert after successful login.',
+    )
+    platform = serializers.ChoiceField(
+        choices=DeviceToken.Platform.choices,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text='Platform for optional device_token (android/ios/web).',
+    )
 
     def validate(self, attrs):
         email = attrs.get('email').lower()
@@ -82,8 +107,16 @@ class CustomerLoginSerializer(serializers.Serializer):
             attrs['user'] = user
             attrs['email_not_verified'] = True
             return attrs
+        device_token = (attrs.get('device_token') or '').strip()
+        platform = attrs.get('platform') or ''
+        if device_token and not platform:
+            raise serializers.ValidationError(
+                {'platform': ['Platform is required when device_token is provided.']}
+            )
         attrs['user'] = user
         attrs['email_not_verified'] = False
+        attrs['device_token'] = device_token or None
+        attrs['platform'] = platform or None
         return attrs
 
 

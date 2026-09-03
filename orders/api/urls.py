@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     KitchenTodayMealRequirementView,
+    KitchenTodayOrderDetailsView,
     MealDemandHistoryView,
     MealOffSettingsView,
     MealOrderViewSet,
@@ -29,6 +30,11 @@ urlpatterns = [
         'kitchen/today-meal-requirement/',
         KitchenTodayMealRequirementView.as_view(),
         name='kitchen-today-meal-requirement',
+    ),
+    path(
+        'kitchen/today-order-details/',
+        KitchenTodayOrderDetailsView.as_view(),
+        name='kitchen-today-order-details',
     ),
     path('meal-history/', MealDemandHistoryView.as_view(), name='meal-history'),
     path('', include(router.urls)),

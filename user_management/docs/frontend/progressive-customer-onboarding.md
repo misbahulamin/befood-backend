@@ -24,8 +24,8 @@ Do **not** treat incomplete onboarding as a login blocker.
 
 ## Suggested client flow
 
-1. `POST /user_management/customer/register/` with `{ email, password }`
-2. User verifies email via link (existing flow)
+1. `POST /user_management/customer/register/` with `{ email, password }` (pending only — no User yet)
+2. User verifies email via OTP or link → **account is created**
 3. `POST /user_management/login/`
 4. `GET /user_management/me/` → read `onboarding_completion.missing_fields`
 5. For each UI step, `PATCH /user_management/customer/profile/` with only that step’s fields
