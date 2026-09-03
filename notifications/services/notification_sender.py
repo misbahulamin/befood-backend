@@ -12,6 +12,7 @@ from django.utils import timezone
 from notifications.models import PushCampaign, PushCampaignRecipient
 from notifications.services.device_service import deactivate_device_token_by_value
 from notifications.services.fcm_service import FCMNotConfiguredError, send_to_tokens
+from notifications.services.inbox_service import create_inbox_notification
 from notifications.services.notification_filter import (
     TARGET_TYPE_MAP,
     count_eligible_users,
@@ -27,6 +28,25 @@ IDEMPOTENCY_KEY_TTL_HOURS = 24
 FINGERPRINT_DEDUP_MINUTES = 5
 RECIPIENT_BULK_SIZE = 1000
 STUCK_CAMPAIGN_MINUTES = 30
+
+_DEFAULT_SCREEN_BY_TYPE = {
+    'order': 'my_meal',
+    'wallet': 'wallet',
+    'delivery': 'delivery_places',
+    'promotion': 'offer',
+    'system': 'home',
+}
+
+
+def _with_navigable_data(data: dict | None, notification_type: str) -> dict:
+    payload = dict(data or {})
+    if notification_type and 'type' not in payload:
+        payload['type'] = notification_type
+    if 'screen' not in payload:
+        default_screen = _DEFAULT_SCREEN_BY_TYPE.get(str(notification_type).lower())
+        if default_screen:
+            payload['screen'] = default_screen
+    return payload
 
 
 class DuplicateCampaignError(Exception):
@@ -119,7 +139,7 @@ def create_campaign(
         title=title.strip(),
         body=body.strip(),
         notification_type=notification_type,
-        data=data or {},
+        data=_with_navigable_data(data, notification_type),
         created_by=created_by,
         ip_address=ip_address or None,
         user_agent=(user_agent or '')[:512],
@@ -212,6 +232,19 @@ def dispatch_push_campaign(campaign_id: int) -> None:
             update_fields=['status', 'total_sent', 'total_failed', 'total_skipped', 'updated_at']
         )
         return
+
+    # One inbox row per unique user (best-effort; never blocks FCM).
+    inbox_users = {recipient.user for recipient in pending_recipients if recipient.user_id}
+    campaign_data = campaign.data if isinstance(campaign.data, dict) else {}
+    for user in inbox_users:
+        create_inbox_notification(
+            user,
+            title=campaign.title,
+            body=campaign.body,
+            notification_type=campaign.notification_type or campaign_data.get('type', ''),
+            screen=str(campaign_data.get('screen') or ''),
+            data=campaign_data,
+        )
 
     try:
         results = send_to_tokens(tokens, campaign.title, campaign.body, campaign.data)

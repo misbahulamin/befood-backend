@@ -6,6 +6,7 @@ import logging
 
 from notifications.services.device_service import get_user_device_tokens
 from notifications.services.fcm_service import FCMNotConfiguredError, send_to_tokens
+from notifications.services.inbox_service import create_inbox_notification
 from orders.services.subscription_parent import delivery_customer, delivery_meal_name
 
 logger = logging.getLogger(__name__)
@@ -22,15 +23,6 @@ def notify_meal_delivered(delivery) -> None:
         if customer is None or getattr(customer, 'user_id', None) is None:
             logger.info(
                 'Skipping meal-delivered notify: no customer for delivery_id=%s',
-                getattr(delivery, 'pk', None),
-            )
-            return
-
-        tokens = get_user_device_tokens(customer.user)
-        if not tokens:
-            logger.info(
-                'Skipping meal-delivered notify: no active device tokens user_id=%s delivery_id=%s',
-                customer.user_id,
                 getattr(delivery, 'pk', None),
             )
             return
@@ -53,6 +45,24 @@ def notify_meal_delivered(delivery) -> None:
             data['subscription_public_id'] = str(delivery.subscription.public_id)
         if delivery.order_id:
             data['order_public_id'] = str(delivery.order.public_id)
+
+        create_inbox_notification(
+            customer.user,
+            title=title,
+            body=body,
+            notification_type='meal_delivered',
+            screen='my_meal',
+            data=data,
+        )
+
+        tokens = get_user_device_tokens(customer.user)
+        if not tokens:
+            logger.info(
+                'Skipping meal-delivered notify: no active device tokens user_id=%s delivery_id=%s',
+                customer.user_id,
+                getattr(delivery, 'pk', None),
+            )
+            return
 
         send_to_tokens(tokens, title, body, data)
     except FCMNotConfiguredError:

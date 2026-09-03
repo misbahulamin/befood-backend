@@ -8,15 +8,41 @@ class NotificationTemplateSerializer(serializers.ModelSerializer):
         model = NotificationTemplate
         fields = "__all__"
 
+
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = "__all__"
+        read_only_fields = ('user', 'created_at')
+
+
+class InboxNotificationSerializer(serializers.ModelSerializer):
+    """Customer-facing inbox item."""
+
+    class Meta:
+        model = Notification
+        fields = (
+            'id',
+            'title',
+            'body',
+            'is_read',
+            'notification_type',
+            'screen',
+            'data',
+            'created_at',
+        )
+        read_only_fields = fields
+
+
+class UnreadCountSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+
 
 class NotificationPreferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationPreference
         fields = "__all__"
+
 
 class PushLogSerializer(serializers.ModelSerializer):
     class Meta:

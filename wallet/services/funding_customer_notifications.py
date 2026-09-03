@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from notifications.services.device_service import get_user_device_tokens
 from notifications.services.fcm_service import FCMNotConfiguredError, send_to_tokens
+from notifications.services.inbox_service import create_inbox_notification
 from user_management.services.email_branding import build_brand_email_context
 from wallet.models import WalletTransaction
 from wallet.services.transaction_invoice import build_invoice_context
@@ -26,15 +27,6 @@ def _format_amount(value) -> str:
 
 
 def _send_recharge_approved_push(*, user, txn: WalletTransaction, amount, balance) -> None:
-    tokens = get_user_device_tokens(user)
-    if not tokens:
-        logger.info(
-            'Skipping recharge-approved push: no tokens user_id=%s txn=%s',
-            getattr(user, 'pk', None),
-            txn.public_id,
-        )
-        return
-
     amount_s = _format_amount(amount)
     balance_s = _format_amount(balance)
     reviewed_at = txn.reviewed_at or timezone.now()
@@ -53,6 +45,22 @@ def _send_recharge_approved_push(*, user, txn: WalletTransaction, amount, balanc
         'invoice_number': txn.invoice_number or '',
         'approved_at': timezone.localtime(reviewed_at).isoformat(),
     }
+    create_inbox_notification(
+        user,
+        title=title,
+        body=body,
+        notification_type='wallet_recharge_approved',
+        screen=RECHARGE_APPROVED_SCREEN,
+        data=data,
+    )
+    tokens = get_user_device_tokens(user)
+    if not tokens:
+        logger.info(
+            'Skipping recharge-approved push: no tokens user_id=%s txn=%s',
+            getattr(user, 'pk', None),
+            txn.public_id,
+        )
+        return
     send_to_tokens(tokens, title, body, data)
 
 

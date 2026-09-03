@@ -13,6 +13,7 @@ from django.template.loader import render_to_string
 
 from notifications.services.device_service import get_user_device_tokens
 from notifications.services.fcm_service import FCMNotConfiguredError, send_to_tokens
+from notifications.services.inbox_service import create_inbox_notification
 from orders.services.wallet_balance_thresholds import AffectedUserRow
 from user_management.services.email_branding import (
     BRAND_DEEP_INK,
@@ -28,6 +29,14 @@ logger = logging.getLogger(__name__)
 
 def _send_customer_push(*, user, title: str, body: str, data: dict) -> None:
     tokens = get_user_device_tokens(user)
+    create_inbox_notification(
+        user,
+        title=title,
+        body=body,
+        notification_type=str(data.get('type') or ''),
+        screen=str(data.get('screen') or ''),
+        data=data,
+    )
     if not tokens:
         logger.info(
             'Skipping wallet-threshold push: no tokens user_id=%s type=%s',

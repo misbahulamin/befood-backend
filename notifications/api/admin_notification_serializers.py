@@ -8,8 +8,17 @@ from rest_framework import serializers
 
 from notifications.models import PushCampaign, PushCampaignRecipient
 
-ALLOWED_DATA_KEYS = frozenset({'screen', 'entity_type', 'entity_id'})
+ALLOWED_DATA_KEYS = frozenset({'type', 'screen', 'entity_type', 'entity_id'})
 MAX_DATA_BYTES = 4096
+
+
+_DEFAULT_SCREEN_BY_TYPE = {
+    'order': 'my_meal',
+    'wallet': 'wallet',
+    'delivery': 'delivery_places',
+    'promotion': 'offer',
+    'system': 'home',
+}
 
 
 class PushCampaignDataSerializer(serializers.Serializer):
@@ -59,6 +68,13 @@ class PushCampaignSendSerializer(serializers.Serializer):
                 )
         nested = attrs.get('data') or {}
         payload = {key: str(val) for key, val in nested.items() if val is not None and val != ''}
+        notification_type = attrs.get('notification_type') or ''
+        if notification_type and 'type' not in payload:
+            payload['type'] = str(notification_type)
+        if 'screen' not in payload:
+            default_screen = _DEFAULT_SCREEN_BY_TYPE.get(str(notification_type).lower())
+            if default_screen:
+                payload['screen'] = default_screen
         if len(json.dumps(payload).encode('utf-8')) > MAX_DATA_BYTES:
             raise serializers.ValidationError({'data': 'Data payload exceeds 4 KB.'})
         attrs['data'] = payload

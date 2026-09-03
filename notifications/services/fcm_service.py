@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 
 from django.conf import settings
 
+
 FCM_BATCH_SIZE = 500
+logger = logging.getLogger(__name__)
 
 
 class FCMNotConfiguredError(Exception):
@@ -51,9 +54,27 @@ def _classify_error(exc: Exception) -> tuple[str, bool]:
         'registration-token-not-registered',
         'invalid-registration',
         'not registered',
+        'invalid-argument',
+        'requested entity was not found',
     )
     is_invalid = any(marker in lowered for marker in invalid_markers)
     return error_text, is_invalid
+
+
+def _android_channel_id(data: dict[str, str]) -> str:
+    """Map payload type/screen to mobile NotificationChannels ids."""
+    raw_type = (data.get('type') or '').lower()
+    screen = (data.get('screen') or '').lower()
+    if raw_type.startswith('wallet') or screen in {'wallet', '/wallet'}:
+        return 'befood_wallet'
+    if raw_type.startswith('delivery') or screen in {
+        'delivery_places',
+        '/delivery-places',
+    }:
+        return 'befood_delivery'
+    if raw_type.startswith('promotion') or screen in {'offer', '/offer'}:
+        return 'befood_promotion'
+    return 'befood_order'
 
 
 def send_to_token(token: str, title: str, body: str, data: dict | None = None) -> SendResult:
@@ -70,6 +91,7 @@ def send_to_tokens(tokens: list[str], title: str, body: str, data: dict | None =
     from firebase_admin import messaging
 
     payload_data = _stringify_data(data)
+    channel_id = _android_channel_id(payload_data)
     all_results: list[SendResult] = []
 
     for offset in range(0, len(tokens), FCM_BATCH_SIZE):
@@ -78,6 +100,12 @@ def send_to_tokens(tokens: list[str], title: str, body: str, data: dict | None =
             notification=messaging.Notification(title=title, body=body),
             data=payload_data,
             tokens=batch,
+            android=messaging.AndroidConfig(
+                priority='high',
+                notification=messaging.AndroidNotification(
+                    channel_id=channel_id,
+                ),
+            ),
         )
         response = messaging.send_each_for_multicast(message, dry_run=False)
         for index, item in enumerate(response.responses):
@@ -88,7 +116,21 @@ def send_to_tokens(tokens: list[str], title: str, body: str, data: dict | None =
                     SendResult(token=token, success=True, message_id=message_id)
                 )
             else:
-                error_text, is_invalid = _classify_error(item.exception or Exception('Unknown FCM error'))
+                error_text, is_invalid = _classify_error(
+                    item.exception or Exception('Unknown FCM error')
+                )
+                if is_invalid:
+                    logger.warning(
+                        'FCM invalid token deactivated candidate token_suffix=%s error=%s',
+                        token[-8:] if len(token) >= 8 else token,
+                        error_text,
+                    )
+                else:
+                    logger.warning(
+                        'FCM send failed token_suffix=%s error=%s',
+                        token[-8:] if len(token) >= 8 else token,
+                        error_text,
+                    )
                 all_results.append(
                     SendResult(
                         token=token,
@@ -98,4 +140,13 @@ def send_to_tokens(tokens: list[str], title: str, body: str, data: dict | None =
                     )
                 )
 
+    success_count = sum(1 for r in all_results if r.success)
+    fail_count = len(all_results) - success_count
+    logger.info(
+        'FCM multicast done title=%r success=%s failed=%s channel=%s',
+        title,
+        success_count,
+        fail_count,
+        channel_id,
+    )
     return all_results
