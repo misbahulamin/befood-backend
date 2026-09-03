@@ -107,11 +107,17 @@ class WalletBalanceThresholdTests(TestCase):
         self._subscribe()
         self.wallet.balance = Decimal('298.00')
         self.wallet.save(update_fields=['balance', 'updated_at'])
+        DeviceToken.objects.create(
+            user=self.customer_user,
+            token='thresh-reminder-token',
+            platform=DeviceToken.Platform.ANDROID,
+            is_active=True,
+        )
 
         with patch(
             'notifications.services.wallet_threshold_notifications.send_to_tokens',
             return_value=[],
-        ):
+        ) as send_push:
             first = run_wallet_threshold_check(as_of=self.business_date, dry_run=False)
             second = run_wallet_threshold_check(as_of=self.business_date, dry_run=False)
 
@@ -120,6 +126,10 @@ class WalletBalanceThresholdTests(TestCase):
         self.customer_profile.refresh_from_db()
         self.assertEqual(self.customer_profile.last_low_balance_reminder_on, self.business_date)
         self.assertTrue(any('Low balance' in m.subject for m in mail.outbox))
+        self.assertEqual(send_push.call_count, 1)
+        _tokens, _title, _body, data = send_push.call_args[0]
+        self.assertEqual(data['type'], 'wallet_low_balance')
+        self.assertEqual(data['screen'], 'wallet')
 
     def test_meal_stop_blocks_auto_delivery_allows_admin_mark(self):
         subscription = self._subscribe()
@@ -138,16 +148,26 @@ class WalletBalanceThresholdTests(TestCase):
 
         self.wallet.balance = Decimal('170.00')
         self.wallet.save(update_fields=['balance', 'updated_at'])
+        DeviceToken.objects.create(
+            user=self.customer_user,
+            token='thresh-stop-token',
+            platform=DeviceToken.Platform.ANDROID,
+            is_active=True,
+        )
 
         with patch(
             'notifications.services.wallet_threshold_notifications.send_to_tokens',
             return_value=[],
-        ):
+        ) as send_push:
             result = run_wallet_threshold_check(as_of=self.business_date, dry_run=False)
 
         self.assertEqual(result.stopped, 1)
         self.customer_profile.refresh_from_db()
         self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)
+        self.assertEqual(send_push.call_count, 1)
+        _tokens, _title, _body, data = send_push.call_args[0]
+        self.assertEqual(data['type'], 'wallet_meal_stop')
+        self.assertEqual(data['screen'], 'wallet')
 
         qs = eligible_delivery_queryset(self.business_date, OrderDelivery.MealPeriod.LUNCH)
         self.assertFalse(qs.filter(pk=delivery.pk).exists())

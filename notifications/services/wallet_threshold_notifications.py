@@ -77,6 +77,7 @@ def notify_customer_low_balance_reminder(
         )
         data = {
             'type': 'wallet_low_balance',
+            'screen': 'wallet',
             'balance': f'{balance:.2f}',
             'reminder_threshold': f'{reminder_threshold:.2f}',
             'meal_stop_threshold': f'{meal_stop_threshold:.2f}',
@@ -125,6 +126,7 @@ def notify_customer_meal_stop(
         )
         data = {
             'type': 'wallet_meal_stop',
+            'screen': 'wallet',
             'balance': f'{balance:.2f}',
             'meal_stop_threshold': f'{meal_stop_threshold:.2f}',
         }

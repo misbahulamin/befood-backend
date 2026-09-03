@@ -196,23 +196,32 @@ Summary chips: Sent / Failed / Skipped counts.
 
 ## Flutter deep-link payload
 
-FCM `data` keys consumed by mobile app:
+FCM `data` keys consumed by mobile app (`befood_mobile` notification click navigation):
 
 ```json
 {
-  "screen": "order_detail",
-  "entity_type": "order",
+  "type": "promotion",
+  "screen": "promotion_detail",
+  "entity_type": "promotion",
   "entity_id": "123"
 }
 ```
 
+| Field | Notes |
+|-------|-------|
+| `type` | Category (`order`, `wallet`, `delivery`, `promotion`) or event key |
+| `screen` | Logical key (`wallet`, `my_meal`, `offer`, …) or absolute path (`/wallet`) |
+| `entity_type` / `entity_id` | Optional; forwarded unchanged |
+
 | notification_type | Suggested screen |
 |-------------------|------------------|
-| order | `order_detail` |
+| order | `my_meal` (or `order_detail` → maps to `/my-meal`) |
 | wallet | `wallet` |
-| delivery | `delivery_tracking` |
-| promotion | `promotion_detail` |
+| delivery | `delivery_places` |
+| promotion | `promotion_detail` / `offer` |
 | system | `home` |
+
+Admin campaign `data` keys (`screen`, `entity_type`, `entity_id`) are forwarded to FCM unchanged.
 
 ---
 

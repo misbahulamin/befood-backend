@@ -42,6 +42,9 @@ def notify_meal_delivered(delivery) -> None:
         body = f'{period} ({meal_name}) for {service_date} has been delivered.'
         data = {
             'type': 'meal_delivered',
+            'screen': 'my_meal',
+            'entity_type': 'delivery',
+            'entity_id': str(delivery.public_id),
             'delivery_public_id': str(delivery.public_id),
             'meal_period': delivery.meal_period or '',
             'service_date': service_date,

@@ -300,6 +300,13 @@ class AutoMealDeliveryTests(TestCase):
 
         mark_delivery_and_notify(delivery, 'delivered', marked_by=self.admin_user)
         self.assertEqual(mock_send.call_count, 1)
+        _tokens, title, body, data = mock_send.call_args[0]
+        self.assertEqual(title, 'Meal delivered')
+        self.assertEqual(data['type'], 'meal_delivered')
+        self.assertEqual(data['screen'], 'my_meal')
+        self.assertEqual(data['entity_type'], 'delivery')
+        self.assertEqual(data['entity_id'], str(delivery.public_id))
+        self.assertEqual(data['delivery_public_id'], str(delivery.public_id))
 
         _order2, delivery2 = self._order_lunch(self.customer_profile_b)
         ensure_priced_delivery_slot(

@@ -125,6 +125,9 @@ class AdminPushNotificationAPITests(APITestCase):
         campaign.refresh_from_db()
         self.assertEqual(campaign.target_type, PushCampaign.TargetType.SINGLE_USER)
         self.assertEqual(campaign.total_sent, 1)
+        self.assertEqual(campaign.data.get('screen'), 'order_detail')
+        self.assertEqual(campaign.data.get('entity_type'), 'order')
+        self.assertEqual(campaign.data.get('entity_id'), '123')
 
     def test_send_to_selected_users(self):
         self._auth_admin()
