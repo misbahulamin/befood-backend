@@ -10,6 +10,7 @@ SESSION_COOKIE_SECURE = True
 ALLOWED_HOSTS = ["api.befood.com.bd",'localhost', '127.0.0.1']
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -22,6 +23,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'drf_spectacular',
+    'channels',
     'business',
     'core',
     'permissions',
@@ -44,6 +46,7 @@ INSTALLED_APPS = [
     'blogs',
     'onahar',
     'app_config',
+    'support',
 ]
 
 MIDDLEWARE = [
@@ -318,3 +321,22 @@ CSRF_TRUSTED_ORIGINS = [
 # Firebase
 # --------------------------
 FIREBASE_CREDENTIALS = BASE_DIR / 'credentials' / 'firebase_service_account.json'
+
+# --------------------------
+# Django Channels / support chat
+# --------------------------
+# Prefer CHANNEL_REDIS_URL; fall back to REDIS_URL. Tests override to InMemory.
+CHANNEL_REDIS_URL = config(
+    'CHANNEL_REDIS_URL',
+    default=config('REDIS_URL', default='redis://127.0.0.1:6379/0'),
+)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [CHANNEL_REDIS_URL],
+        },
+    },
+}
+SUPPORT_PRESENCE_TTL_SECONDS = config('SUPPORT_PRESENCE_TTL_SECONDS', default=60, cast=int)
+SUPPORT_MESSAGE_MAX_LENGTH = config('SUPPORT_MESSAGE_MAX_LENGTH', default=5000, cast=int)

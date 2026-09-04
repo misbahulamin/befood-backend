@@ -35,6 +35,8 @@ urlpatterns = [
     path('api/v1/web/search/', include('search.api.web_urls')),
     path('api/v1/web/notifications/', include('notifications.api.web_urls')),
     path('notifications/', include('notifications.api.urls')),
+    path('api/v1/support/', include('support.api.urls')),
+    path('api/v1/web/support/', include('support.api.web_urls')),
     path('app-config/', include('app_config.api.urls')),
     path('api/v1/web/app-config/', include('app_config.api.web_urls')),
 ]

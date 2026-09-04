@@ -8,6 +8,12 @@ DEBUG = True
 # Dedicated service_area gate tests re-enable via override_settings.
 if len(sys.argv) > 1 and sys.argv[1] == 'test':
     SERVICE_AREA_ORDER_GATE_ENABLED = False
+    # Channels tests must not require a live Redis server.
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
 
 ALLOWED_HOSTS = [
     "*",
