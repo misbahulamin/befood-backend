@@ -41,8 +41,8 @@ Deadlines reuse `MealOffSettings` (default Asia/Dhaka):
 
 | Period | Deadline |
 |--------|----------|
-| Lunch on D | D−1 at `lunch_off_time` (default 23:59) |
-| Dinner on D | D at `dinner_off_time` (default 14:00) |
+| Lunch on D | D at `lunch_off_time` (default 00:00) |
+| Dinner on D | D at `dinner_off_time` (default 16:00) |
 
 Kitchen default period (no query params): today in meal-off TZ; **lunch** if local time `< dinner_off_time`, else **dinner**.
 
@@ -85,7 +85,7 @@ Uses `Decimal` (not float). Quantities serialized as decimal strings.
       "service_date": "2026-08-05",
       "meal_period": "dinner",
       "confirmation_status": "estimated",
-      "meal_off_deadline_at": "2026-08-05T14:00:00+06:00",
+      "meal_off_deadline_at": "2026-08-05T16:00:00+06:00",
       "total_customers": 500,
       "expected_meal_count": 500,
       "meal_off_count": 50,

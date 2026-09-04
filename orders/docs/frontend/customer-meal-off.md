@@ -75,8 +75,8 @@ Fields: `timezone`, `lunch_off_time`, `dinner_off_time`.
 
 Label clearly:
 
-- Lunch off time = deadline on the **day before** lunch (gates Off **and** On)
-- Dinner off time = deadline on the **same day** as dinner (gates Off **and** On)
+- Lunch off time = deadline on the **same day** as lunch (gates Off **and** On; default `00:00`)
+- Dinner off time = deadline on the **same day** as dinner (gates Off **and** On; default `16:00`)
 
 ## Edge cases
 

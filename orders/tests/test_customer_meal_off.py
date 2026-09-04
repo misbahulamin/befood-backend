@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from decimal import Decimal
 from io import BytesIO
 from unittest.mock import patch
@@ -39,76 +39,76 @@ class MealOffDeadlineHelperTests(SimpleTestCase):
     def setUp(self):
         self.settings_obj = MealOffSettings(
             timezone='Asia/Dhaka',
-            lunch_off_time=time(23, 59),
-            dinner_off_time=time(14, 0),
+            lunch_off_time=time(0, 0),
+            dinner_off_time=time(16, 0),
         )
 
-    def test_lunch_deadline_is_previous_day_2359(self):
-        deadline = meal_off_deadline(date(2026, 7, 24), 'lunch', self.settings_obj)
-        self.assertEqual(deadline.date(), date(2026, 7, 23))
-        self.assertEqual(deadline.time(), time(23, 59))
+    def test_lunch_deadline_is_same_day_0000(self):
+        deadline = meal_off_deadline(date(2026, 7, 1), 'lunch', self.settings_obj)
+        self.assertEqual(deadline.date(), date(2026, 7, 1))
+        self.assertEqual(deadline.time(), time(0, 0))
         self.assertEqual(str(deadline.tzinfo), 'Asia/Dhaka')
 
-    def test_dinner_deadline_is_same_day_1400(self):
-        deadline = meal_off_deadline(date(2026, 7, 23), 'dinner', self.settings_obj)
-        self.assertEqual(deadline.date(), date(2026, 7, 23))
-        self.assertEqual(deadline.time(), time(14, 0))
+    def test_dinner_deadline_is_same_day_1600(self):
+        deadline = meal_off_deadline(date(2026, 7, 1), 'dinner', self.settings_obj)
+        self.assertEqual(deadline.date(), date(2026, 7, 1))
+        self.assertEqual(deadline.time(), time(16, 0))
 
-    def test_can_meal_off_inclusive_at_deadline(self):
+    def test_can_meal_off_inclusive_at_lunch_deadline(self):
         delivery = OrderDelivery(
-            service_date=date(2026, 7, 24),
+            service_date=date(2026, 7, 1),
             meal_period='lunch',
             status=OrderDelivery.DeliveryStatus.SCHEDULED,
         )
         delivery.order = Order(order_status=Order.OrderStatus.ACTIVE)
         tz = ZoneInfo('Asia/Dhaka')
-        at_deadline = datetime(2026, 7, 23, 23, 59, 0, tzinfo=tz)
-        just_after = datetime(2026, 7, 23, 23, 59, 1, tzinfo=tz)
+        at_deadline = datetime(2026, 7, 1, 0, 0, 0, tzinfo=tz)
+        just_after = datetime(2026, 7, 1, 0, 0, 1, tzinfo=tz)
         self.assertTrue(can_meal_off(delivery, now=at_deadline, settings_obj=self.settings_obj))
         self.assertFalse(can_meal_off(delivery, now=just_after, settings_obj=self.settings_obj))
 
-    def test_dinner_just_after_1400_rejected(self):
+    def test_dinner_just_after_1600_rejected(self):
         delivery = OrderDelivery(
-            service_date=date(2026, 7, 23),
+            service_date=date(2026, 7, 1),
             meal_period='dinner',
             status=OrderDelivery.DeliveryStatus.SCHEDULED,
         )
         delivery.order = Order(order_status=Order.OrderStatus.ACTIVE)
         tz = ZoneInfo('Asia/Dhaka')
-        before = datetime(2026, 7, 23, 13, 59, 0, tzinfo=tz)
-        after = datetime(2026, 7, 23, 14, 0, 1, tzinfo=tz)
+        before = datetime(2026, 7, 1, 15, 59, 0, tzinfo=tz)
+        after = datetime(2026, 7, 1, 16, 0, 1, tzinfo=tz)
         self.assertTrue(can_meal_off(delivery, now=before, settings_obj=self.settings_obj))
         self.assertFalse(can_meal_off(delivery, now=after, settings_obj=self.settings_obj))
 
     def test_can_meal_on_customer_skipped_before_deadline(self):
         delivery = OrderDelivery(
-            service_date=date(2026, 7, 23),
+            service_date=date(2026, 7, 1),
             meal_period='dinner',
             status=OrderDelivery.DeliveryStatus.SKIPPED,
             skip_source=OrderDelivery.SkipSource.CUSTOMER,
         )
         delivery.order = Order(order_status=Order.OrderStatus.ACTIVE)
         tz = ZoneInfo('Asia/Dhaka')
-        before = datetime(2026, 7, 23, 13, 59, 0, tzinfo=tz)
-        after = datetime(2026, 7, 23, 14, 0, 1, tzinfo=tz)
+        before = datetime(2026, 7, 1, 15, 59, 0, tzinfo=tz)
+        after = datetime(2026, 7, 1, 16, 0, 1, tzinfo=tz)
         self.assertTrue(can_meal_on(delivery, now=before, settings_obj=self.settings_obj))
         self.assertFalse(can_meal_on(delivery, now=after, settings_obj=self.settings_obj))
 
     def test_can_meal_on_false_for_scheduled_and_admin_skip(self):
         scheduled = OrderDelivery(
-            service_date=date(2026, 7, 23),
+            service_date=date(2026, 7, 1),
             meal_period='dinner',
             status=OrderDelivery.DeliveryStatus.SCHEDULED,
         )
         scheduled.order = Order(order_status=Order.OrderStatus.ACTIVE)
         admin_skip = OrderDelivery(
-            service_date=date(2026, 7, 23),
+            service_date=date(2026, 7, 1),
             meal_period='dinner',
             status=OrderDelivery.DeliveryStatus.SKIPPED,
             skip_source=OrderDelivery.SkipSource.ADMIN,
         )
         admin_skip.order = Order(order_status=Order.OrderStatus.ACTIVE)
-        now = datetime(2026, 7, 23, 13, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        now = datetime(2026, 7, 1, 15, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
         self.assertFalse(can_meal_on(scheduled, now=now, settings_obj=self.settings_obj))
         self.assertFalse(can_meal_on(admin_skip, now=now, settings_obj=self.settings_obj))
 
@@ -229,7 +229,7 @@ class CustomerMealOffAPITestCase(APITestCase):
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
     @patch('orders.services.meal_off.meal_off_business_now')
     def test_meal_off_after_lunch_deadline_rejected(self, mock_now, _mock_date):
-        mock_now.return_value = datetime(2026, 7, 11, 0, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        mock_now.return_value = datetime(2026, 7, 11, 0, 0, 1, tzinfo=ZoneInfo('Asia/Dhaka'))
         order = create_meal_order(self.customer_profile, self.monthly_meal)
         lunch = order.deliveries.get(service_date=date(2026, 7, 11), meal_period='lunch')
         with self.assertRaises(MealOffError):
@@ -265,12 +265,29 @@ class CustomerMealOffAPITestCase(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['timezone'], 'Asia/Dhaka')
-        self.assertEqual(response.data['lunch_off_time'], '23:59:00')
-        self.assertEqual(response.data['dinner_off_time'], '14:00:00')
+        self.assertEqual(response.data['lunch_off_time'], '00:00:00')
+        self.assertEqual(response.data['dinner_off_time'], '16:00:00')
 
         patched = self.client.patch(url, {'dinner_off_time': '15:00:00'}, format='json')
         self.assertEqual(patched.status_code, status.HTTP_200_OK)
         self.assertEqual(patched.data['dinner_off_time'], '15:00:00')
+
+        lunch_patched = self.client.patch(url, {'lunch_off_time': '08:00:00'}, format='json')
+        self.assertEqual(lunch_patched.status_code, status.HTTP_200_OK)
+        self.assertEqual(lunch_patched.data['lunch_off_time'], '08:00:00')
+        settings_obj = MealOffSettings.load()
+        self.assertEqual(
+            meal_off_deadline(date(2026, 7, 24), 'lunch', settings_obj).time(),
+            time(8, 0),
+        )
+        self.assertEqual(
+            meal_off_deadline(date(2026, 7, 24), 'lunch', settings_obj).date(),
+            date(2026, 7, 24),
+        )
+        self.assertEqual(
+            meal_off_deadline(date(2026, 7, 24), 'dinner', settings_obj).time(),
+            time(15, 0),
+        )
 
         bad = self.client.patch(url, {'timezone': 'Not/AZone'}, format='json')
         self.assertEqual(bad.status_code, status.HTTP_400_BAD_REQUEST)
@@ -298,7 +315,7 @@ class CustomerMealOffAPITestCase(APITestCase):
         )
         self.assertTrue(lunch['can_meal_off'])
         self.assertFalse(lunch['can_meal_on'])
-        self.assertIn('2026-07-10', lunch['meal_off_deadline_at'])
+        self.assertIn('2026-07-11', lunch['meal_off_deadline_at'])
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
     @patch('orders.services.meal_off.meal_off_business_now')
@@ -330,7 +347,7 @@ class CustomerMealOffAPITestCase(APITestCase):
         order = create_meal_order(self.customer_profile, self.monthly_meal)
         dinner = order.deliveries.get(service_date=date(2026, 7, 10), meal_period='dinner')
         customer_meal_off(dinner, self.customer_user)
-        mock_now.return_value = datetime(2026, 7, 10, 14, 1, tzinfo=ZoneInfo('Asia/Dhaka'))
+        mock_now.return_value = datetime(2026, 7, 10, 16, 1, tzinfo=ZoneInfo('Asia/Dhaka'))
         with self.assertRaises(MealOffError):
             customer_meal_on(dinner, self.customer_user)
         dinner.refresh_from_db()

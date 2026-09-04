@@ -29,7 +29,7 @@ While `estimated`, copy should say numbers can still change until the meal-off d
 ### B. Kitchen Today order summary + print
 
 1. On open, call `GET .../kitchen/today-meal-requirement/` with **no** query params for the server default slot
-2. Morning (before dinner off time, default 14:00 Asia/Dhaka) → lunch; afternoon → dinner
+2. Morning (before dinner off time, default 16:00 Asia/Dhaka) → lunch; afternoon → dinner
 3. Render:
    - Hero: `final_cooking_count`, period, date, `confirmation_status`
    - Expected / meal-off line

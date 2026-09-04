@@ -49,19 +49,19 @@ class MealDemandHelperTests(SimpleTestCase):
     def setUp(self):
         self.settings_obj = MealOffSettings(
             timezone='Asia/Dhaka',
-            lunch_off_time=time(23, 59),
-            dinner_off_time=time(14, 0),
+            lunch_off_time=time(0, 0),
+            dinner_off_time=time(16, 0),
         )
 
     def test_confirmation_estimated_before_dinner_deadline(self):
-        now = datetime(2026, 8, 5, 13, 59, tzinfo=ZoneInfo('Asia/Dhaka'))
+        now = datetime(2026, 8, 5, 15, 59, tzinfo=ZoneInfo('Asia/Dhaka'))
         self.assertEqual(
             confirmation_status(date(2026, 8, 5), 'dinner', now=now, settings_obj=self.settings_obj),
             CONFIRMATION_ESTIMATED,
         )
 
     def test_confirmation_confirmed_after_dinner_deadline(self):
-        now = datetime(2026, 8, 5, 14, 0, 1, tzinfo=ZoneInfo('Asia/Dhaka'))
+        now = datetime(2026, 8, 5, 16, 0, 1, tzinfo=ZoneInfo('Asia/Dhaka'))
         self.assertEqual(
             confirmation_status(date(2026, 8, 5), 'dinner', now=now, settings_obj=self.settings_obj),
             CONFIRMATION_CONFIRMED,
@@ -74,7 +74,7 @@ class MealDemandHelperTests(SimpleTestCase):
         self.assertEqual(period, 'lunch')
 
     def test_default_kitchen_slot_afternoon_dinner(self):
-        now = datetime(2026, 8, 5, 15, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        now = datetime(2026, 8, 5, 16, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
         service_date, period = resolve_default_kitchen_slot(now, settings_obj=self.settings_obj)
         self.assertEqual(service_date, date(2026, 8, 5))
         self.assertEqual(period, 'dinner')
@@ -86,8 +86,8 @@ class MealDemandServiceTestCase(TestCase):
         self.customer_group, _ = Group.objects.get_or_create(name='CUSTOMER')
         self.settings_obj = MealOffSettings.load()
         self.settings_obj.timezone = 'Asia/Dhaka'
-        self.settings_obj.lunch_off_time = time(23, 59)
-        self.settings_obj.dinner_off_time = time(14, 0)
+        self.settings_obj.lunch_off_time = time(0, 0)
+        self.settings_obj.dinner_off_time = time(16, 0)
         self.settings_obj.save()
 
         self.premium = MealCategory.objects.create(
@@ -355,7 +355,8 @@ class MealDemandServiceTestCase(TestCase):
         self.assertEqual(ingredients, [])
 
     def test_upsert_snapshot_idempotent_and_frozen(self):
-        now = datetime(2026, 8, 5, 15, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        # After dinner cut-off (16:00) so confirmation_status is confirmed
+        now = datetime(2026, 8, 5, 16, 1, tzinfo=ZoneInfo('Asia/Dhaka'))
         first = upsert_demand_snapshots_for_slot(
             self.service_date, 'dinner', now=now, settings_obj=self.settings_obj
         )
@@ -504,7 +505,8 @@ class MealDemandAPITestCase(APITestCase):
 
     @patch('orders.services.meal_demand.meal_off_business_now')
     def test_kitchen_default_afternoon_dinner(self, mock_now):
-        mock_now.return_value = datetime(2026, 8, 5, 15, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        # Default dinner_off_time is 16:00 → at/after that clock, kitchen defaults to dinner
+        mock_now.return_value = datetime(2026, 8, 5, 16, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
         self._auth(self.admin_token)
         response = self.client.get(self.kitchen_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -665,7 +667,7 @@ class MealDemandAPITestCase(APITestCase):
         MonthlyMenuSlotItem.objects.create(slot=slot, ingredient=rice)
 
         now = datetime(2026, 8, 5, 12, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
-        # Lunch deadline is previous day 23:59 → confirmed on Aug 5
+        # Lunch deadline is same-day 00:00 → confirmed on Aug 5 at noon
         upsert_demand_snapshots_for_slot(
             self.service_date, 'lunch', now=now, settings_obj=MealOffSettings.load()
         )

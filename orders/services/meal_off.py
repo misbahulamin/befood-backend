@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 from django.db import transaction
@@ -47,14 +47,12 @@ def meal_off_deadline(
     settings_obj = settings_obj or get_meal_off_settings()
     tz = ZoneInfo(settings_obj.timezone)
     if meal_period == OrderDelivery.MealPeriod.LUNCH:
-        deadline_date = service_date - timedelta(days=1)
         deadline_time = settings_obj.lunch_off_time
     elif meal_period == OrderDelivery.MealPeriod.DINNER:
-        deadline_date = service_date
         deadline_time = settings_obj.dinner_off_time
     else:
         raise ValueError(f'Unsupported meal period for meal-off: {meal_period}')
-    return datetime.combine(deadline_date, deadline_time, tzinfo=tz)
+    return datetime.combine(service_date, deadline_time, tzinfo=tz)
 
 
 def _normalize_business_now(

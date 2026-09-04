@@ -37,7 +37,7 @@ A slot is auto-delivered when **all** of:
 3. `status` = `scheduled` (customer meal-off / admin skip → `skipped` → **excluded**)
 4. Parent is live per `live_delivery_q(service_date)` (non-cancelled order, active subscription, or cancelled-but-still-serving subscription)
 
-Meal-off **deadlines** (`MealOffSettings`, default lunch previous-day 23:59 / dinner same-day 14:00) only gate the customer meal-off API. Cron does **not** re-check “before 03:00”; by 15:00/23:00 under defaults the off window is already closed. Ops can change deadlines via admin meal-off settings without changing cron code.
+Meal-off **deadlines** (`MealOffSettings`, default lunch same-day 00:00 / dinner same-day 16:00) only gate the customer meal-off API. Cron does **not** re-check “before 03:00”; by 15:00/23:00 under defaults the off window is already closed. Ops can change deadlines via admin meal-off settings without changing cron code.
 
 ## Settings
 

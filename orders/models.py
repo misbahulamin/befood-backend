@@ -309,15 +309,15 @@ class OrderDelivery(PublicIdMixin, models.Model):
 
 
 class MealOffSettings(models.Model):
-    """Singleton: customer meal-off cutoffs for lunch (previous day) and dinner (same day)."""
+    """Singleton: customer meal-off cutoffs for lunch and dinner on the service date."""
 
     timezone = models.CharField(max_length=64, default='Asia/Dhaka')
     lunch_off_time = models.TimeField(
-        default=time(23, 59),
-        help_text='Deadline time on the calendar day before the lunch service date.',
+        default=time(0, 0),
+        help_text='Deadline time on the lunch service date.',
     )
     dinner_off_time = models.TimeField(
-        default=time(14, 0),
+        default=time(16, 0),
         help_text='Deadline time on the dinner service date.',
     )
     updated_at = models.DateTimeField(auto_now=True)

@@ -6,8 +6,8 @@ Customers can **meal-off** a scheduled lunch/dinner delivery before cook-prep de
 
 | Period | Default deadline (Asia/Dhaka) |
 |--------|-------------------------------|
-| Lunch on date D | D−1 at **23:59** |
-| Dinner on date D | D at **14:00** |
+| Lunch on date D | D at **00:00** |
+| Dinner on date D | D at **16:00** |
 
 Admin can change times via meal-off settings. Configured times gate **both** meal-off and meal-on.
 
@@ -92,13 +92,13 @@ Internal helper only — not a public reopen API.
 ```json
 {
   "timezone": "Asia/Dhaka",
-  "lunch_off_time": "23:59:00",
-  "dinner_off_time": "14:00:00",
+  "lunch_off_time": "00:00:00",
+  "dinner_off_time": "16:00:00",
   "updated_at": "..."
 }
 ```
 
-`lunch_off_time` / `dinner_off_time` apply to both Off and On eligibility checks.
+`lunch_off_time` / `dinner_off_time` apply on the **service date** and gate both Off and On eligibility checks.
 
 ## How to verify
 

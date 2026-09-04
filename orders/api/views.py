@@ -513,7 +513,7 @@ class MealOrderViewSet(
         summary='Meal-off a delivery slot',
         description=(
             'Customer opts out of a scheduled lunch/dinner before the cook-prep deadline. '
-            'Lunch default: previous day 23:59. Dinner default: same day 14:00. No refund.'
+            'Lunch default: same day 00:00. Dinner default: same day 16:00. No refund.'
         ),
         request=MealOffRequestSerializer,
         responses={
