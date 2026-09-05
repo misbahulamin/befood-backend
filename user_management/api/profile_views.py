@@ -12,6 +12,7 @@ from .permissions import HasCustomerProfile, IsCustomerAddressOwner
 from .profile_serializers import (
     CustomerAddressCreateUpdateSerializer,
     CustomerAddressSerializer,
+    CustomerEmailSetSerializer,
     CustomerExtendedProfileSerializer,
     CustomerExtendedProfileUpdateSerializer,
     CustomerProfileCompletionSerializer,
@@ -130,6 +131,31 @@ class CustomerProfileImageUploadView(APIView):
         if url and request and not str(url).startswith(('http://', 'https://')):
             url = request.build_absolute_uri(url)
             result = {**result, 'profile_image_url': url}
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class CustomerEmailSetView(APIView):
+    """Additive: set email on blank-email (phone-only) customer accounts."""
+
+    permission_classes = [HasCustomerProfile]
+
+    @extend_schema(
+        tags=['Customer Profile'],
+        request=CustomerEmailSetSerializer,
+        responses={200: OpenApiResponse(description='Email saved')},
+        description=(
+            'Set the customer email when User.email is currently blank '
+            '(typical phone-only registration). Rejects duplicates. '
+            'Does not mark email verified.'
+        ),
+    )
+    def post(self, request):
+        serializer = CustomerEmailSetSerializer(
+            data=request.data,
+            context={'request': request},
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save()
         return Response(result, status=status.HTTP_200_OK)
 
 

@@ -24,6 +24,7 @@ from .deliveryman_views import (
 )
 from .profile_views import (
     CustomerAddressViewSet,
+    CustomerEmailSetView,
     CustomerProfileImageUploadView,
     CustomerProfileView,
     SetDefaultDeliveryAddressView,
@@ -133,6 +134,11 @@ urlpatterns = [
         'customer/profile/image/',
         CustomerProfileImageUploadView.as_view(),
         name='customer-profile-image',
+    ),
+    path(
+        'customer/profile/email/',
+        CustomerEmailSetView.as_view(),
+        name='customer-profile-email',
     ),
     path(
         'customer/addresses/<uuid:public_id>/set-default/',

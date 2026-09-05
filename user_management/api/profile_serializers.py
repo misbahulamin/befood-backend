@@ -8,6 +8,8 @@ from ..services.customer_address import (
     ensure_single_default_delivery,
     handle_default_on_delete,
 )
+from ..services.customer_email import CustomerEmailError, set_customer_email_if_blank
+from ..services.identity_normalization import normalize_email
 from ..services.profile_completion import update_profile_completion
 from ..services.profile_picture import (
     clear_profile_picture,
@@ -17,6 +19,23 @@ from ..services.profile_picture import (
     validate_image_size,
 )
 from ..validators import format_bd_phone_e164, validate_bangladesh_phone
+
+
+class CustomerEmailSetSerializer(serializers.Serializer):
+    """Set primary email when the authenticated customer currently has a blank email."""
+
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return normalize_email(value)
+
+    def save(self, **kwargs):
+        request = self.context['request']
+        try:
+            email = set_customer_email_if_blank(request.user, self.validated_data['email'])
+        except CustomerEmailError as exc:
+            raise serializers.ValidationError({'email': [exc.message]})
+        return {'email': email, 'message': 'Email saved.'}
 
 
 class CustomerAddressSerializer(serializers.ModelSerializer):
