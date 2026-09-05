@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 from django.contrib.auth.models import User
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
@@ -391,6 +392,13 @@ class ProgressiveOnboardingProfileTests(APITestCase):
             format='json',
         )
         self.assertEqual(response.status_code, 200)
+        # Phone presence alone is not enough; verification is required for onboarding.
+        self.assertIn('phone', response.data['onboarding_completion']['missing_fields'])
+        self.profile.refresh_from_db()
+        self.profile.is_phone_verified = True
+        self.profile.phone_verified_at = timezone.now()
+        self.profile.save(update_fields=['is_phone_verified', 'phone_verified_at', 'updated_at'])
+        response = self.client.get(self.profile_url)
         self.assertTrue(response.data['onboarding_completion']['completed'])
         self.assertEqual(response.data['onboarding_completion']['missing_fields'], [])
 
@@ -399,6 +407,7 @@ class ProgressiveOnboardingProfileTests(APITestCase):
         self.user.last_name = 'Uddin'
         self.user.save()
         self.profile.phone = '1712345678'
+        self.profile.is_phone_verified = True
         self.profile.occupation = 'student'
         self.profile.is_bachelor = True
         self.profile.gender = None

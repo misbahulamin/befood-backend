@@ -234,6 +234,59 @@ class CustomerSubscriptionAPITestCase(APITestCase):
         self._auth(self.unverified_token)
         unverified = self.client.post(self.subscriptions_url, self._subscribe_payload(), format='json')
         self.assertEqual(unverified.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn('Identity verification', str(unverified.data))
+        self.assertNotIn('Email verification is required', str(unverified.data))
+
+    def test_phone_verified_customer_can_subscribe(self):
+        phone_user = User.objects.create_user(
+            username='sub_phone',
+            email='',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        phone_user.groups.add(self.customer_group)
+        CustomerProfile.objects.create(
+            user=phone_user,
+            phone='1712555099',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=False,
+            is_phone_verified=True,
+        )
+        token = Token.objects.create(user=phone_user)
+        self._auth(token)
+        response = self.client.post(self.subscriptions_url, self._subscribe_payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+
+    def test_facebook_linked_customer_can_subscribe(self):
+        from user_management.models import SocialIdentity
+
+        fb_user = User.objects.create_user(
+            username='sub_fb',
+            email='',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        fb_user.set_unusable_password()
+        fb_user.save()
+        fb_user.groups.add(self.customer_group)
+        CustomerProfile.objects.create(
+            user=fb_user,
+            phone='1712555098',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=False,
+            is_phone_verified=False,
+        )
+        SocialIdentity.objects.create(
+            user=fb_user,
+            provider=SocialIdentity.Provider.FACEBOOK,
+            provider_user_id='fb-sub-1',
+        )
+        token = Token.objects.create(user=fb_user)
+        self._auth(token)
+        response = self.client.post(self.subscriptions_url, self._subscribe_payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
 
     def test_second_active_subscribe_rejected_then_allowed_after_cancel(self):
         self._auth()

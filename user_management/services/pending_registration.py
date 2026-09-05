@@ -31,6 +31,7 @@ from user_management.services.email_branding import (
     build_activation_frontend_link,
     build_brand_email_context,
 )
+from user_management.services.identity_normalization import normalize_email
 
 PENDING_UID_PREFIX = 'pending:'
 PENDING_SIGNER_SALT = 'pending-customer-email-verify'
@@ -69,7 +70,7 @@ def pending_lifetime_expires_at():
 
 
 def get_active_pending(email: str) -> PendingCustomerRegistration | None:
-    normalized = (email or '').strip().lower()
+    normalized = normalize_email(email)
     now = timezone.now()
     return (
         PendingCustomerRegistration.objects.filter(email__iexact=normalized, expires_at__gt=now)
@@ -79,7 +80,7 @@ def get_active_pending(email: str) -> PendingCustomerRegistration | None:
 
 
 def email_owned_by_verified_customer(email: str) -> bool:
-    normalized = (email or '').strip().lower()
+    normalized = normalize_email(email)
     return CustomerProfile.objects.filter(
         user__email__iexact=normalized,
         is_email_verified=True,
@@ -88,7 +89,7 @@ def email_owned_by_verified_customer(email: str) -> bool:
 
 def delete_legacy_unverified_customer(email: str) -> bool:
     """Remove inactive unverified customer User so signup can become pending-only."""
-    normalized = (email or '').strip().lower()
+    normalized = normalize_email(email)
     user = (
         User.objects.filter(email__iexact=normalized, customer_profile__isnull=False)
         .select_related('customer_profile')
@@ -104,7 +105,7 @@ def delete_legacy_unverified_customer(email: str) -> bool:
 
 
 def upsert_pending_registration(validated_data) -> PendingCustomerRegistration:
-    email = validated_data['email'].lower()
+    email = normalize_email(validated_data['email'])
     if email_owned_by_verified_customer(email):
         raise ValidationError({'email': ['Email already exists.']})
 
@@ -330,7 +331,7 @@ def finalize_pending_registration(pending: PendingCustomerRegistration) -> User:
     return user
 
 
-def verify_pending_email_with_otp(email: str, otp: str) -> str:
+def verify_pending_email_with_otp(email: str, otp: str) -> User:
     pending = get_active_pending(email)
     if pending is None:
         raise AuthOTPError(EMAIL_OTP_INVALID_MESSAGE)
@@ -340,25 +341,23 @@ def verify_pending_email_with_otp(email: str, otp: str) -> str:
         if exc.message == OTP_EXPIRED_MESSAGE:
             raise
         raise AuthOTPError(EMAIL_OTP_INVALID_MESSAGE) from exc
-    finalize_pending_registration(pending)
-    return EMAIL_VERIFIED_SUCCESS_MESSAGE
+    return finalize_pending_registration(pending)
 
 
-def verify_pending_email_with_link(uidb64: str, token: str) -> tuple[str, int]:
+def verify_pending_email_with_link(uidb64: str, token: str) -> tuple[str, int, User | None]:
     """
     Verify pending registration via link.
 
-    Returns (message, http_status_hint) where hint is 200 on success.
-    Raises AuthOTPError-like via returning None pending → caller handles 400.
+    Returns (message, http_status_hint, user_or_none) where hint is 200 on success.
     """
     pending = decode_pending_uid(uidb64)
     if pending is None or not verify_pending_link_token(pending, token):
-        return '', 400
+        return '', 400, None
     if email_owned_by_verified_customer(pending.email):
         pending.delete()
-        return EMAIL_ALREADY_VERIFIED_MESSAGE, 200
-    finalize_pending_registration(pending)
-    return EMAIL_VERIFIED_SUCCESS_MESSAGE, 200
+        return EMAIL_ALREADY_VERIFIED_MESSAGE, 200, None
+    user = finalize_pending_registration(pending)
+    return EMAIL_VERIFIED_SUCCESS_MESSAGE, 200, user
 
 
 def resend_pending_verification(request, email: str) -> str:
@@ -383,7 +382,7 @@ def migrate_legacy_unverified_to_pending(user: User) -> PendingCustomerRegistrat
     profile = getattr(user, 'customer_profile', None)
     if profile is None or profile.is_email_verified:
         return None
-    email = user.email.lower()
+    email = normalize_email(user.email)
     pending, _ = PendingCustomerRegistration.objects.update_or_create(
         email=email,
         defaults={

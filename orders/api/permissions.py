@@ -1,10 +1,14 @@
 from rest_framework.permissions import BasePermission, IsAuthenticated
 
 from user_management.services.admin_access import is_verified_admin
+from user_management.services.identity_verification import (
+    IDENTITY_VERIFICATION_REQUIRED_MESSAGE,
+    is_customer_identity_verified,
+)
 
 
 class IsVerifiedCustomer(IsAuthenticated):
-    message = 'Email verification is required before placing an order.'
+    message = IDENTITY_VERIFICATION_REQUIRED_MESSAGE
 
     def has_permission(self, request, view):
         if not super().has_permission(request, view):
@@ -16,8 +20,7 @@ class IsVerifiedCustomer(IsAuthenticated):
         if user.is_superuser:
             return True
 
-        profile = getattr(user, 'customer_profile', None)
-        if profile is None or not profile.is_email_verified:
+        if not is_customer_identity_verified(user):
             return False
 
         return user.groups.filter(name='CUSTOMER').exists() or user.is_superuser

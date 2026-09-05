@@ -85,6 +85,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
+        'user_management.authentication.AuthSessionAuthentication',
         'rest_framework.authentication.TokenAuthentication',
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
@@ -217,6 +218,57 @@ AUTH_OTP_MAX_ISSUES_PER_HOUR = config(
     'AUTH_OTP_MAX_ISSUES_PER_HOUR',
     default=10,
     cast=int,
+)
+
+# Phone OTP (reuse AUTH_OTP_* defaults; override independently when needed).
+PHONE_OTP_TTL_SECONDS = config(
+    'PHONE_OTP_TTL_SECONDS',
+    default=AUTH_OTP_TTL_SECONDS,
+    cast=int,
+)
+PHONE_OTP_MAX_ATTEMPTS = config(
+    'PHONE_OTP_MAX_ATTEMPTS',
+    default=AUTH_OTP_MAX_ATTEMPTS,
+    cast=int,
+)
+PHONE_OTP_RESEND_COOLDOWN_SECONDS = config(
+    'PHONE_OTP_RESEND_COOLDOWN_SECONDS',
+    default=AUTH_OTP_RESEND_COOLDOWN_SECONDS,
+    cast=int,
+)
+PHONE_OTP_MAX_ISSUES_PER_HOUR = config(
+    'PHONE_OTP_MAX_ISSUES_PER_HOUR',
+    default=AUTH_OTP_MAX_ISSUES_PER_HOUR,
+    cast=int,
+)
+
+# Google OAuth (ID token audience verification).
+GOOGLE_WEB_CLIENT_ID = config('GOOGLE_WEB_CLIENT_ID', default='')
+GOOGLE_ANDROID_CLIENT_ID = config('GOOGLE_ANDROID_CLIENT_ID', default='')
+GOOGLE_CLIENT_SECRET = config('GOOGLE_CLIENT_SECRET', default='')
+GOOGLE_OAUTH_SCOPES = config(
+    'GOOGLE_OAUTH_SCOPES',
+    default='openid,email,profile',
+)
+
+# Facebook OAuth (Graph API token verification).
+FACEBOOK_APP_ID = config('FACEBOOK_APP_ID', default='')
+FACEBOOK_APP_SECRET = config('FACEBOOK_APP_SECRET', default='')
+FACEBOOK_GRAPH_VERSION = config('FACEBOOK_GRAPH_VERSION', default='v21.0')
+
+# SMS.NET.BD (phone OTP delivery).
+SMS_NET_BD_API_KEY = config('SMS_NET_BD_API_KEY', default='')
+SMS_NET_BD_SEND_SMS_URL = config(
+    'SMS_NET_BD_SEND_SMS_URL',
+    default='https://api.sms.net.bd/sendsms',
+)
+SMS_NET_BD_REPORT_URL = config(
+    'SMS_NET_BD_REPORT_URL',
+    default='https://api.sms.net.bd/report',
+)
+SMS_NET_BD_BALANCE_URL = config(
+    'SMS_NET_BD_BALANCE_URL',
+    default='https://api.sms.net.bd/user/balance',
 )
 
 # Customer wallet: manual recharge/withdraw path (replace with gateway-only when ready).

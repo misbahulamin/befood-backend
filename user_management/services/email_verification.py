@@ -9,6 +9,7 @@ from django.utils.encoding import force_bytes, force_str
 from django.utils.http import base36_to_int, urlsafe_base64_decode, urlsafe_base64_encode
 from django.utils import timezone
 
+from .auth_session import is_phone_verification_required
 from .auth_otp import (
     AuthOTPError,
     IssueStatus,
@@ -17,6 +18,7 @@ from .auth_otp import (
     issue_otp,
 )
 from .email_branding import build_activation_frontend_link, build_brand_email_context
+from .identity_normalization import normalize_email
 from .pending_registration import (
     EMAIL_ALREADY_VERIFIED_MESSAGE,
     EMAIL_OTP_INVALID_MESSAGE,
@@ -28,6 +30,16 @@ from .pending_registration import (
     verify_pending_email_with_link,
     verify_pending_email_with_otp,
 )
+
+
+def _email_verify_success_payload(message: str, profile=None) -> dict:
+    """Additive verify success body; keeps existing ``message`` contract."""
+    phone_required = True if profile is None else is_phone_verification_required(profile)
+    return {
+        'message': message,
+        'email_verified': True,
+        'phone_verification_required': phone_required,
+    }
 
 
 class EmailVerificationTokenGenerator(PasswordResetTokenGenerator):
@@ -119,21 +131,29 @@ def mark_email_verified(profile):
     profile.save(update_fields=['is_email_verified', 'email_verified_at', 'updated_at'])
 
 
-def verify_email_with_otp(email: str, otp: str) -> str:
+def verify_email_with_otp(email: str, otp: str) -> dict:
     """
     Verify customer email using OTP.
 
     Prefers pending registration (no User yet). Falls back to legacy
     inactive unverified User + CustomerAuthOTP rows.
+
+    Returns an additive success payload including ``phone_verification_required``.
     """
-    normalized = (email or '').strip().lower()
+    normalized = normalize_email(email)
 
     if email_owned_by_verified_customer(normalized):
-        return EMAIL_ALREADY_VERIFIED_MESSAGE
+        user = User.objects.filter(email__iexact=normalized).select_related('customer_profile').first()
+        profile = getattr(user, 'customer_profile', None) if user else None
+        return _email_verify_success_payload(EMAIL_ALREADY_VERIFIED_MESSAGE, profile)
 
     pending = get_active_pending(normalized)
     if pending is not None:
-        return verify_pending_email_with_otp(normalized, otp)
+        user = verify_pending_email_with_otp(normalized, otp)
+        return _email_verify_success_payload(
+            EMAIL_VERIFIED_SUCCESS_MESSAGE,
+            getattr(user, 'customer_profile', None),
+        )
 
     user = User.objects.filter(email__iexact=normalized).first()
     if not user or not hasattr(user, 'customer_profile'):
@@ -141,7 +161,7 @@ def verify_email_with_otp(email: str, otp: str) -> str:
 
     profile = user.customer_profile
     if profile.is_email_verified:
-        return EMAIL_ALREADY_VERIFIED_MESSAGE
+        return _email_verify_success_payload(EMAIL_ALREADY_VERIFIED_MESSAGE, profile)
 
     try:
         consume_otp(user, PURPOSE_EMAIL_VERIFICATION, otp)
@@ -151,7 +171,8 @@ def verify_email_with_otp(email: str, otp: str) -> str:
         raise AuthOTPError(EMAIL_OTP_INVALID_MESSAGE) from exc
 
     mark_email_verified(profile)
-    return EMAIL_VERIFIED_SUCCESS_MESSAGE
+    profile.refresh_from_db()
+    return _email_verify_success_payload(EMAIL_VERIFIED_SUCCESS_MESSAGE, profile)
 
 
 def verify_email_link(uidb64: str, token: str) -> tuple[dict, int]:
@@ -160,9 +181,13 @@ def verify_email_link(uidb64: str, token: str) -> tuple[dict, int]:
 
     Returns (response_body, http_status).
     """
-    message, status_code = verify_pending_email_with_link(uidb64, token)
+    message, status_code, user = verify_pending_email_with_link(uidb64, token)
     if status_code == 200:
-        return {'message': message}, 200
+        profile = getattr(user, 'customer_profile', None) if user else None
+        if profile is None and message == EMAIL_ALREADY_VERIFIED_MESSAGE:
+            # Pending path deleted after conflict with existing verified email.
+            return _email_verify_success_payload(message, None), 200
+        return _email_verify_success_payload(message, profile), 200
     if message == '' and status_code == 400:
         # Not a valid pending link — try legacy user path.
         pass
@@ -173,16 +198,17 @@ def verify_email_link(uidb64: str, token: str) -> tuple[dict, int]:
     if not user:
         return {'detail': 'Invalid or expired verification link.'}, 400
     if hasattr(user, 'customer_profile') and user.customer_profile.is_email_verified:
-        return {'message': 'Email is already verified.'}, 200
+        return _email_verify_success_payload('Email is already verified.', user.customer_profile), 200
     if not verify_token(user, token):
         return {'detail': 'Invalid or expired verification link.'}, 400
     mark_email_verified(user.customer_profile)
-    return {'message': EMAIL_VERIFIED_SUCCESS_MESSAGE}, 200
+    user.customer_profile.refresh_from_db()
+    return _email_verify_success_payload(EMAIL_VERIFIED_SUCCESS_MESSAGE, user.customer_profile), 200
 
 
 def resend_verification_email(request, email: str) -> dict:
     """Resend for pending registrations, with legacy User fallback."""
-    normalized = (email or '').strip().lower()
+    normalized = normalize_email(email)
     if email_owned_by_verified_customer(normalized):
         return {'message': 'This email is already verified.'}
 

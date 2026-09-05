@@ -9,8 +9,6 @@ from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-from rest_framework.authtoken.models import Token
-
 from .auth_otp import (
     AuthOTPError,
     IssueStatus,
@@ -19,7 +17,9 @@ from .auth_otp import (
     issue_otp,
     verify_otp,
 )
+from .auth_session import revoke_all_auth_sessions
 from .email_branding import build_brand_email_context, build_password_reset_link
+from .identity_normalization import normalize_email
 
 password_reset_token_generator = PasswordResetTokenGenerator()
 
@@ -64,7 +64,7 @@ def get_customer_user_from_uid(uidb64):
 
 
 def get_customer_user_by_email(email):
-    normalized = (email or '').strip().lower()
+    normalized = normalize_email(email)
     user = User.objects.filter(email__iexact=normalized).first()
     if user and hasattr(user, 'customer_profile'):
         return user
@@ -154,7 +154,7 @@ def confirm_password_reset(uidb64, token, new_password):
     with transaction.atomic():
         user.set_password(new_password)
         user.save(update_fields=['password'])
-        Token.objects.filter(user=user).delete()
+        revoke_all_auth_sessions(user)
 
     return PASSWORD_RESET_CONFIRM_SUCCESS_MESSAGE
 
@@ -195,6 +195,6 @@ def confirm_password_reset_otp(email: str, otp: str, new_password: str) -> str:
             raise AuthOTPError(PASSWORD_RESET_OTP_INVALID_MESSAGE) from exc
         user.set_password(new_password)
         user.save(update_fields=['password'])
-        Token.objects.filter(user=user).delete()
+        revoke_all_auth_sessions(user)
 
     return PASSWORD_RESET_OTP_CONFIRM_SUCCESS_MESSAGE

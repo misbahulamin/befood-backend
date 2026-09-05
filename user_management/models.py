@@ -62,6 +62,8 @@ class CustomerProfile(PublicIdMixin, TimeStampedModel):
     is_bachelor = models.BooleanField(null=True, blank=True)
     is_email_verified = models.BooleanField(default=False)
     email_verified_at = models.DateTimeField(null=True, blank=True)
+    is_phone_verified = models.BooleanField(default=False)
+    phone_verified_at = models.DateTimeField(null=True, blank=True)
 
     birth_date = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=20, choices=Gender.choices, null=True, blank=True)
@@ -109,7 +111,94 @@ class CustomerProfile(PublicIdMixin, TimeStampedModel):
     )
 
     def __str__(self):
-        return self.user.email
+        return self.user.email or self.phone or str(self.user_id)
+
+
+class SocialIdentity(TimeStampedModel):
+    """Provider identity binding for customer social login."""
+
+    class Provider(models.TextChoices):
+        GOOGLE = 'google', 'Google'
+        FACEBOOK = 'facebook', 'Facebook'
+        APPLE = 'apple', 'Apple'  # Reserved; Sign in with Apple not implemented yet.
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='social_identities')
+    provider = models.CharField(max_length=20, choices=Provider.choices, db_index=True)
+    provider_user_id = models.CharField(max_length=255)
+    email_at_link = models.EmailField(blank=True, default='')
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['provider', 'provider_user_id'],
+                name='socialidentity_provider_userid_uniq',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', 'provider'], name='socialidentity_user_prov_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.provider}:{self.provider_user_id} → user={self.user_id}'
+
+
+class PhoneAuthOTP(models.Model):
+    """Hashed phone OTP codes keyed by canonical BD national phone."""
+
+    phone = models.CharField(max_length=10, db_index=True)
+    code_hash = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    expires_at = models.DateTimeField(db_index=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    max_attempts = models.PositiveSmallIntegerField(default=5)
+    issue_window_started_at = models.DateTimeField(null=True, blank=True)
+    issues_in_window = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['phone', '-created_at'], name='phoneauthotp_phone_created_idx'),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Phone OTP for {self.phone}'
+
+    @property
+    def is_consumed(self):
+        return self.consumed_at is not None
+
+
+class AuthSession(models.Model):
+    """
+    Per-device opaque auth credential (Token-header compatible).
+
+    Multiple active rows per user enable current-session logout without
+    signing out other devices. Legacy DRF Token rows are migrated into this table.
+    """
+
+    key = models.CharField(max_length=40, unique=True, db_index=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='auth_sessions')
+    device_token = models.CharField(max_length=255, blank=True, default='')
+    platform = models.CharField(max_length=20, blank=True, default='')
+    user_agent = models.CharField(max_length=512, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'revoked_at'], name='authsession_user_revoked_idx'),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        status = 'revoked' if self.revoked_at else 'active'
+        return f'AuthSession user={self.user_id} ({status})'
+
+    @property
+    def is_active(self):
+        return self.revoked_at is None
 
 
 class CustomerAddress(PublicIdMixin, TimeStampedModel):

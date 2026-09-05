@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from .models import (
     AdminProfile,
+    AuthSession,
     CustomerAddress,
     CustomerAuthOTP,
     CustomerDeliveryPlace,
@@ -16,7 +17,9 @@ from .models import (
     MealDeliveryDayOverride,
     MealDeliveryPreference,
     PendingCustomerRegistration,
+    PhoneAuthOTP,
     RiderProfile,
+    SocialIdentity,
     StaffProfile,
     UserActivityLog,
 )
@@ -61,6 +64,7 @@ class CustomerProfileAdmin(admin.ModelAdmin):
         'gender',
         'is_bachelor',
         'is_email_verified',
+        'is_phone_verified',
         'meal_service_blocked_low_balance',
         'profile_completion_percentage',
         'profile_completed',
@@ -71,6 +75,7 @@ class CustomerProfileAdmin(admin.ModelAdmin):
         'occupation',
         'is_bachelor',
         'is_email_verified',
+        'is_phone_verified',
         'gender',
         'profile_completed',
         'meal_service_blocked_low_balance',
@@ -353,4 +358,42 @@ class PendingCustomerRegistrationAdmin(admin.ModelAdmin):
         return False
 
     def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(SocialIdentity)
+class SocialIdentityAdmin(admin.ModelAdmin):
+    list_display = ('user', 'provider', 'provider_user_id', 'email_at_link', 'created_at')
+    list_filter = ('provider',)
+    search_fields = ('user__email', 'provider_user_id', 'email_at_link')
+    autocomplete_fields = ('user',)
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(AuthSession)
+class AuthSessionAdmin(admin.ModelAdmin):
+    list_display = ('user', 'key', 'platform', 'created_at', 'revoked_at')
+    list_filter = ('platform',)
+    search_fields = ('user__email', 'key')
+    autocomplete_fields = ('user',)
+    readonly_fields = ('key', 'created_at', 'last_used_at')
+
+
+@admin.register(PhoneAuthOTP)
+class PhoneAuthOTPAdmin(admin.ModelAdmin):
+    list_display = ('phone', 'expires_at', 'consumed_at', 'attempt_count', 'created_at')
+    search_fields = ('phone',)
+    readonly_fields = (
+        'phone',
+        'code_hash',
+        'created_at',
+        'expires_at',
+        'consumed_at',
+        'attempt_count',
+        'max_attempts',
+        'issue_window_started_at',
+        'issues_in_window',
+    )
+
+    def has_add_permission(self, request):
         return False

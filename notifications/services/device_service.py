@@ -113,3 +113,11 @@ def deactivate_device_token_by_value(token: str) -> bool:
         updated_at=timezone.now(),
     )
     return updated > 0
+
+
+def deactivate_all_user_device_tokens(user) -> int:
+    """Soft-deactivate every active FCM token for the user. Returns count updated."""
+    return DeviceToken.objects.filter(user=user, is_active=True).update(
+        is_active=False,
+        updated_at=timezone.now(),
+    )

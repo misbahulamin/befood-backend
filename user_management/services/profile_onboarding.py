@@ -20,7 +20,7 @@ def _is_onboarding_field_present(user, profile, field_name):
     if field_name == 'last_name':
         return _is_name_present(user.last_name)
     if field_name == 'phone':
-        return bool(profile.phone)
+        return bool(profile.is_phone_verified)
     if field_name == 'occupation':
         return bool(profile.occupation)
     if field_name == 'is_bachelor':

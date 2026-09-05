@@ -44,8 +44,13 @@ class OrderCreateSerializer(serializers.Serializer):
         profile = getattr(user, 'customer_profile', None)
         if profile is None:
             raise serializers.ValidationError('Customer profile is required to place an order.')
-        if not profile.is_email_verified:
-            raise serializers.ValidationError('Email verification is required before placing an order.')
+        from user_management.services.identity_verification import (
+            IDENTITY_VERIFICATION_REQUIRED_MESSAGE,
+            is_customer_identity_verified,
+        )
+
+        if not is_customer_identity_verified(user):
+            raise serializers.ValidationError(IDENTITY_VERIFICATION_REQUIRED_MESSAGE)
 
         year = attrs.get('year')
         month = attrs.get('month')

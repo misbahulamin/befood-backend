@@ -299,6 +299,7 @@ class CustomerExtendedProfileSerializer(serializers.Serializer):
     addresses = CustomerAddressSerializer(many=True, read_only=True)
     profile_completion_percentage = serializers.IntegerField(read_only=True)
     profile_completed = serializers.BooleanField(read_only=True)
+    phone_verification_required = serializers.SerializerMethodField()
     onboarding_completion = serializers.SerializerMethodField()
     profile_image_url = serializers.SerializerMethodField()
 
@@ -313,6 +314,11 @@ class CustomerExtendedProfileSerializer(serializers.Serializer):
 
     def get_customer_profile(self, profile):
         return CustomerProfileFieldsSerializer(profile, context=self.context).data
+
+    def get_phone_verification_required(self, profile):
+        from user_management.services.auth_session import is_phone_verification_required
+
+        return is_phone_verification_required(profile)
 
     def get_onboarding_completion(self, profile):
         from ..services.profile_onboarding import get_onboarding_completion

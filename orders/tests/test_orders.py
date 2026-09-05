@@ -140,6 +140,63 @@ class OrderAPITestCase(APITestCase):
         self._auth(self.unverified_token)
         response = self.client.post(self.create_url, self._create_order_payload(), format='json')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        detail = response.data.get('detail', response.data)
+        self.assertIn('Identity verification', str(detail))
+        self.assertNotIn('Email verification is required', str(detail))
+
+    def test_phone_verified_customer_passes_order_identity_gate(self):
+        phone_user = User.objects.create_user(
+            username='phone_order',
+            email='',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        phone_user.groups.add(self.customer_group)
+        CustomerProfile.objects.create(
+            user=phone_user,
+            phone='1712345699',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=False,
+            is_phone_verified=True,
+        )
+        token = Token.objects.create(user=phone_user)
+        self._auth(token)
+        response = self.client.post(self.create_url, self._create_order_payload(), format='json')
+        # Identity gate passes; retired create path returns subscribe-required conflict.
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['error_code'], 'SUBSCRIBE_REQUIRED')
+
+    def test_google_linked_customer_passes_order_identity_gate(self):
+        from user_management.models import SocialIdentity
+
+        social_user = User.objects.create_user(
+            username='google_order',
+            email='',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        social_user.set_unusable_password()
+        social_user.save()
+        social_user.groups.add(self.customer_group)
+        CustomerProfile.objects.create(
+            user=social_user,
+            phone='1712345698',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=False,
+            is_phone_verified=False,
+        )
+        SocialIdentity.objects.create(
+            user=social_user,
+            provider=SocialIdentity.Provider.GOOGLE,
+            provider_user_id='g-order-1',
+        )
+        token = Token.objects.create(user=social_user)
+        self._auth(token)
+        response = self.client.post(self.create_url, self._create_order_payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['error_code'], 'SUBSCRIBE_REQUIRED')
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 7, 10))
     def test_my_orders_returns_only_own_orders(self, _mock_date):

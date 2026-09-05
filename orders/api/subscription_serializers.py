@@ -104,10 +104,13 @@ class SubscribeSerializer(serializers.Serializer):
         profile = getattr(user, 'customer_profile', None)
         if profile is None:
             raise serializers.ValidationError('Customer profile is required to subscribe.')
-        if not profile.is_email_verified:
-            raise serializers.ValidationError(
-                'Email verification is required before subscribing.'
-            )
+        from user_management.services.identity_verification import (
+            IDENTITY_VERIFICATION_REQUIRED_SUBSCRIBE_MESSAGE,
+            is_customer_identity_verified,
+        )
+
+        if not is_customer_identity_verified(user):
+            raise serializers.ValidationError(IDENTITY_VERIFICATION_REQUIRED_SUBSCRIBE_MESSAGE)
         meal = self.context['meal']
         try:
             return subscribe_customer(
