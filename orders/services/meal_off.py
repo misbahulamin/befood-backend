@@ -55,6 +55,28 @@ def meal_off_deadline(
     return datetime.combine(service_date, deadline_time, tzinfo=tz)
 
 
+# Stable audit token for subscription slots created after the meal-off cutoff.
+CUTOFF_PASSED_NOTE = 'cutoff_passed'
+
+
+def is_past_meal_cutoff(
+    service_date: date,
+    meal_period: str,
+    *,
+    now: datetime | None = None,
+    settings_obj: MealOffSettings | None = None,
+) -> bool:
+    """
+    True when business time is strictly after the meal-off deadline for the slot.
+
+    Matches customer meal-off gating: at-or-before deadline is still eligible.
+    """
+    settings_obj = settings_obj or get_meal_off_settings()
+    now_local = _normalize_business_now(now, settings_obj)
+    deadline = meal_off_deadline(service_date, meal_period, settings_obj)
+    return now_local > deadline
+
+
 def _normalize_business_now(
     now: datetime | None,
     settings_obj: MealOffSettings,

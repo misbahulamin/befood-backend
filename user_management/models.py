@@ -245,7 +245,7 @@ class CustomerDeliveryPlace(PublicIdMixin, TimeStampedModel):
     )
     label = models.CharField(max_length=100)
     full_address = models.TextField()
-    city = models.CharField(max_length=100, default='Dhaka', blank=True)
+    city = models.CharField(max_length=100, default='Chittagong', blank=True)
     area = models.CharField(max_length=100, blank=True)
     building_name = models.CharField(max_length=255, blank=True)
     floor = models.CharField(max_length=50, blank=True)

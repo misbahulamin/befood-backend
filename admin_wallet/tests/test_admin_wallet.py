@@ -20,7 +20,7 @@ from admin_wallet.services.ledger import (
     get_or_create_platform_wallet,
 )
 from admin_wallet.services.operations import manual_deposit, post_expense, withdraw
-from admin_wallet.services.queries import reconcile_balance
+from admin_wallet.services.queries import dashboard_payload, reconcile_balance
 from meals.models import MealCategory, MealCycle, MealCyclePlan, MonthlyMenuSchedule, MonthlyMenuSlot
 from orders.models import OrderDelivery, OrderWalletSettings
 from orders.services.order_delivery import DeliveryError, mark_delivery
@@ -410,6 +410,37 @@ class AdminWalletIngestionTests(APITestCase):
         )
         self.assertEqual(debit.amount, Decimal('30.00'))
 
+    def test_dashboard_expense_excludes_customer_withdraw(self):
+        _approved_recharge(
+            self.customer_profile,
+            Decimal('500.00'),
+            self.admin_user,
+            trx_suffix='dash-wd',
+        )
+        platform = get_or_create_platform_wallet()
+        expenses_before = platform.total_expenses or Decimal('0.00')
+
+        post_expense(
+            amount=Decimal('50.00'),
+            type=AdminWalletTransaction.Type.OPERATIONAL_EXPENSE,
+            reason='Ops cost',
+            actor_admin=AdminProfile.objects.get(user=self.admin_user),
+        )
+        _, pending, _ = request_withdraw(self.customer_profile, Decimal('200.00'))
+        approve_withdraw(pending, reviewed_by=self.admin_user)
+
+        payload = dashboard_payload()
+        self.assertEqual(payload['today_expense'], Decimal('50.00'))
+        self.assertEqual(payload['today_customer_withdrawals'], Decimal('200.00'))
+        self.assertEqual(payload['month_expense'], Decimal('50.00'))
+        self.assertEqual(payload['month_customer_withdrawals'], Decimal('200.00'))
+
+        platform.refresh_from_db()
+        self.assertEqual(
+            platform.total_expenses,
+            expenses_before + Decimal('50.00'),
+        )
+
     def test_insufficient_admin_float_blocks_customer_withdraw_approve(self):
         # Bypass custody: customer has balance, Admin Wallet empty.
         credit_wallet(self.wallet, Decimal('25.00'))
@@ -501,6 +532,8 @@ class AdminWalletAPITests(APITestCase):
         self.assertEqual(dash.status_code, status.HTTP_200_OK)
         self.assertEqual(Decimal(dash.data['wallet']['balance']), Decimal('1500.00'))
         self.assertIn('today_income', dash.data)
+        self.assertIn('today_customer_withdrawals', dash.data)
+        self.assertIn('month_customer_withdrawals', dash.data)
         self.assertIn('total_customer_funding', dash.data)
         self.assertIn('total_customer_withdrawals', dash.data)
 

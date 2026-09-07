@@ -112,6 +112,77 @@ class MealOffDeadlineHelperTests(SimpleTestCase):
         self.assertFalse(can_meal_on(scheduled, now=now, settings_obj=self.settings_obj))
         self.assertFalse(can_meal_on(admin_skip, now=now, settings_obj=self.settings_obj))
 
+    def test_is_past_meal_cutoff_lunch_boundary(self):
+        from orders.services.meal_off import is_past_meal_cutoff
+
+        settings_obj = MealOffSettings(
+            timezone='Asia/Dhaka',
+            lunch_off_time=time(2, 0),
+            dinner_off_time=time(16, 0),
+        )
+        tz = ZoneInfo('Asia/Dhaka')
+        service = date(2026, 9, 8)
+        at_deadline = datetime(2026, 9, 8, 2, 0, 0, tzinfo=tz)
+        just_after = datetime(2026, 9, 8, 2, 0, 1, tzinfo=tz)
+        just_before = datetime(2026, 9, 8, 1, 59, 0, tzinfo=tz)
+        self.assertFalse(
+            is_past_meal_cutoff(service, 'lunch', now=just_before, settings_obj=settings_obj)
+        )
+        self.assertFalse(
+            is_past_meal_cutoff(service, 'lunch', now=at_deadline, settings_obj=settings_obj)
+        )
+        self.assertTrue(
+            is_past_meal_cutoff(service, 'lunch', now=just_after, settings_obj=settings_obj)
+        )
+
+    def test_is_past_meal_cutoff_dinner_boundary(self):
+        from orders.services.meal_off import is_past_meal_cutoff
+
+        settings_obj = MealOffSettings(
+            timezone='Asia/Dhaka',
+            lunch_off_time=time(2, 0),
+            dinner_off_time=time(16, 0),
+        )
+        tz = ZoneInfo('Asia/Dhaka')
+        service = date(2026, 9, 8)
+        before = datetime(2026, 9, 8, 15, 59, 0, tzinfo=tz)
+        after = datetime(2026, 9, 8, 16, 0, 1, tzinfo=tz)
+        self.assertFalse(
+            is_past_meal_cutoff(service, 'dinner', now=before, settings_obj=settings_obj)
+        )
+        self.assertTrue(
+            is_past_meal_cutoff(service, 'dinner', now=after, settings_obj=settings_obj)
+        )
+
+    def test_is_past_meal_cutoff_uses_asia_dhaka_not_utc_wall_clock(self):
+        from orders.services.meal_off import is_past_meal_cutoff
+
+        settings_obj = MealOffSettings(
+            timezone='Asia/Dhaka',
+            lunch_off_time=time(2, 0),
+            dinner_off_time=time(16, 0),
+        )
+        # 02:01 Asia/Dhaka == 20:01 previous day UTC
+        utc_instant = datetime(2026, 9, 7, 20, 1, 0, tzinfo=ZoneInfo('UTC'))
+        self.assertTrue(
+            is_past_meal_cutoff(
+                date(2026, 9, 8),
+                'lunch',
+                now=utc_instant,
+                settings_obj=settings_obj,
+            )
+        )
+        # 01:59 Asia/Dhaka == 19:59 previous day UTC — still before lunch cutoff
+        utc_before = datetime(2026, 9, 7, 19, 59, 0, tzinfo=ZoneInfo('UTC'))
+        self.assertFalse(
+            is_past_meal_cutoff(
+                date(2026, 9, 8),
+                'lunch',
+                now=utc_before,
+                settings_obj=settings_obj,
+            )
+        )
+
 
 @override_settings(MEDIA_ROOT='test_media', EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class CustomerMealOffAPITestCase(APITestCase):

@@ -69,9 +69,14 @@ Meal charged ৳62         → Customer wallet −৳62; Admin cash unchanged
 Customer withdraws ৳100  → Admin Wallet −৳100 (customer_withdraw)
 ```
 
+Customer withdraw is **custody liability release**, not business expense. It increments `total_customer_withdrawals` and MUST NOT increment `total_expenses`. Dashboard `today_expense` / `month_expense` sum only `EXPENSE_TYPES`; use `today_customer_withdrawals` / `month_customer_withdrawals` for period custody outflows.
+
 ## Reconcile / cutover
 
 ```bash
+# Pre-deploy accounting audit (read-only; exit 1 if live provider-ref duplicates)
+python manage.py audit_wallet_accounting
+
 # Preferred under custody accounting
 python manage.py reconcile_admin_wallet_customer_funding --dry-run
 python manage.py reconcile_admin_wallet_customer_funding

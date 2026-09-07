@@ -5,6 +5,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 from user_management.api.permissions import IsVerifiedAdmin
+from user_management.services.admin_people_search import build_customer_people_q
 from wallet.api.serializers import (
     AdminFundingRequestSerializer,
     FundingRejectSerializer,
@@ -71,6 +72,9 @@ class AdminFundingRequestViewSet(
             WalletTransaction.Status.FAILED,
         }:
             qs = qs.filter(status=status_filter)
+        q = (self.request.query_params.get('q') or '').strip()
+        if q:
+            qs = qs.filter(build_customer_people_q(q, customer_prefix='wallet__customer__'))
         return qs
 
     @extend_schema(
@@ -79,6 +83,15 @@ class AdminFundingRequestViewSet(
         parameters=[
             OpenApiParameter(name='type', type=str, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='status', type=str, location=OpenApiParameter.QUERY),
+            OpenApiParameter(
+                name='q',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                description=(
+                    'Search customer name/email/username/phone (optional +880 prefix) '
+                    'or exact customer public_id (UUID).'
+                ),
+            ),
             OpenApiParameter(name='page', type=int, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='page_size', type=int, location=OpenApiParameter.QUERY),
         ],
@@ -105,6 +118,10 @@ class AdminFundingRequestViewSet(
     @extend_schema(
         tags=['Admin Wallet Funding Review'],
         summary='Approve pending funding request',
+        description=(
+            'On successful recharge approve, response includes meal_service_restored '
+            '(true when this approve cleared low-balance meal-stop).'
+        ),
         request=None,
         responses={
             200: AdminFundingRequestSerializer,
@@ -117,9 +134,13 @@ class AdminFundingRequestViewSet(
     @action(detail=True, methods=['post'], url_path='approve')
     def approve(self, request, public_id=None):
         txn = self.get_object()
+        meal_service_restored = False
         try:
             if txn.type == WalletTransaction.Type.RECHARGE:
                 txn = approve_recharge(txn, reviewed_by=request.user)
+                meal_service_restored = bool(
+                    getattr(txn, 'meal_service_restored', False)
+                )
             elif txn.type == WalletTransaction.Type.WITHDRAW:
                 txn = approve_withdraw(txn, reviewed_by=request.user)
             else:
@@ -139,7 +160,15 @@ class AdminFundingRequestViewSet(
                 'reviewed_by',
             ).get(pk=txn.pk)
         )
-        return Response(AdminFundingRequestSerializer(txn).data)
+        return Response(
+            AdminFundingRequestSerializer(
+                txn,
+                context={
+                    'request': request,
+                    'meal_service_restored': meal_service_restored,
+                },
+            ).data
+        )
 
     @extend_schema(
         tags=['Admin Wallet Funding Review'],

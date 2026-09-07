@@ -11,7 +11,7 @@ Admin Panel Customer 360 at `/admin/customers/:publicId`. **Subscription-first**
 
 ## Page flow
 
-1. **Customer list** — `GET /api/v1/web/customers/` with filters
+1. **Customer list** — `GET /api/v1/web/customers/` with filters; search via `q` (name/email/username/phone with optional `+880`, or exact customer `public_id` UUID)
 2. **Customer detail** — `GET /api/v1/web/customers/{publicId}/` (overview only)
 3. **Tab switch** — enable React Query fetch for that tab's endpoint only
 
@@ -50,6 +50,10 @@ When `summary.has_legacy_orders === true`, show a **collapsed** "Legacy monthly 
 | Meal row key | `public_id` |
 | Subscription status | `status` (render raw value; tolerate unknown enums) |
 | Phone (list + overview) | `phone` as E.164 `+880…` (or `null`); display **as-is** — do **not** prepend another `+880`. WhatsApp links: derive digits from the E.164 value (e.g. `CustomerPhoneWhatsAppLink` / `wa.me`) |
+| Auth / login methods | `google_connected`, `facebook_connected`, `apple_connected`, `social_identities[]` (`provider`, `connected`) |
+| Phone verification | `is_phone_verified`, `phone_verified_at` |
+| Email verification | `is_email_verified`, `verification_status` |
+| Last login | `last_login` |
 
 ## Wallet support scenario
 

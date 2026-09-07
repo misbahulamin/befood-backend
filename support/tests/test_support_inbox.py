@@ -134,6 +134,32 @@ class SupportRestAPITests(APITestCase):
         response = self.client.get(self.admin_list_url)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_admin_conversation_search_q(self):
+        self._auth(self.customer_token)
+        self.client.post(self.messages_url, {'message': 'Delivery question'}, format='json')
+
+        self._auth(self.admin_token)
+        by_email = self.client.get(self.admin_list_url, {'q': 'supcust@example.com'})
+        self.assertEqual(by_email.status_code, status.HTTP_200_OK)
+        self.assertEqual(by_email.data['count'], 1)
+        self.assertEqual(
+            by_email.data['results'][0]['customer_email'], 'supcust@example.com'
+        )
+
+        by_e164_phone = self.client.get(self.admin_list_url, {'q': '+8801711111111'})
+        self.assertEqual(by_e164_phone.data['count'], 1)
+
+        by_customer_uuid = self.client.get(
+            self.admin_list_url, {'q': str(self.customer.customer_profile.public_id)}
+        )
+        self.assertEqual(by_customer_uuid.data['count'], 1)
+
+        by_last_message = self.client.get(self.admin_list_url, {'q': 'Delivery question'})
+        self.assertEqual(by_last_message.data['count'], 1)
+
+        no_match = self.client.get(self.admin_list_url, {'q': 'nobody@example.com'})
+        self.assertEqual(no_match.data['count'], 0)
+
     def test_messages_never_deleted_via_api(self):
         self._auth(self.customer_token)
         self.client.post(self.messages_url, {'message': 'Keep me'}, format='json')

@@ -38,17 +38,33 @@ While `estimated`, copy should say numbers can still change until the meal-off d
      - `customer_count` (people across packages that include the item)
      - `package_contributions[]` breakdown
      - kg via `quantity` + `unit` when `quantity_available`
-4. **Chef** PDF uses this aggregate payload only (no per-customer rows).
-5. **Order Details** PDF: call `GET .../kitchen/today-order-details/` with the same filters; render `customers[]` (name, phone, package_name, address) as an Excel-style table. Do not embed the customer list into `today-meal-requirement`.
-4. Filters (Apply / Reset / Refresh):
+4. **Chef** PDF uses this aggregate payload only (no per-customer rows). Package summary columns on the PDF: **প্যাকেজ** + **চূড়ান্ত মিল** only — do **not** print Expected / Meal off (প্রত্যাশিত / মিল অফ). On-screen Kitchen Today may still show Expected / Meal off. Item-wise cooking section is unchanged.
+5. **Order Details** preview + PDF: call `GET .../kitchen/today-order-details/` with the same filters; render `customers[]` as an Excel-style table with columns **Name / Phone / Menu / Address** (plus SL). Prefer `menu_items_label`, else join `ingredient_names` with ` + ` (e.g. `mach + dhal + vat`). Do **not** use `package_name` as the Menu cell fallback — show `—` when menu fields are empty. Do not embed the customer list into `today-meal-requirement`.
+6. **Low-balance meal-stop:** customers with `meal_service_blocked_low_balance` are omitted server-side from both `today-meal-requirement` (counts + ingredients) and `today-order-details` (`customers[]` / `count`). Do not invent a separate “blocked” column; response shape is unchanged. Numbers can drop when wallet automation blocks a customer mid-day — refresh uses live data.
+7. Filters (Apply / Reset / Refresh):
    - `service_date`, `meal_period`, optional `package_public_id`
    - Package options: reuse packages seen on an unfiltered response (same pattern as Meal Demand), or clear package filter to refresh the list
-5. If `ingredients_incomplete`, warn that the monthly menu is missing/unpublished for some packages
-6. **Print / Download PDF:** use the **currently loaded** filtered response — do not refetch unfiltered data. Layout:
-   - Section 1: package-wise summary
+8. If `ingredients_incomplete`, warn that the monthly menu is missing/unpublished for some packages
+9. **Print / Download PDF:** use the **currently loaded** filtered response — do not refetch unfiltered data. Layout:
+   - Section 1: package-wise summary (**প্যাকেজ**, **চূড়ান্ত মিল** only on Chef PDF)
    - Section 2: item-wise calculation
    - Section 3: prep notes (`confirmation_status`, incomplete-menu warning)
    - Prefer browser print (`window.print` / Save as PDF); no separate print API in v1
+
+### Order Details customer row shape
+
+```json
+{
+  "name": "Misbahul Amin",
+  "phone": "+8801894126298",
+  "package_name": "Student Package",
+  "address": "chawkbazar",
+  "ingredient_names": ["mach", "dhal", "vat"],
+  "menu_items_label": "mach + dhal + vat"
+}
+```
+
+`package_name` remains for compatibility; kitchen sheets display **Menu** from the ingredient fields.
 
 ### C. History / reports
 

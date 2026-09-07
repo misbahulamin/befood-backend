@@ -127,6 +127,7 @@ class WalletTransaction(PublicIdMixin, TimeStampedModel):
                     models.Q(type='recharge')
                     & models.Q(method__in=['bkash', 'nagad', 'bank'])
                     & ~models.Q(external_ref='')
+                    & models.Q(status__in=['pending', 'completed'])
                 ),
                 name='wallet_txn_unique_provider_recharge_ref',
             ),

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from django.db import transaction
+from django.db.models import Q
 
 from support.models import SupportConversation
 from user_management.models import CustomerProfile
+from user_management.services.admin_people_search import build_customer_people_q
 
 
 def get_or_create_conversation(customer: CustomerProfile) -> SupportConversation:
@@ -52,14 +54,8 @@ def apply_admin_conversation_filters(qs, *, status: str | None = None, has_unrea
     if q:
         q = q.strip()
         if q:
-            from django.db.models import Q
-
             qs = qs.filter(
-                Q(customer__user__first_name__icontains=q)
-                | Q(customer__user__last_name__icontains=q)
-                | Q(customer__user__username__icontains=q)
-                | Q(customer__user__email__icontains=q)
-                | Q(customer__phone__icontains=q)
+                build_customer_people_q(q, customer_prefix='customer__')
                 | Q(last_message__icontains=q)
             )
     return qs.order_by('-last_message_at', '-id')

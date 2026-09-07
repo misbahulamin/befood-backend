@@ -23,6 +23,7 @@ from orders.services.meal_off import (
 )
 from orders.services.subscription_parent import (
     delivery_customer,
+    delivery_meal,
     delivery_meal_name,
     live_delivery_q,
 )
@@ -121,12 +122,19 @@ def _demand_queryset(
     package_id: int | None = None,
     package_public_id: UUID | str | None = None,
 ):
+    # Align with auto_meal_delivery.eligible_delivery_queryset: low-balance
+    # meal-stop blocked customers are not cooked for, so omit from all demand
+    # counts, ingredient scaling, kitchen Order Details, and new snapshots.
     qs = (
         OrderDelivery.objects.filter(
             service_date=service_date,
             meal_period=meal_period,
         )
         .filter(live_delivery_q(service_date))
+        .exclude(
+            Q(subscription__customer__meal_service_blocked_low_balance=True)
+            | Q(order__customer__meal_service_blocked_low_balance=True)
+        )
         .select_related('order', 'order__meal', 'subscription', 'subscription__meal')
         .annotate(
             demand_meal_id=Coalesce('subscription__meal_id', 'order__meal_id'),
@@ -434,6 +442,39 @@ def _delivery_address_for_sheet(delivery: OrderDelivery) -> str:
     return ', '.join(part for part in parts if part)
 
 
+def _slot_ingredient_names_for_meal(
+    meal_id: int | None,
+    service_date: date,
+    meal_period: str,
+    cache: dict[int, list[str]],
+) -> list[str]:
+    """
+    Published slot ingredient display names for a package, cached per meal_id.
+
+    Preserves MonthlyMenuSlotItem queryset order (ingredient name by default).
+    """
+    if meal_id is None:
+        return []
+    if meal_id in cache:
+        return cache[meal_id]
+
+    slot = resolve_published_slot_for_delivery(
+        meal_id=meal_id,
+        service_date=service_date,
+        meal_period=meal_period,
+    )
+    if slot is None:
+        cache[meal_id] = []
+        return cache[meal_id]
+
+    names = [
+        (item.ingredient.name or '').strip()
+        for item in slot.items.select_related('ingredient').all()
+    ]
+    cache[meal_id] = [name for name in names if name]
+    return cache[meal_id]
+
+
 def build_kitchen_order_details(
     service_date: date,
     meal_period: str,
@@ -445,6 +486,7 @@ def build_kitchen_order_details(
 
     Reuses the kitchen demand queryset (live parents only) and excludes meal-off
     / skipped deliveries. Does not change aggregate kitchen requirement math.
+    Each row includes today's published menu ingredient names for the package.
     """
     qs = (
         _demand_queryset(
@@ -455,13 +497,25 @@ def build_kitchen_order_details(
         .exclude(status=OrderDelivery.DeliveryStatus.SKIPPED)
         .select_related(
             'order__customer__user',
+            'order__meal',
             'subscription__customer__user',
+            'subscription__meal',
         )
     )
 
-    customers: list[dict[str, str]] = []
+    menu_cache: dict[int, list[str]] = {}
+    customers: list[dict[str, Any]] = []
     for delivery in qs:
         customer = delivery_customer(delivery)
+        meal = delivery_meal(delivery)
+        meal_id = meal.pk if meal is not None else None
+        ingredient_names = _slot_ingredient_names_for_meal(
+            meal_id,
+            service_date,
+            meal_period,
+            menu_cache,
+        )
+        menu_items_label = ' + '.join(ingredient_names) if ingredient_names else ''
         customers.append(
             {
                 'name': _customer_display_name(customer),
@@ -472,6 +526,8 @@ def build_kitchen_order_details(
                 ),
                 'package_name': delivery_meal_name(delivery) or '',
                 'address': _delivery_address_for_sheet(delivery),
+                'ingredient_names': ingredient_names,
+                'menu_items_label': menu_items_label,
             }
         )
 

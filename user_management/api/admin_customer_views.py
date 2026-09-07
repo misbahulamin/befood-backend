@@ -1,5 +1,5 @@
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
-from rest_framework import mixins, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
@@ -16,7 +16,15 @@ from user_management.api.admin_customer_serializers import (
     AdminCustomerWalletOverviewSerializer,
     AdminCustomerWalletTransactionSerializer,
 )
+from user_management.api.delivery_serializers import (
+    CustomerDeliveryPlaceSerializer,
+    CustomerDeliveryPlaceWriteSerializer,
+    MealDeliveryPreferenceSerializer,
+    MealDeliveryPreferenceWriteSerializer,
+)
+from user_management.api.delivery_views import _map_place_error, _map_pref_error
 from user_management.api.permissions import IsVerifiedAdmin
+from user_management.models import CustomerDeliveryPlace
 from user_management.services.admin_customer import (
     MEAL_QUERY_ALLOWLIST,
     apply_customer_list_filters,
@@ -29,6 +37,17 @@ from user_management.services.admin_customer import (
     customer_orders_queryset,
     customer_subscriptions_queryset,
     customer_wallet_transactions_queryset,
+)
+from user_management.services.delivery_place import (
+    DeliveryPlaceError,
+    create_delivery_place,
+    delete_delivery_place,
+    get_place_or_error,
+    update_delivery_place,
+)
+from user_management.services.delivery_preference import (
+    get_or_create_preference,
+    set_meal_delivery_preferences,
 )
 
 
@@ -98,13 +117,13 @@ def _with_deprecation(response, successor_path: str):
     ),
 )
 class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
-    """Admin SPA customer management (read-only)."""
+    """Admin SPA customer management (read + nested delivery-place writes)."""
 
     permission_classes = [IsVerifiedAdmin]
     pagination_class = AdminCustomerPagination
     lookup_field = 'public_id'
     lookup_url_kwarg = 'public_id'
-    http_method_names = ['get', 'head', 'options']
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
         return customer_base_queryset()
@@ -256,3 +275,132 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
         page = self.paginate_queryset(events)
         serializer = AdminCustomerActivitySerializer(page, many=True)
         return self.get_paginated_response(serializer.data)
+
+    @extend_schema(
+        tags=['Admin Customers'],
+        summary='List or create meal delivery places for a customer',
+    )
+    @action(detail=True, methods=['get', 'post'], url_path='delivery-places')
+    def delivery_places(self, request, public_id=None):
+        customer = self.get_object()
+        if request.method == 'GET':
+            places = CustomerDeliveryPlace.objects.filter(
+                customer_profile=customer,
+            ).order_by('-created_at')
+            return Response(CustomerDeliveryPlaceSerializer(places, many=True).data)
+
+        serializer = CustomerDeliveryPlaceWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            place = create_delivery_place(customer, **serializer.validated_data)
+        except DeliveryPlaceError as exc:
+            mapped = _map_place_error(exc)
+            if isinstance(mapped, Response):
+                return mapped
+            raise
+        return Response(
+            CustomerDeliveryPlaceSerializer(place).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(
+        tags=['Admin Customers'],
+        summary='Retrieve, update, or delete one meal delivery place',
+    )
+    @action(
+        detail=True,
+        methods=['get', 'patch', 'delete'],
+        url_path=r'delivery-places/(?P<place_public_id>[^/.]+)',
+    )
+    def delivery_place_detail(self, request, public_id=None, place_public_id=None):
+        customer = self.get_object()
+        try:
+            place = get_place_or_error(customer, place_public_id)
+        except DeliveryPlaceError as exc:
+            mapped = _map_place_error(exc)
+            if isinstance(mapped, Response):
+                return mapped
+            raise
+
+        if request.method == 'GET':
+            return Response(CustomerDeliveryPlaceSerializer(place).data)
+
+        if request.method == 'DELETE':
+            try:
+                delete_delivery_place(place)
+            except DeliveryPlaceError as exc:
+                mapped = _map_place_error(exc)
+                if isinstance(mapped, Response):
+                    return mapped
+                raise
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        serializer = CustomerDeliveryPlaceWriteSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        try:
+            place = update_delivery_place(place, **serializer.validated_data)
+        except DeliveryPlaceError as exc:
+            mapped = _map_place_error(exc)
+            if isinstance(mapped, Response):
+                return mapped
+            raise
+        return Response(CustomerDeliveryPlaceSerializer(place).data)
+
+    @extend_schema(
+        tags=['Admin Customers'],
+        summary='Get or update usual lunch/dinner delivery preferences',
+    )
+    @action(detail=True, methods=['get', 'put'], url_path='delivery-preferences')
+    def delivery_preferences(self, request, public_id=None):
+        customer = self.get_object()
+        if request.method == 'GET':
+            pref = get_or_create_preference(customer)
+            return Response(MealDeliveryPreferenceSerializer(pref).data)
+
+        serializer = MealDeliveryPreferenceWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        lunch = None
+        dinner = None
+        clear_lunch = False
+        clear_dinner = False
+
+        if 'lunch_place_id' in data:
+            if data['lunch_place_id'] is None:
+                clear_lunch = True
+            else:
+                try:
+                    lunch = get_place_or_error(customer, data['lunch_place_id'])
+                except DeliveryPlaceError as exc:
+                    mapped = _map_place_error(exc)
+                    if isinstance(mapped, Response):
+                        return mapped
+                    raise
+
+        if 'dinner_place_id' in data:
+            if data['dinner_place_id'] is None:
+                clear_dinner = True
+            else:
+                try:
+                    dinner = get_place_or_error(customer, data['dinner_place_id'])
+                except DeliveryPlaceError as exc:
+                    mapped = _map_place_error(exc)
+                    if isinstance(mapped, Response):
+                        return mapped
+                    raise
+
+        try:
+            pref = set_meal_delivery_preferences(
+                customer,
+                lunch_place=lunch,
+                dinner_place=dinner,
+                clear_lunch=clear_lunch,
+                clear_dinner=clear_dinner,
+            )
+        except DeliveryPlaceError as exc:
+            mapped = _map_pref_error(exc)
+            if isinstance(mapped, Response):
+                return mapped
+            raise
+        return Response(MealDeliveryPreferenceSerializer(pref).data)

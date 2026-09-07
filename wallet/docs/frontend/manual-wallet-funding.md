@@ -28,7 +28,18 @@ Creates a **pending** recharge. Balance does **not** increase until admin approv
 
 `payment_method`: `bkash` | `nagad` | `bank` (not `manual`).
 
-Response includes `wallet` + `transaction` with `status: "pending"`. API field `transaction_id` maps to ledger `external_ref`.
+API field `transaction_id` maps to ledger `external_ref`.
+
+### Provider `transaction_id` uniqueness
+
+| Prior recharge status | Same method + `transaction_id` |
+|-----------------------|--------------------------------|
+| `pending` | **Blocked** (409 duplicate) |
+| `completed` (approved) | **Blocked** (409 duplicate) |
+| `failed` (rejected) | **Allowed** — customer may resubmit |
+| `cancelled` | **Allowed** |
+
+Reject does **not** clear `external_ref` (kept for audit). Only live `pending`/`completed` rows occupy the unique slot.
 
 ### `POST /wallet/withdraw/`
 
@@ -51,7 +62,7 @@ Base: `/api/v1/web/wallet-funding/`
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/requests/?type=&status=&page=` | Filter `type=recharge\|withdraw`, `status=pending\|completed\|failed` |
+| GET | `/requests/?type=&status=&q=&page=` | Filter `type=recharge\|withdraw`, `status=pending\|completed\|failed`, optional people search `q` (name/email/username/phone/customer UUID) |
 | GET | `/requests/{public_id}/` | Full audit including reviewer |
 | POST | `/requests/{public_id}/approve/` | Empty body |
 | POST | `/requests/{public_id}/reject/` | `{ "reason": "optional" }` |
@@ -68,7 +79,7 @@ Status mapping for UI: `completed` ≈ approved, `failed` ≈ rejected.
 | 401 | Missing/invalid auth |
 | 403 | Not verified customer/admin; customer create while `WALLET_MANUAL_FUNDING_ENABLED=false` |
 | 404 | Unknown / foreign public_id |
-| 409 | Duplicate provider trx id; idempotency conflict; already processed approve/reject; Admin Wallet float shortfall on withdraw approve |
+| 409 | Duplicate **live** provider trx id (`pending`/`completed` only); idempotency conflict; already processed approve/reject; Admin Wallet float shortfall on withdraw approve |
 
 ## UX notes
 
@@ -85,3 +96,29 @@ Status mapping for UI: `completed` ≈ approved, `failed` ≈ rejected.
 2. Emails a branded wallet recharge invoice
 
 Admin UI should **not** show a separate “send invoice” control for this release. Failures of push/email do not change the approve API success response. See `wallet/docs/backend/wallet-recharge-approval-notifications.md` and the mobile FCM section in that doc.
+
+## Meal service restore on recharge approve
+
+Backend-owned. After a successful pending **recharge** approve, if the customer was meal-stop blocked and post-credit spendable balance (`Wallet.balance`) is `>=` the live `meal_stop_threshold`, the backend clears:
+
+- `meal_service_blocked_low_balance` → `false`
+- `meal_service_blocked_at` → `null`
+
+Approve `200` includes additive:
+
+```json
+{
+  "meal_service_restored": true
+}
+```
+
+| Value | Meaning |
+|-------|---------|
+| `true` | This approve cleared low-balance meal-stop |
+| `false` | Not blocked, still below threshold, withdraw approve, list/detail/reject, etc. |
+
+**Admin UI (optional):** if `meal_service_restored === true`, show toast “Meal service restored”. Do **not** compute thresholds on the frontend.
+
+**Customer apps:** no change. There is **no** dedicated “meal service restored” push/email; only the existing recharge-approved notifications.
+
+**No migration** — uses existing customer profile fields.

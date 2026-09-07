@@ -124,14 +124,24 @@ def notify_customer_meal_stop(
     *,
     balance: Decimal,
     meal_stop_threshold: Decimal,
+    send_email: bool = True,
 ) -> None:
-    """Push + email meal-stop notice. Never raises into callers."""
+    """
+    Meal-stop-band warning: always push; email optional (typically newly blocked).
+
+    Push may run on every threshold cron evaluation while still below meal-stop.
+    Never raises into callers. Failures must not undo meal-stop block application.
+    """
     try:
+        from orders.services.wallet_balance_thresholds import customer_display_name
+
         user = customer.user
-        title = 'Meal service stopped'
+        full_name = customer_display_name(customer)
+        title = 'Low Wallet Balance Alert'
         body = (
-            f'Your wallet balance is ৳{balance:.2f} (below ৳{meal_stop_threshold:.2f}). '
-            'Meal delivery is paused until you recharge.'
+            f'Hi {full_name}, your current wallet balance is low. '
+            'Please recharge your wallet soon to continue receiving your meals. '
+            'If your balance remains low, your meal service will be paused.'
         )
         data = {
             'type': 'wallet_meal_stop',
@@ -145,6 +155,9 @@ def notify_customer_meal_stop(
             logger.info('FCM not configured; skipped meal-stop push user_id=%s', user.pk)
         except Exception:
             logger.exception('Meal-stop push failed user_id=%s', user.pk)
+
+        if not send_email:
+            return
 
         try:
             _send_customer_email(

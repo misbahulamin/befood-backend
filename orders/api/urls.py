@@ -4,6 +4,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     KitchenTodayMealRequirementView,
     KitchenTodayOrderDetailsView,
+    MealCloseLowBalanceView,
+    MealCloseMealOffView,
     MealDemandHistoryView,
     MealOffSettingsView,
     MealOrderViewSet,
@@ -24,6 +26,16 @@ meal_on = MealOrderViewSet.as_view({'post': 'meal_on'})
 urlpatterns = [
     path('meal-off-settings/', MealOffSettingsView.as_view(), name='meal-off-settings'),
     path('order-wallet-settings/', OrderWalletSettingsView.as_view(), name='order-wallet-settings'),
+    path(
+        'meal-close/meal-off/',
+        MealCloseMealOffView.as_view(),
+        name='meal-close-meal-off',
+    ),
+    path(
+        'meal-close/low-balance/',
+        MealCloseLowBalanceView.as_view(),
+        name='meal-close-low-balance',
+    ),
     # Shared /orders/ mount (admin SPA uses this base, same as meal-off-settings)
     path('meal-statistics/', MealStatisticsView.as_view(), name='meal-statistics'),
     path(

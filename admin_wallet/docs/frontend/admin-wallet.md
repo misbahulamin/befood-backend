@@ -56,8 +56,10 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
   },
   "today_income": "500.00",
   "today_expense": "0.00",
+  "today_customer_withdrawals": "0.00",
   "month_revenue": "1500.00",
   "month_expense": "0.00",
+  "month_customer_withdrawals": "0.00",
   "total_customer_payments": "62.00",
   "total_customer_funding": "500.00",
   "total_customer_withdrawals": "0.00",
@@ -70,12 +72,16 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
 |-------|------------|
 | `balance` | Current platform cash |
 | `today_income` / `month_revenue` | Cash credits in period (includes `customer_funding` + manual deposits) |
+| `today_expense` / `month_expense` | **BREAKING semantics:** business `EXPENSE_TYPES` only (ops/onahar/promo/platform/inventory purchase/etc.). Does **not** include `customer_withdraw` or admin `withdrawal`. |
+| `today_customer_withdrawals` / `month_customer_withdrawals` | Period custody outflows (`customer_withdraw`) — show separately from Expense cards |
 | `total_customer_funding` | Lifetime customer recharge custody in |
 | `total_customer_withdrawals` | Lifetime customer withdraw custody out |
 | `total_customer_payments` | **Meal revenue recognized** (charged deliveries), not cash-in from recharge |
 | `total_withdrawn` | Admin-initiated withdrawals |
 
-Suggested cards: **Current Balance**, **Today’s Income**, **Today’s Expense**, **This Month’s Cash In**, **This Month’s Expense**, **Meal Revenue (recognized)**, **Customer Funding**, **Total Withdrawn**.
+Suggested cards: **Current Balance**, **Today’s Income**, **Today’s Expense** (business only), **Today’s Customer Withdrawals**, **This Month’s Cash In**, **This Month’s Expense**, **This Month’s Customer Withdrawals**, **Meal Revenue (recognized)**, **Customer Funding**, **Total Withdrawn**.
+
+Do **not** map customer withdraw approve to an Expense card — it reduces balance as custody settlement (`customer_withdraw`).
 
 ## Deposit
 

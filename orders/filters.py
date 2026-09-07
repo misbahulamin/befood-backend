@@ -2,7 +2,8 @@ import django_filters
 from django.db.models import Q
 from django.utils import timezone
 
-from .models import CustomerSubscription, Order
+from orders.models import CustomerSubscription, Order
+from user_management.services.admin_people_search import build_subscription_people_q
 
 
 class OrderFilter(django_filters.FilterSet):
@@ -59,6 +60,7 @@ class CustomerSubscriptionFilter(django_filters.FilterSet):
     cancelled_before = django_filters.IsoDateTimeFilter(
         field_name='cancelled_at', lookup_expr='lte'
     )
+    q = django_filters.CharFilter(method='filter_q')
 
     class Meta:
         model = CustomerSubscription
@@ -69,4 +71,11 @@ class CustomerSubscriptionFilter(django_filters.FilterSet):
             'started_before',
             'cancelled_after',
             'cancelled_before',
+            'q',
         ]
+
+    def filter_q(self, queryset, name, value):
+        term = (value or '').strip()
+        if not term:
+            return queryset
+        return queryset.filter(build_subscription_people_q(term)).distinct()

@@ -18,6 +18,7 @@ urlpatterns = [
     path('api/v1/web/subscription-plans/', include('orders.api.web_subscription_plan_urls')),
     path('api/v1/web/subscriptions/', include('orders.api.web_subscription_urls')),
     path('api/v1/web/customers/', include('user_management.api.web_urls')),
+    path('api/v1/web/dashboard/', include('user_management.api.web_dashboard_urls')),
     path('notices/', include('notices.api.urls')),
     path('announcements/', include('announcements.api.urls')),
     path('assets/', include('assets.api.urls')),
