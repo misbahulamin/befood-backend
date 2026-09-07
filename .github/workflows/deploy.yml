@@ -172,9 +172,24 @@ jobs:
             # ----------------------------------
             echo "11. Restarting Gunicorn..."
 
+            # Ensure supervisor service is running
+            sudo systemctl start supervisor
+
+            # Wait until supervisor socket is ready
+            for i in {1..10}; do
+                if sudo supervisorctl status >/dev/null 2>&1; then
+                    break
+                fi
+                echo "Waiting for supervisor socket..."
+                sleep 2
+            done
+
+            sudo supervisorctl reread
+            sudo supervisorctl update
+
             sudo supervisorctl restart 'guni:*'
 
-            sleep 3
+            sleep 5
 
 
             # ----------------------------------
