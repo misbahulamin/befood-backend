@@ -261,6 +261,14 @@ class CustomerSubscriptionViewSet(
         parameters=[
             OpenApiParameter(name='status', type=str, description='active|cancelled'),
             OpenApiParameter(name='plan_public_id', type=str, description='Meal plan UUID'),
+            OpenApiParameter(
+                name='q',
+                type=str,
+                description=(
+                    'Search customer name/email/username/phone (optional +880 prefix) '
+                    'or exact customer / subscription public_id (UUID).'
+                ),
+            ),
             OpenApiParameter(name='started_after', type=str, description='YYYY-MM-DD'),
             OpenApiParameter(name='started_before', type=str, description='YYYY-MM-DD'),
         ],
@@ -285,6 +293,7 @@ class AdminSubscriptionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
     _ALLOWED_QUERY = {
         'status',
         'plan_public_id',
+        'q',
         'started_after',
         'started_before',
         'cancelled_after',

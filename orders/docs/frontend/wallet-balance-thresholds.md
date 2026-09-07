@@ -16,6 +16,11 @@ Admin Settings (`AdminSettingsPage`) manages three ordered BDT thresholds throug
 
 UI blocks submit when ordering is invalid; API returns `400` for the same rule.
 
+## Ops behavior (no admin Settings UI change)
+
+- Twice-daily cron may send **Low Wallet Balance Alert** push every run while a customer remains below `meal_stop_threshold` (not once-per-day).
+- Admin recharge **approve** may return `meal_service_restored: true` when that approve cleared meal-stop; optional toast “Meal service restored”. See `wallet/docs/frontend/manual-wallet-funding.md`.
+
 ## Auth
 
 Verified admin only (`IsVerifiedAdmin`). The admin router already gates Settings behind admin auth.

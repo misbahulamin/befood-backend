@@ -467,6 +467,11 @@ class KitchenOrderDetailsCustomerSerializer(serializers.Serializer):
     phone = serializers.CharField(allow_blank=True)
     package_name = serializers.CharField(allow_blank=True)
     address = serializers.CharField(allow_blank=True)
+    ingredient_names = serializers.ListField(
+        child=serializers.CharField(),
+        allow_empty=True,
+    )
+    menu_items_label = serializers.CharField(allow_blank=True)
 
 
 class KitchenTodayOrderDetailsSerializer(serializers.Serializer):
@@ -496,3 +501,40 @@ class MealDemandHistoryItemSerializer(serializers.ModelSerializer):
             'captured_at',
             'confirmed_at',
         )
+
+
+class MealCloseMealOffRowSerializer(serializers.Serializer):
+    delivery_public_id = serializers.UUIDField()
+    order_public_id = serializers.UUIDField(allow_null=True)
+    subscription_public_id = serializers.UUIDField(allow_null=True)
+    customer_public_id = serializers.UUIDField(allow_null=True)
+    customer_name = serializers.CharField(allow_null=True)
+    customer_phone = serializers.CharField(allow_null=True)
+    customer_email = serializers.EmailField(allow_null=True)
+    service_date = serializers.DateField()
+    meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'])
+    status = serializers.CharField()
+    skip_source = serializers.CharField(allow_null=True)
+    note = serializers.CharField(allow_null=True)
+
+
+class MealCloseMealOffResponseSerializer(serializers.Serializer):
+    service_date = serializers.DateField()
+    count = serializers.IntegerField()
+    results = MealCloseMealOffRowSerializer(many=True)
+
+
+class MealCloseLowBalanceRowSerializer(serializers.Serializer):
+    customer_public_id = serializers.UUIDField()
+    customer_name = serializers.CharField()
+    customer_phone = serializers.CharField()
+    customer_email = serializers.EmailField(allow_null=True)
+    wallet_balance = serializers.CharField()
+    meal_service_blocked_low_balance = serializers.BooleanField()
+    meal_service_blocked_at = serializers.DateTimeField(allow_null=True)
+
+
+class MealCloseLowBalanceResponseSerializer(serializers.Serializer):
+    meal_stop_threshold = serializers.CharField()
+    count = serializers.IntegerField()
+    results = MealCloseLowBalanceRowSerializer(many=True)

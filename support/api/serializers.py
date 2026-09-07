@@ -62,6 +62,7 @@ class AdminConversationListSerializer(serializers.ModelSerializer):
     customer_email = serializers.SerializerMethodField()
     customer_public_id = serializers.SerializerMethodField()
     customer_online = serializers.SerializerMethodField()
+    profile_picture_url = serializers.SerializerMethodField()
 
     class Meta:
         model = SupportConversation
@@ -77,6 +78,7 @@ class AdminConversationListSerializer(serializers.ModelSerializer):
             'customer_phone',
             'customer_email',
             'customer_online',
+            'profile_picture_url',
             'created_at',
             'updated_at',
         )
@@ -97,6 +99,11 @@ class AdminConversationListSerializer(serializers.ModelSerializer):
 
     def get_customer_online(self, obj) -> bool:
         return customer_online_for_conversation(str(obj.public_id))
+
+    def get_profile_picture_url(self, obj):
+        from user_management.services.profile_picture import get_profile_picture_url
+
+        return get_profile_picture_url(obj.customer, request=self.context.get('request'))
 
 
 class AdminConversationDetailSerializer(AdminConversationListSerializer):

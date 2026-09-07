@@ -138,6 +138,77 @@ class ManualFundingServiceTests(TestCase):
         txn.refresh_from_db()
         self.assertEqual(txn.status, WalletTransaction.Status.FAILED)
         self.assertEqual(txn.rejection_reason, 'Invalid trx')
+        self.assertEqual(txn.external_ref, 'RJ-1')
+
+    def test_completed_provider_ref_cannot_be_reused(self):
+        _, txn, _ = request_recharge(
+            self.profile,
+            Decimal('50.00'),
+            payment_method='bkash',
+            transaction_id='DONE-1',
+        )
+        approve_recharge(txn, reviewed_by=self.admin)
+        with self.assertRaises(DuplicateProviderRefError):
+            request_recharge(
+                self.profile,
+                Decimal('10.00'),
+                payment_method='bkash',
+                transaction_id='DONE-1',
+            )
+
+    def test_rejected_provider_ref_can_be_reused(self):
+        _, txn, _ = request_recharge(
+            self.profile,
+            Decimal('50.00'),
+            payment_method='bkash',
+            transaction_id='TX002',
+        )
+        reject_recharge(txn, reviewed_by=self.admin, reason='Wrong amount')
+        txn.refresh_from_db()
+        self.assertEqual(txn.status, WalletTransaction.Status.FAILED)
+        self.assertEqual(txn.external_ref, 'TX002')
+
+        _, again, created = request_recharge(
+            self.profile,
+            Decimal('50.00'),
+            payment_method='bkash',
+            transaction_id='TX002',
+        )
+        self.assertTrue(created)
+        self.assertEqual(again.status, WalletTransaction.Status.PENDING)
+        self.assertEqual(again.external_ref, 'TX002')
+        self.assertNotEqual(again.pk, txn.pk)
+
+    def test_withdraw_approve_does_not_raise_total_expenses(self):
+        credit_wallet(self.wallet, Decimal('500.00'))
+        platform = get_or_create_platform_wallet()
+        expenses_before = platform.total_expenses or Decimal('0.00')
+        withdrawals_before = platform.total_customer_withdrawals or Decimal('0.00')
+        balance_before = platform.balance
+
+        _, txn, _ = request_withdraw(self.profile, Decimal('200.00'))
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, Decimal('300.00'))
+
+        approve_withdraw(txn, reviewed_by=self.admin)
+        self.wallet.refresh_from_db()
+        platform.refresh_from_db()
+        txn.refresh_from_db()
+
+        self.assertEqual(txn.status, WalletTransaction.Status.COMPLETED)
+        self.assertEqual(self.wallet.balance, Decimal('300.00'))
+        self.assertEqual(platform.balance, balance_before - Decimal('200.00'))
+        self.assertEqual(platform.total_expenses, expenses_before)
+        self.assertEqual(
+            platform.total_customer_withdrawals,
+            withdrawals_before + Decimal('200.00'),
+        )
+        debit = AdminWalletTransaction.objects.get(
+            type=AdminWalletTransaction.Type.CUSTOMER_WITHDRAW,
+            customer_wallet_transaction=txn,
+        )
+        self.assertEqual(debit.amount, Decimal('200.00'))
+        self.assertNotIn(debit.type, AdminWalletTransaction.EXPENSE_TYPES)
 
     def test_withdraw_reserves_and_reject_releases(self):
         credit_wallet(self.wallet, Decimal('200.00'))
@@ -476,6 +547,40 @@ class ManualFundingAPITests(APITestCase):
             format='json',
         )
         self.assertEqual(blank.status_code, 400)
+
+    def test_admin_funding_list_search_q(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            created = self.client.post(
+                self.recharge_url,
+                {
+                    'amount': '25.00',
+                    'payment_method': 'bkash',
+                    'transaction_id': 'SEARCH-1',
+                },
+                format='json',
+            )
+        txn_public_id = created.data['transaction']['public_id']
+        list_url = reverse('web_wallet_funding:funding-request-list')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+
+        by_email = self.client.get(list_url, {'q': 'cust_api@example.com'})
+        self.assertEqual(by_email.status_code, 200)
+        self.assertEqual(by_email.data['count'], 1)
+        self.assertEqual(str(by_email.data['results'][0]['public_id']), txn_public_id)
+
+        by_phone = self.client.get(list_url, {'q': '+8801799999999'})
+        self.assertEqual(by_phone.data['count'], 1)
+
+        by_customer_uuid = self.client.get(
+            list_url, {'q': str(self.profile.public_id)}
+        )
+        self.assertEqual(by_customer_uuid.data['count'], 1)
+
+        by_username = self.client.get(list_url, {'q': 'cust_api'})
+        self.assertEqual(by_username.data['count'], 1)
+
+        no_match = self.client.get(list_url, {'q': 'nobody@example.com'})
+        self.assertEqual(no_match.data['count'], 0)
 
 
 class ConcurrentFundingTests(TransactionTestCase):

@@ -226,7 +226,8 @@ def run_wallet_threshold_check(
     Evaluate wallet thresholds for active/blocked customers.
 
     Priority per customer:
-    1. balance < meal_stop → block (+ notify on transition)
+    1. balance < meal_stop → block (+ every-run Low Wallet Balance Alert push;
+       email on newly blocked)
     2. else if blocked and balance >= meal_stop → resume
     3. else if balance < reminder → remind (once per business day)
     """
@@ -263,12 +264,14 @@ def run_wallet_threshold_check(
                         customer.meal_service_blocked_low_balance = True
                         if newly_blocked:
                             result.stopped += 1
-                    if newly_blocked:
-                        notify_customer_meal_stop(
-                            customer,
-                            balance=balance,
-                            meal_stop_threshold=stop_threshold,
-                        )
+                    # Every cron run while below meal-stop: push warning (no daily gate).
+                    # Email only on newly blocked to limit inbox noise.
+                    notify_customer_meal_stop(
+                        customer,
+                        balance=balance,
+                        meal_stop_threshold=stop_threshold,
+                        send_email=newly_blocked,
+                    )
                 affected_by_id[customer.pk] = _build_row(
                     customer, balance=balance, status_label='Meal Stopped'
                 )

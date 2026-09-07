@@ -115,10 +115,15 @@ def _ensure_active_for_customer(wallet: Wallet) -> None:
 
 
 def _provider_ref_taken(method: str, external_ref: str, *, exclude_pk=None) -> bool:
+    """True if a live (pending/completed) provider recharge already owns this ref."""
     qs = WalletTransaction.objects.filter(
         type=WalletTransaction.Type.RECHARGE,
         method=method,
         external_ref=external_ref,
+        status__in=[
+            WalletTransaction.Status.PENDING,
+            WalletTransaction.Status.COMPLETED,
+        ],
     )
     if exclude_pk is not None:
         qs = qs.exclude(pk=exclude_pk)
@@ -353,7 +358,12 @@ def request_withdraw(
 
 @transaction.atomic
 def approve_recharge(txn: WalletTransaction, *, reviewed_by) -> WalletTransaction:
-    """Approve pending recharge: credit customer + Admin Wallet custody."""
+    """Approve pending recharge: credit customer + Admin Wallet custody.
+
+    Attaches transient ``meal_service_restored`` (bool) from meal-stop resume
+    evaluation for the admin approve API response.
+    """
+    from orders.services.wallet_balance_thresholds import maybe_resume_after_wallet_credit
     from wallet.services.transaction_invoice import ensure_invoice_for_recharge
 
     locked_txn = WalletTransaction.objects.select_for_update().get(pk=txn.pk)
@@ -388,6 +398,8 @@ def approve_recharge(txn: WalletTransaction, *, reviewed_by) -> WalletTransactio
     )
     ensure_invoice_for_recharge(locked_txn, previous_balance=previous_balance)
     _sync_admin_wallet_recharge(locked_txn)
+    # Same spendable balance / threshold math as cron via shared helper.
+    locked_txn.meal_service_restored = maybe_resume_after_wallet_credit(wallet.customer)
     _schedule_customer_recharge_approved_notification(locked_txn.pk)
     return locked_txn
 

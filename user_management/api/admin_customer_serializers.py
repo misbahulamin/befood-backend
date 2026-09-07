@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from orders.models import CustomerSubscription, Order, OrderDelivery
-from user_management.models import CustomerAddress, CustomerProfile
+from user_management.models import CustomerAddress, CustomerProfile, SocialIdentity
 from user_management.services.admin_customer import (
     build_active_order_payload,
     build_active_subscription_payload,
@@ -10,6 +10,7 @@ from user_management.services.admin_customer import (
     build_wallet_summary,
     get_customer_wallet,
 )
+from user_management.services.admin_dashboard import build_current_meal_status
 from user_management.validators import format_bd_phone_e164
 from wallet.models import WalletTransaction
 
@@ -46,6 +47,8 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
     profile_picture_url = serializers.SerializerMethodField()
     current_package = serializers.SerializerMethodField()
     wallet_balance = serializers.SerializerMethodField()
+    meal_service_blocked_low_balance = serializers.BooleanField(read_only=True)
+    meal_service_blocked_at = serializers.DateTimeField(read_only=True, allow_null=True)
 
     class Meta:
         model = CustomerProfile
@@ -64,6 +67,8 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
             'registered_at',
             'current_package',
             'wallet_balance',
+            'meal_service_blocked_low_balance',
+            'meal_service_blocked_at',
         )
         read_only_fields = fields
 
@@ -119,6 +124,14 @@ class AdminCustomerDetailSerializer(AdminCustomerListSerializer):
     active_subscription = serializers.SerializerMethodField()
     wallet_summary = serializers.SerializerMethodField()
     active_order = serializers.SerializerMethodField()
+    is_phone_verified = serializers.BooleanField(read_only=True)
+    phone_verified_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    last_login = serializers.DateTimeField(source='user.last_login', read_only=True, allow_null=True)
+    social_identities = serializers.SerializerMethodField()
+    google_connected = serializers.SerializerMethodField()
+    facebook_connected = serializers.SerializerMethodField()
+    apple_connected = serializers.SerializerMethodField()
+    current_meal_status = serializers.SerializerMethodField()
 
     class Meta(AdminCustomerListSerializer.Meta):
         fields = AdminCustomerListSerializer.Meta.fields + (
@@ -145,6 +158,14 @@ class AdminCustomerDetailSerializer(AdminCustomerListSerializer):
             'active_subscription',
             'wallet_summary',
             'active_order',
+            'is_phone_verified',
+            'phone_verified_at',
+            'last_login',
+            'social_identities',
+            'google_connected',
+            'facebook_connected',
+            'apple_connected',
+            'current_meal_status',
             'created_at',
             'updated_at',
         )
@@ -160,6 +181,42 @@ class AdminCustomerDetailSerializer(AdminCustomerListSerializer):
 
     def get_active_order(self, obj):
         return build_active_order_payload(obj)
+
+    def get_current_meal_status(self, obj):
+        return build_current_meal_status(obj)
+
+    def _linked_providers(self, obj) -> set[str]:
+        cached = getattr(obj, '_admin_linked_providers', None)
+        if cached is not None:
+            return cached
+        providers = set(
+            SocialIdentity.objects.filter(user_id=obj.user_id).values_list('provider', flat=True)
+        )
+        obj._admin_linked_providers = providers
+        return providers
+
+    def get_social_identities(self, obj):
+        linked = self._linked_providers(obj)
+        return [
+            {
+                'provider': provider,
+                'connected': provider in linked,
+            }
+            for provider in (
+                SocialIdentity.Provider.GOOGLE,
+                SocialIdentity.Provider.FACEBOOK,
+                SocialIdentity.Provider.APPLE,
+            )
+        ]
+
+    def get_google_connected(self, obj):
+        return SocialIdentity.Provider.GOOGLE in self._linked_providers(obj)
+
+    def get_facebook_connected(self, obj):
+        return SocialIdentity.Provider.FACEBOOK in self._linked_providers(obj)
+
+    def get_apple_connected(self, obj):
+        return SocialIdentity.Provider.APPLE in self._linked_providers(obj)
 
 
 class AdminCustomerActiveSubscriptionSerializer(serializers.Serializer):

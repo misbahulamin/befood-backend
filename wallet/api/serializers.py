@@ -198,6 +198,12 @@ class AdminFundingRequestSerializer(serializers.ModelSerializer):
     customer_phone = serializers.SerializerMethodField()
     reviewed_by_email = serializers.SerializerMethodField()
     reviewed_by_id = serializers.IntegerField(read_only=True, allow_null=True)
+    meal_service_restored = serializers.SerializerMethodField(
+        help_text=(
+            'True only on approve when this recharge cleared low-balance meal-stop; '
+            'otherwise false (list/detail/reject/withdraw).'
+        ),
+    )
 
     class Meta:
         model = WalletTransaction
@@ -219,6 +225,7 @@ class AdminFundingRequestSerializer(serializers.ModelSerializer):
             'reviewed_by_email',
             'reviewed_at',
             'rejection_reason',
+            'meal_service_restored',
             'created_at',
             'updated_at',
         )
@@ -246,3 +253,8 @@ class AdminFundingRequestSerializer(serializers.ModelSerializer):
         if obj.reviewed_by_id is None:
             return None
         return obj.reviewed_by.email
+
+    def get_meal_service_restored(self, obj):
+        if 'meal_service_restored' in self.context:
+            return bool(self.context['meal_service_restored'])
+        return bool(getattr(obj, 'meal_service_restored', False))

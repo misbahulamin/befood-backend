@@ -8,7 +8,7 @@ Admin/Kitchen tooling that turns order deliveries + meal-offs into **expected / 
 |--------|------|-----|---------|
 | GET | `/orders/meal-statistics/` | Verified admin | Date/period/package demand analytics |
 | GET | `/orders/kitchen/today-meal-requirement/` | Verified admin | Cook headcount, package-wise summary, item-wise contributions + kg (aggregate only — no per-customer list) |
-| GET | `/orders/kitchen/today-order-details/` | Verified admin | Cooking customer rows for Order Details PDF (name, phone, package, address) |
+| GET | `/orders/kitchen/today-order-details/` | Verified admin | Cooking customer rows for Order Details PDF (name, phone, package, address, today's menu `ingredient_names` / `menu_items_label`) |
 | GET | `/orders/meal-history/` | Verified admin | Persisted snapshots (not live recalculation) |
 | GET | `/api/v1/web/orders/meal-statistics/` | Verified admin | Same handlers (web-prefixed alias) |
 | GET | `/api/v1/web/orders/kitchen/today-meal-requirement/` | Verified admin | Same handlers (web-prefixed alias) |
@@ -28,14 +28,19 @@ Admin SPA uses the shared `/orders/...` base (same as `meal-off-settings`).
 ## Mental model
 
 ```text
-Expected   = non-cancelled OrderDelivery rows for (service_date, meal_period)
-Meal off   = those with status=skipped
+Eligible   = live (non-cancelled) OrderDelivery rows for (service_date, meal_period)
+             EXCLUDING customers with meal_service_blocked_low_balance=true
+             (same skip-on-block rule as auto meal delivery — not counted as meal-off)
+Expected   = eligible deliveries
+Meal off   = eligible deliveries with status=skipped
 Final cook = Expected − Meal off
 
 confirmation_status:
   estimated  → business now ≤ meal-off deadline
   confirmed  → business now > meal-off deadline
 ```
+
+Low-balance meal-stop blocked customers may still have meal-on (`scheduled`) deliveries, but kitchen must not cook for them: they are omitted from live demand counts, ingredient kg, Order Details `customers[]`, and newly written snapshots. They are **not** treated as meal-off.
 
 Deadlines reuse `MealOffSettings` (default Asia/Dhaka):
 
@@ -169,6 +174,40 @@ When `service_date` and `meal_period` are omitted, the server uses the default k
 ```
 
 **Printable sheet:** the Admin Kitchen Today UI prints/downloads from this same filtered payload (no separate print API). History snapshots still store the lean ingredient quantity shape without contribution fields.
+
+## Kitchen today order details
+
+**Query:** same optional `service_date`, `meal_period`, `package_public_id` as kitchen today requirement.
+
+Returns cooking customers only (excludes skipped / meal-off). Each row includes identity fields plus today's published slot menu for that customer's package.
+
+**Success 200**
+
+```json
+{
+  "service_date": "2026-08-05",
+  "meal_period": "lunch",
+  "count": 1,
+  "customers": [
+    {
+      "name": "Towaha",
+      "phone": "+8801894126298",
+      "package_name": "Student Package",
+      "address": "Chittagong, Chawkbazar",
+      "ingredient_names": ["dhal", "mach", "vat"],
+      "menu_items_label": "dhal + mach + vat"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `ingredient_names` | Published slot ingredient display names (slot item order; default alphabetical by name) |
+| `menu_items_label` | Same names joined with ` + `; empty string when no published menu / no items |
+| `package_name` | Kept for compatibility; Order Details UI should prefer Menu over Package |
+
+Missing published menu does **not** drop the customer — menu fields are empty.
 
 ## History
 

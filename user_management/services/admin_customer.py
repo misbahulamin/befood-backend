@@ -14,8 +14,8 @@ from rest_framework.exceptions import ValidationError
 from orders.models import CustomerSubscription, Order, OrderDelivery, OrderStatusHistory
 from orders.services.subscription_service import get_active_subscription
 from user_management.models import CustomerAddress, CustomerProfile
+from user_management.services.admin_people_search import build_customer_people_q
 from user_management.services.profile_picture import get_profile_picture_url
-from user_management.validators import normalize_phone_search_term
 from wallet.models import Wallet, WalletTransaction
 
 SUBSCRIPTION_EXPIRING_SOON_DAYS = 14
@@ -130,13 +130,7 @@ def apply_customer_list_filters(queryset: QuerySet[CustomerProfile], params) -> 
 
     q = (params.get('q') or '').strip()
     if q:
-        phone_q = normalize_phone_search_term(q)
-        queryset = queryset.filter(
-            Q(user__email__icontains=q)
-            | Q(user__first_name__icontains=q)
-            | Q(user__last_name__icontains=q)
-            | Q(phone__icontains=phone_q)
-        )
+        queryset = queryset.filter(build_customer_people_q(q))
 
     is_active = parse_bool_param(params.get('is_active'), field='is_active')
     if is_active is not None:

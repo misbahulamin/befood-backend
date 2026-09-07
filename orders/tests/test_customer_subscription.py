@@ -447,6 +447,37 @@ class CustomerSubscriptionAPITestCase(APITestCase):
         unknown = self.client.get(self.admin_subs_url, {'foo': '1'})
         self.assertEqual(unknown.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_admin_list_search_q_and_customer_fields(self):
+        self.customer_user.first_name = 'Sub'
+        self.customer_user.last_name = 'Customer'
+        self.customer_user.save(update_fields=['first_name', 'last_name'])
+        subscribe_customer(self.customer_profile, self.plan, today=date(2026, 7, 10))
+        self._auth(self.admin_token)
+        subscription = CustomerSubscription.objects.get(customer=self.customer_profile)
+
+        by_email = self.client.get(self.admin_subs_url, {'q': 'sub_customer@example.com'})
+        self.assertEqual(by_email.data['count'], 1)
+        row = by_email.data['results'][0]
+        self.assertEqual(row['customer_email'], 'sub_customer@example.com')
+        self.assertEqual(row['customer_public_id'], str(self.customer_profile.public_id))
+        self.assertEqual(row['customer_phone'], '+8801712555001')
+        self.assertEqual(row['customer_name'], 'Sub Customer')
+
+        by_phone = self.client.get(self.admin_subs_url, {'q': '+8801712555001'})
+        self.assertEqual(by_phone.data['count'], 1)
+        by_name = self.client.get(self.admin_subs_url, {'q': 'Sub Customer'})
+        self.assertEqual(by_name.data['count'], 1)
+        by_subscription_uuid = self.client.get(
+            self.admin_subs_url, {'q': str(subscription.public_id)}
+        )
+        self.assertEqual(by_subscription_uuid.data['count'], 1)
+        by_customer_uuid = self.client.get(
+            self.admin_subs_url, {'q': str(self.customer_profile.public_id)}
+        )
+        self.assertEqual(by_customer_uuid.data['count'], 1)
+        no_match = self.client.get(self.admin_subs_url, {'q': 'nobody@example.com'})
+        self.assertEqual(no_match.data['count'], 0)
+
     def test_admin_plan_crud(self):
         self._auth(self.admin_token)
         created = self.client.post(

@@ -38,12 +38,13 @@ GET /api/v1/web/subscriptions/
 GET /api/v1/web/subscriptions/{public_id}/
 ```
 
-Paginated (`page`, `page_size`, max 100). List items: customer email / `customer_public_id`, plan snapshots, `status`, `started_on`, cancel fields, progress (`expected_deliveries`, `delivered_count`, `remaining_count`, `active_days_this_month`).
+Paginated (`page`, `page_size`, max 100). List items: `customer_email`, `customer_public_id`, `customer_name`, `customer_phone`, plan snapshots, `status`, `started_on`, cancel fields, progress (`expected_deliveries`, `delivered_count`, `remaining_count`, `active_days_this_month`).
 
 Filters (unsupported keys or invalid `status` → `400`):
 
 | Query | Meaning |
 |-------|---------|
+| `q` | Customer name / email / username / phone (optional `+880`), or exact customer / subscription `public_id` (UUID) |
 | `status` | `active` \| `cancelled` |
 | `plan_public_id` | Meal plan UUID |
 | `started_after` / `started_before` | `YYYY-MM-DD` |

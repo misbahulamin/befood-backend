@@ -375,6 +375,74 @@ class MealDemandServiceTestCase(TestCase):
         refreshed = MealDemandSnapshot.objects.get(package=self.premium)
         self.assertNotEqual(refreshed.ingredient_requirements, rice_qty)
 
+    def test_low_balance_blocked_meal_on_omitted_from_demand_and_ingredients(self):
+        from orders.services.meal_demand import build_kitchen_requirement
+
+        blocked = self._make_customer('blocked_on')
+        blocked.meal_service_blocked_low_balance = True
+        blocked.save(update_fields=['meal_service_blocked_low_balance'])
+        self._create_order_with_dinner(blocked, self.premium, skipped=False)
+
+        demand = get_demand(
+            self.service_date,
+            'dinner',
+            settings_obj=self.settings_obj,
+        )
+        # Seed baseline: 5 expected, 1 off, 4 final — blocked meal-on must not add.
+        self.assertEqual(demand.expected_meal_count, 5)
+        self.assertEqual(demand.meal_off_count, 1)
+        self.assertEqual(demand.final_cooking_count, 4)
+
+        payload = build_kitchen_requirement(
+            self.service_date,
+            'dinner',
+            settings_obj=self.settings_obj,
+        )
+        self.assertEqual(payload['final_cooking_count'], 4)
+        rice = next(i for i in payload['ingredients'] if i['name'] == 'Rice Demand')
+        self.assertEqual(rice['customer_count'], 4)
+        self.assertEqual(rice['quantity'], '0.800000')
+
+    def test_low_balance_blocked_skipped_contributes_neither_count(self):
+        blocked = self._make_customer('blocked_off')
+        blocked.meal_service_blocked_low_balance = True
+        blocked.save(update_fields=['meal_service_blocked_low_balance'])
+        self._create_order_with_dinner(blocked, self.premium, skipped=True)
+
+        demand = get_demand(
+            self.service_date,
+            'dinner',
+            settings_obj=self.settings_obj,
+        )
+        self.assertEqual(demand.expected_meal_count, 5)
+        self.assertEqual(demand.meal_off_count, 1)
+        self.assertEqual(demand.final_cooking_count, 4)
+
+    def test_build_kitchen_order_details_excludes_low_balance_blocked(self):
+        from orders.services.meal_demand import build_kitchen_order_details
+
+        blocked = self._make_customer('blocked_list')
+        blocked.user.first_name = 'Blocked'
+        blocked.user.last_name = 'Customer'
+        blocked.user.save(update_fields=['first_name', 'last_name'])
+        blocked.meal_service_blocked_low_balance = True
+        blocked.save(update_fields=['meal_service_blocked_low_balance'])
+        self._create_order_with_dinner(blocked, self.regular, skipped=False)
+
+        unblocked = self._make_customer('ok_list')
+        unblocked.user.first_name = 'Ok'
+        unblocked.user.last_name = 'Customer'
+        unblocked.user.save(update_fields=['first_name', 'last_name'])
+        self._create_order_with_dinner(unblocked, self.regular, skipped=False)
+
+        payload = build_kitchen_order_details(self.service_date, 'dinner')
+        names = {row['name'] for row in payload['customers']}
+        self.assertNotIn('Blocked Customer', names)
+        self.assertIn('Ok Customer', names)
+        # Seed: 4 non-skipped unblocked finals + 1 new unblocked = 5 listed
+        self.assertEqual(payload['count'], 5)
+        self.assertEqual(len(payload['customers']), payload['count'])
+
 
 @override_settings(MEDIA_ROOT='test_media', EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class MealDemandAPITestCase(APITestCase):
@@ -589,6 +657,71 @@ class MealDemandAPITestCase(APITestCase):
         self.assertEqual(row['phone'], '+8801711999888')
         self.assertEqual(row['package_name'], 'Demand Meal')
         self.assertEqual(row['address'], 'Chittagong, Chawkbazar')
+        # No published lunch menu seeded in setUp → empty menu fields
+        self.assertEqual(row['ingredient_names'], [])
+        self.assertEqual(row['menu_items_label'], '')
+
+    def _seed_published_lunch_menu(self, *ingredient_names: str):
+        ingredients = []
+        for name in ingredient_names:
+            ingredients.append(
+                Ingredient.objects.create(
+                    name=name,
+                    price_per_kg=Decimal('100.00'),
+                    customers_per_kg=Decimal('5.00'),
+                    is_active=True,
+                )
+            )
+        cycle = MealCycle.objects.create(year=2026, month=8)
+        plan = MealCyclePlan.objects.create(
+            cycle=cycle,
+            meal_category=self.meal,
+            status=MealCyclePlan.Status.FINALIZED,
+        )
+        schedule = MonthlyMenuSchedule.objects.create(
+            plan=plan,
+            status=MonthlyMenuSchedule.Status.PUBLISHED,
+            published_at=timezone.now(),
+        )
+        slot = MonthlyMenuSlot.objects.create(
+            schedule=schedule,
+            service_date=self.service_date,
+            meal_period=MonthlyMenuSlot.MealPeriod.LUNCH,
+        )
+        for ingredient in ingredients:
+            MonthlyMenuSlotItem.objects.create(slot=slot, ingredient=ingredient)
+        return slot
+
+    def test_order_details_includes_published_menu_ingredients(self):
+        self._seed_published_lunch_menu('mach', 'dhal', 'vat')
+        self._auth(self.admin_token)
+        response = self.client.get(
+            self.order_details_url,
+            {'service_date': '2026-08-05', 'meal_period': 'lunch'},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        row = response.data['customers'][0]
+        self.assertEqual(row['package_name'], 'Demand Meal')
+        self.assertEqual(row['ingredient_names'], ['dhal', 'mach', 'vat'])
+        self.assertEqual(row['menu_items_label'], 'dhal + mach + vat')
+        self.assertEqual(row['name'], 'Towaha')
+        self.assertEqual(row['address'], 'Chittagong, Chawkbazar')
+
+    def test_order_details_empty_menu_when_slot_unpublished(self):
+        slot = self._seed_published_lunch_menu('mach', 'dhal')
+        MonthlyMenuSlot.objects.filter(pk=slot.pk).delete()
+        self._auth(self.admin_token)
+        response = self.client.get(
+            self.order_details_url,
+            {'service_date': '2026-08-05', 'meal_period': 'lunch'},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        row = response.data['customers'][0]
+        self.assertEqual(row['ingredient_names'], [])
+        self.assertEqual(row['menu_items_label'], '')
+        self.assertEqual(row['package_name'], 'Demand Meal')
 
     def test_order_details_excludes_meal_off(self):
         self._auth(self.admin_token)
@@ -639,6 +772,92 @@ class MealDemandAPITestCase(APITestCase):
         self._auth(self.customer_token)
         response = self.client.get(self.order_details_url)
         self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    def test_kitchen_and_order_details_exclude_low_balance_blocked_keep_keys(self):
+        other_user = User.objects.create_user(
+            username='demand_ok_peer',
+            email='demand_ok_peer@example.com',
+            password='StrongPassword123',
+            is_active=True,
+            first_name='Peer',
+            last_name='Ok',
+        )
+        other_user.groups.add(self.customer_group)
+        other = CustomerProfile.objects.create(
+            user=other_user,
+            phone='1711999777',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=True,
+        )
+        other_order = Order.objects.create(
+            customer=other,
+            meal=self.meal,
+            meal_name_snapshot=self.meal.meal_name,
+            meal_type_snapshot=self.meal.meal_type,
+            meal_period_snapshot=self.meal.meal_period,
+            total_price_snapshot=self.meal.total_price,
+            per_meal_price_snapshot=Decimal('100.00'),
+            order_status=Order.OrderStatus.ACTIVE,
+            order_start_date=self.service_date,
+            order_end_date=self.service_date,
+            service_days_count=1,
+            order_month='2026-08',
+        )
+        OrderDelivery.objects.create(
+            order=other_order,
+            service_date=self.service_date,
+            meal_period=OrderDelivery.MealPeriod.LUNCH,
+            status=OrderDelivery.DeliveryStatus.SCHEDULED,
+            delivery_full_address_snapshot='Peer address',
+        )
+
+        self.customer_profile.meal_service_blocked_low_balance = True
+        self.customer_profile.save(update_fields=['meal_service_blocked_low_balance'])
+
+        self._auth(self.admin_token)
+        kitchen = self.client.get(
+            self.kitchen_url,
+            {'service_date': '2026-08-05', 'meal_period': 'lunch'},
+        )
+        self.assertEqual(kitchen.status_code, status.HTTP_200_OK)
+        for key in (
+            'service_date',
+            'meal_period',
+            'confirmation_status',
+            'expected_meal_count',
+            'meal_off_count',
+            'final_cooking_count',
+            'total_customers',
+            'packages',
+            'ingredients_incomplete',
+            'ingredients',
+        ):
+            self.assertIn(key, kitchen.data)
+        self.assertEqual(kitchen.data['expected_meal_count'], 1)
+        self.assertEqual(kitchen.data['final_cooking_count'], 1)
+        self.assertEqual(kitchen.data['total_customers'], 1)
+
+        details = self.client.get(
+            self.order_details_url,
+            {'service_date': '2026-08-05', 'meal_period': 'lunch'},
+        )
+        self.assertEqual(details.status_code, status.HTTP_200_OK)
+        for key in ('service_date', 'meal_period', 'count', 'customers'):
+            self.assertIn(key, details.data)
+        self.assertEqual(details.data['count'], 1)
+        row = details.data['customers'][0]
+        for key in (
+            'name',
+            'phone',
+            'package_name',
+            'address',
+            'ingredient_names',
+            'menu_items_label',
+        ):
+            self.assertIn(key, row)
+        self.assertEqual(row['name'], 'Peer Ok')
+        self.assertNotEqual(row['name'], 'Towaha')
 
     def test_history_after_confirm_and_frozen_qty(self):
         self._auth(self.admin_token)

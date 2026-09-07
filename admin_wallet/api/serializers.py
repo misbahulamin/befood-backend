@@ -34,6 +34,7 @@ class AdminWalletTransactionSerializer(serializers.ModelSerializer):
     )
     customer_public_id = serializers.SerializerMethodField()
     customer_email = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
     admin_email = serializers.SerializerMethodField()
 
     class Meta:
@@ -55,6 +56,7 @@ class AdminWalletTransactionSerializer(serializers.ModelSerializer):
             'delivery_public_id',
             'customer_public_id',
             'customer_email',
+            'customer_name',
             'admin_email',
             'metadata',
             'created_at',
@@ -72,6 +74,12 @@ class AdminWalletTransactionSerializer(serializers.ModelSerializer):
             return obj.customer.user.email
         return None
 
+    def get_customer_name(self, obj):
+        if not obj.customer_id or not obj.customer.user_id:
+            return None
+        user = obj.customer.user
+        return (user.get_full_name() or user.username or '').strip() or None
+
     def get_admin_email(self, obj):
         if obj.actor_admin_id and obj.actor_admin.user_id:
             return obj.actor_admin.user.email
@@ -85,13 +93,37 @@ class AdminWalletDashboardSerializer(serializers.Serializer):
         decimal_places=2,
         help_text='Completed Admin Wallet cash credits today (includes customer_funding).',
     )
-    today_expense = serializers.DecimalField(max_digits=14, decimal_places=2)
+    today_expense = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text=(
+            'Completed business expense debits today (EXPENSE_TYPES only). '
+            'Does not include customer_withdraw or admin withdrawal.'
+        ),
+    )
+    today_customer_withdrawals = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text='Completed customer_withdraw custody debits today.',
+    )
     month_revenue = serializers.DecimalField(
         max_digits=14,
         decimal_places=2,
         help_text='Completed Admin Wallet cash credits this month (includes customer_funding).',
     )
-    month_expense = serializers.DecimalField(max_digits=14, decimal_places=2)
+    month_expense = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text=(
+            'Completed business expense debits this month (EXPENSE_TYPES only). '
+            'Does not include customer_withdraw or admin withdrawal.'
+        ),
+    )
+    month_customer_withdrawals = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text='Completed customer_withdraw custody debits this month.',
+    )
     total_customer_payments = serializers.DecimalField(
         max_digits=14,
         decimal_places=2,

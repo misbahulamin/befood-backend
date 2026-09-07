@@ -37,6 +37,7 @@ from orders.services.subscription_service import (
 )
 from orders.api.subscription_serializers import CustomerSubscriptionDetailSerializer
 from orders.services.order_status import OrderStatusError, change_order_status
+from orders.services.meal_close import build_low_balance_list, build_meal_off_list
 from orders.services.order_wallet_settings import (
     get_order_wallet_settings,
     update_order_wallet_settings,
@@ -51,6 +52,8 @@ from .serializers import (
     KitchenTodayOrderDetailsSerializer,
     KitchenTodayRequirementSerializer,
     MarkDeliverySerializer,
+    MealCloseLowBalanceResponseSerializer,
+    MealCloseMealOffResponseSerializer,
     MealDemandHistoryItemSerializer,
     MealOffRequestSerializer,
     MealOffSettingsSerializer,
@@ -777,6 +780,50 @@ class OrderWalletSettingsView(APIView):
         return Response(OrderWalletSettingsSerializer(updated).data)
 
 
+class MealCloseMealOffView(APIView):
+    """Preset list: today's skipped (meal-off) deliveries for admin Meal Close."""
+
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=['Admin Order Management'],
+        summary='Meal Close — today’s meal-offs',
+        description=(
+            'Returns live deliveries for business today (meal-off timezone) with status=skipped. '
+            'No query filters required.'
+        ),
+        responses={
+            200: MealCloseMealOffResponseSerializer,
+            403: OpenApiResponse(description='Admin required'),
+        },
+    )
+    def get(self, request):
+        payload = build_meal_off_list()
+        return Response(MealCloseMealOffResponseSerializer(payload).data)
+
+
+class MealCloseLowBalanceView(APIView):
+    """Preset list: customers blocked or below meal-stop threshold."""
+
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=['Admin Order Management'],
+        summary='Meal Close — low balance / meal-stop cohort',
+        description=(
+            'Returns customers with meal_service_blocked_low_balance or wallet balance below '
+            'order-wallet meal_stop_threshold. No query filters required.'
+        ),
+        responses={
+            200: MealCloseLowBalanceResponseSerializer,
+            403: OpenApiResponse(description='Admin required'),
+        },
+    )
+    def get(self, request):
+        payload = build_low_balance_list()
+        return Response(MealCloseLowBalanceResponseSerializer(payload).data)
+
+
 def _parse_demand_service_date(raw_value, *, settings_obj):
     today = meal_off_business_now(settings_obj).date()
     if not raw_value:
@@ -1052,8 +1099,10 @@ class KitchenTodayOrderDetailsView(APIView):
         summary='Kitchen today order details (customer list)',
         description=(
             'Per-customer cooking list for Order Details PDF: name, phone, package, '
-            'address. Same default slot and filters as today-meal-requirement. '
-            'Excludes meal-off / skipped deliveries. Does not alter aggregate kitchen math.'
+            'address, plus today\'s published menu `ingredient_names` and '
+            '`menu_items_label` (joined with ` + `). Same default slot and filters as '
+            'today-meal-requirement. Excludes meal-off / skipped deliveries. Does not '
+            'alter aggregate kitchen math. Missing published menu yields empty menu fields.'
         ),
         parameters=[
             OpenApiParameter(name='service_date', type=str, description='YYYY-MM-DD override'),
@@ -1083,6 +1132,8 @@ class KitchenTodayOrderDetailsView(APIView):
                             'phone': '+8801894126298',
                             'package_name': 'Student Package',
                             'address': 'Chittagong, Chawkbazar',
+                            'ingredient_names': ['mach', 'dhal', 'vat'],
+                            'menu_items_label': 'mach + dhal + vat',
                         }
                     ],
                 },

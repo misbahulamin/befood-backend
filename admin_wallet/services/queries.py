@@ -48,6 +48,17 @@ def _sum_completed(qs, direction: str) -> Decimal:
     return Decimal(total).quantize(Decimal('0.01'))
 
 
+def _sum_completed_types(qs, *, types: set | frozenset) -> Decimal:
+    total = (
+        qs.filter(
+            status=AdminWalletTransaction.Status.COMPLETED,
+            type__in=types,
+        ).aggregate(total=Sum('amount'))['total']
+        or Decimal('0.00')
+    )
+    return Decimal(total).quantize(Decimal('0.01'))
+
+
 def meal_revenue_recognized(*, start: datetime | None = None, end: datetime | None = None) -> Decimal:
     """
     Sum charged meal-delivery amounts (revenue recognition).
@@ -94,7 +105,15 @@ def period_totals(wallet: AdminWallet, start: datetime, end: datetime) -> dict:
     )
     return {
         'income': _sum_completed(qs, AdminWalletTransaction.Direction.CREDIT),
-        'expense': _sum_completed(qs, AdminWalletTransaction.Direction.DEBIT),
+        # Business expense only — excludes customer_withdraw and admin withdrawal.
+        'expense': _sum_completed_types(
+            qs,
+            types=AdminWalletTransaction.EXPENSE_TYPES,
+        ),
+        'customer_withdrawals': _sum_completed_types(
+            qs,
+            types={AdminWalletTransaction.Type.CUSTOMER_WITHDRAW},
+        ),
         'meal_revenue': meal_revenue_recognized(start=start, end=end),
     }
 
@@ -119,8 +138,10 @@ def dashboard_payload(*, recent_limit: int = 10) -> dict:
         'wallet': wallet_summary(wallet),
         'today_income': today['income'],
         'today_expense': today['expense'],
+        'today_customer_withdrawals': today['customer_withdrawals'],
         'month_revenue': month['income'],
         'month_expense': month['expense'],
+        'month_customer_withdrawals': month['customer_withdrawals'],
         'total_customer_payments': meal_revenue_recognized(),
         'total_customer_funding': wallet.total_customer_funding,
         'total_customer_withdrawals': wallet.total_customer_withdrawals,

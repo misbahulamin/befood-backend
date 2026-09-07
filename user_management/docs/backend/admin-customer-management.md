@@ -50,7 +50,7 @@ Allowlisted only; unknown keys → `400`.
 
 | Param | Notes |
 |-------|-------|
-| `q` | Search name, email, phone (national digits, or `+880` / `880` prefixed international) |
+| `q` | Search email, first/last name (incl. multi-word "First Last"), username, phone (national digits, or `+880` / `880` prefixed international), or exact customer `public_id` UUID |
 | `is_active` | `User.is_active` |
 | `is_email_verified` | Email verification |
 | `has_active_subscription` | Active `CustomerSubscription` |
@@ -79,6 +79,7 @@ Returns **only**:
 - `active_subscription` summary (nullable)
 - `wallet_summary` compact totals
 - `active_order` (deprecated, legacy fallback)
+- CRM enrichment: `is_phone_verified`, `phone_verified_at`, `last_login`, `social_identities[]` (`provider`, `connected`), and `google_connected` / `facebook_connected` / `apple_connected` shortcuts
 
 Does **not** include subscription lists, meal rows, wallet transactions, or activity events.
 

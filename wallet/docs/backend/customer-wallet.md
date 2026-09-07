@@ -66,7 +66,7 @@ Product labels: approved ≈ `completed`, rejected ≈ `failed`.
 | `reviewed_by` | FK → User (nullable); supports profile-less superusers |
 | `reviewed_at` / `rejection_reason` | Audit |
 
-Partial unique: provider-method recharge (`bkash|nagad|bank`) + non-empty `external_ref`.
+Partial unique: provider-method recharge (`bkash|nagad|bank`) + non-empty `external_ref` **only while status is `pending` or `completed`**. Failed/rejected (and cancelled) refs may be reused on a new request. Reject leaves `external_ref` unchanged for audit.
 
 ---
 
@@ -75,14 +75,22 @@ Partial unique: provider-method recharge (`bkash|nagad|bank`) + non-empty `exter
 ### Recharge
 
 1. Customer posts `amount`, `payment_method`, `transaction_id` → pending credit, **no** balance change, admin email on commit.
-2. Admin approve → credit customer + Admin Wallet custody + audit fields.
-3. Admin reject → `failed`, no credit.
+2. Admin approve → credit customer + Admin Wallet custody + audit fields; that `transaction_id` remains blocked.
+3. Admin reject → `failed`, no credit; same `transaction_id` may be submitted again.
 
 ### Withdraw
 
 1. Customer posts `amount` → pending debit, **immediate** spendable debit (`method=manual`), admin email on commit.
-2. Admin approve → `completed` + Admin Wallet custody debit. Float shortfall → `409`, leave pending, review fields untouched.
+2. Admin approve → `completed` + Admin Wallet custody debit (`customer_withdraw`, **not** expense). Float shortfall → `409`, leave pending, review fields untouched.
 3. Admin reject → restore reserved balance, `failed`.
+
+### Pre-deploy audit
+
+```bash
+python manage.py audit_wallet_accounting
+```
+
+Must exit 0 (no live pending/completed provider-ref duplicates) before applying the uniqueness migration.
 
 ### Lock order (approve/reject)
 

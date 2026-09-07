@@ -13,6 +13,7 @@ from orders.services.subscription_service import (
     get_subscription_progress,
     subscribe_customer,
 )
+from user_management.validators import format_bd_phone_e164
 
 
 class CustomerSubscriptionPlanSerializer(serializers.ModelSerializer):
@@ -227,12 +228,23 @@ class AdminSubscriptionListSerializer(CustomerSubscriptionSerializer):
     customer_public_id = serializers.UUIDField(
         source='customer.public_id', read_only=True, allow_null=True
     )
+    customer_name = serializers.SerializerMethodField()
+    customer_phone = serializers.SerializerMethodField()
 
     class Meta(CustomerSubscriptionSerializer.Meta):
         fields = CustomerSubscriptionSerializer.Meta.fields + (
             'customer_email',
             'customer_public_id',
+            'customer_name',
+            'customer_phone',
         )
+
+    def get_customer_name(self, obj):
+        user = obj.customer.user
+        return f'{user.first_name} {user.last_name}'.strip() or user.email
+
+    def get_customer_phone(self, obj):
+        return format_bd_phone_e164(obj.customer.phone)
 
 
 class AdminSubscriptionDetailSerializer(AdminSubscriptionListSerializer):

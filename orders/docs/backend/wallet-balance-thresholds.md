@@ -33,11 +33,17 @@ Admins configure three ordered wallet thresholds. A twice-daily cron evaluates a
 
 1. Subscribe gate unchanged: inclusive compare against `min_wallet_balance_to_order`.
 2. Cron priority per customer: meal-stop → resume → reminder.
-3. Reminder at most once per Asia/Dhaka business day.
-4. Meal-stop notify primarily on transition to blocked.
-5. Auto-delivery eligibility excludes blocked customers; **admin mark-delivery still works**.
-6. Auto-resume when `balance ≥ meal_stop_threshold` (cron and successful `credit_wallet`).
-7. Admin summary always runs after non-dry-run (including empty “no low-balance users” mail).
+3. Reminder at most once per Asia/Dhaka business day (`last_low_balance_reminder_on`).
+4. Meal-stop **block** when `balance < meal_stop_threshold` (unchanged).
+5. Meal-stop-band **push** (“Low Wallet Balance Alert”) on **every** non-dry-run cron evaluation while still below meal-stop — including already-blocked customers. **Not** gated by `last_low_balance_reminder_on` (with the twice-daily cron, about 2 pushes/day while under threshold).
+6. Meal-stop **email** remains primarily on transition to newly blocked (push carries the every-run warning).
+7. Auto-delivery eligibility excludes blocked customers; **admin mark-delivery still works**.
+8. Auto-resume when `balance ≥ meal_stop_threshold`:
+   - threshold cron
+   - successful `credit_wallet` (`transaction.on_commit`)
+   - admin `approve_recharge` (sync inside the same atomic; API field `meal_service_restored`)
+9. Admin summary always runs after non-dry-run (including empty “no low-balance users” mail).
+10. **No migration** for resume-on-approve or every-run meal-stop push — existing profile fields only.
 
 ## Admin API
 
@@ -102,8 +108,15 @@ Reports would-be remind/stop/resume counts without mutating state or sending mai
 
 | Event | Push `data.type` | Customer email templates |
 |-------|------------------|--------------------------|
-| Reminder | `wallet_low_balance` | `emails/wallet_low_balance_reminder_*` |
-| Meal stop | `wallet_meal_stop` | `emails/wallet_meal_stop_*` |
+| Reminder (reminder band, once/day) | `wallet_low_balance` | `emails/wallet_low_balance_reminder_*` |
+| Meal-stop band warning (every cron while below meal-stop) | `wallet_meal_stop` | Email on newly blocked: `emails/wallet_meal_stop_*` |
+
+**Meal-stop push copy:**
+
+- Title: `Low Wallet Balance Alert`
+- Body: `Hi {customer_full_name}, your current wallet balance is low. Please recharge your wallet soon to continue receiving your meals. If your balance remains low, your meal service will be paused.`
+
+Spendable balance for all comparisons is `Wallet.balance` via `spendable_balance()` (same for cron, `credit_wallet` resume, and `approve_recharge` resume).
 
 Admin report recipients: same resolution as wallet funding (`resolve_funding_admin_emails`). HTML table columns: Name, Phone, Package, Current Balance, Address, Status (`Low Balance` / `Meal Stopped`).
 
@@ -116,7 +129,8 @@ Admin report recipients: same resolution as wallet funding (`resolve_funding_adm
 ## How to verify
 
 - `orders.tests.test_order_eligibility.OrderWalletEligibilityTests` — settings ordering / defaults
-- `orders.tests.test_wallet_balance_thresholds.WalletBalanceThresholdTests` — reminder, stop, resume, admin mail, dry-run
+- `orders.tests.test_wallet_balance_thresholds.WalletBalanceThresholdTests` — reminder, stop, every-run meal-stop push, resume, admin mail, dry-run
+- `wallet.tests.test_meal_service_resume_on_approve` — approve resume + `meal_service_restored`
 - `bash -n scripts/cron/install_managed_cron.sh scripts/cron/_cron_env.sh scripts/cron/run_wallet_threshold_check.sh`
 - Confirm cron scripts are LF-only (`.gitattributes`: `*.sh text eol=lf`). `grep -r $'\r' scripts/cron/` should find nothing.
 - Manual smoke on the server (or a host with sibling/local venv):

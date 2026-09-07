@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from django.db import transaction
 from django.utils import timezone
@@ -14,7 +15,12 @@ from meals.services.package_menu import published_schedule_for_meal
 from meals.services.pricing import periods_for_meal_period
 from orders.models import CustomerSubscription, OrderDelivery
 from orders.services.delivery_address import resolve_and_apply_snapshot
-from orders.services.meal_off import get_meal_off_settings, meal_off_business_now
+from orders.services.meal_off import (
+    CUTOFF_PASSED_NOTE,
+    get_meal_off_settings,
+    is_past_meal_cutoff,
+    meal_off_business_now,
+)
 from orders.services.order_service import (
     FrozenWalletOrderError,
     InactiveMealError,
@@ -124,10 +130,14 @@ def ensure_subscription_deliveries(
     *,
     through_date: date | None = None,
     today: date | None = None,
+    now: datetime | None = None,
 ) -> list[OrderDelivery]:
     """
-    Idempotently create scheduled slots from started_on through the rolling horizon
+    Idempotently create delivery slots from started_on through the rolling horizon
     for months that have a published menu. Does not generate after cancel.
+
+    New slots for the current business day whose meal-off cutoff has already passed
+    are created as skipped (system / cutoff_passed). Existing rows are never updated.
     """
     if subscription.status != CustomerSubscription.Status.ACTIVE:
         return list(
@@ -141,6 +151,15 @@ def ensure_subscription_deliveries(
         return list(
             subscription.deliveries.order_by('service_date', 'meal_period', 'id')
         )
+
+    settings_obj = get_meal_off_settings()
+    tz = ZoneInfo(settings_obj.timezone)
+    raw_now = meal_off_business_now(settings_obj) if now is None else now
+    if raw_now.tzinfo is None:
+        now_local = raw_now.replace(tzinfo=tz)
+    else:
+        now_local = raw_now.astimezone(tz)
+    business_day = now_local.date()
 
     periods = periods_for_meal_period(subscription.meal_period_snapshot)
     existing = {
@@ -169,13 +188,31 @@ def ensure_subscription_deliveries(
             slot_key = (service_date, meal_period)
             if slot_key in existing:
                 continue
-            delivery = OrderDelivery(
-                order=None,
-                subscription=subscription,
-                service_date=service_date,
-                meal_period=meal_period,
-                status=OrderDelivery.DeliveryStatus.SCHEDULED,
+            past_cutoff = service_date == business_day and is_past_meal_cutoff(
+                service_date,
+                meal_period,
+                now=now_local,
+                settings_obj=settings_obj,
             )
+            if past_cutoff:
+                delivery = OrderDelivery(
+                    order=None,
+                    subscription=subscription,
+                    service_date=service_date,
+                    meal_period=meal_period,
+                    status=OrderDelivery.DeliveryStatus.SKIPPED,
+                    skip_source=OrderDelivery.SkipSource.SYSTEM,
+                    note=CUTOFF_PASSED_NOTE,
+                    marked_at=timezone.now(),
+                )
+            else:
+                delivery = OrderDelivery(
+                    order=None,
+                    subscription=subscription,
+                    service_date=service_date,
+                    meal_period=meal_period,
+                    status=OrderDelivery.DeliveryStatus.SCHEDULED,
+                )
             resolve_and_apply_snapshot(delivery, customer)
             to_create.append(delivery)
             existing.add(slot_key)

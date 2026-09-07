@@ -165,7 +165,10 @@ class WalletBalanceThresholdTests(TestCase):
         self.customer_profile.refresh_from_db()
         self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)
         self.assertEqual(send_push.call_count, 1)
-        _tokens, _title, _body, data = send_push.call_args[0]
+        _tokens, title, body, data = send_push.call_args[0]
+        self.assertEqual(title, 'Low Wallet Balance Alert')
+        self.assertIn('Hi Rahim', body)
+        self.assertIn('your current wallet balance is low', body)
         self.assertEqual(data['type'], 'wallet_meal_stop')
         self.assertEqual(data['screen'], 'wallet')
 
@@ -176,6 +179,58 @@ class WalletBalanceThresholdTests(TestCase):
         mark_delivery(delivery, OrderDelivery.DeliveryStatus.DELIVERED, marked_by=self.admin_user)
         delivery.refresh_from_db()
         self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.DELIVERED)
+
+    def test_meal_stop_push_every_cron_run_while_below_threshold(self):
+        self._subscribe()
+        self.wallet.balance = Decimal('100.00')
+        self.wallet.save(update_fields=['balance', 'updated_at'])
+        DeviceToken.objects.create(
+            user=self.customer_user,
+            token='thresh-stop-repeat-token',
+            platform=DeviceToken.Platform.ANDROID,
+            is_active=True,
+        )
+
+        with patch(
+            'notifications.services.wallet_threshold_notifications.send_to_tokens',
+            return_value=[],
+        ) as send_push:
+            first = run_wallet_threshold_check(as_of=self.business_date, dry_run=False)
+            second = run_wallet_threshold_check(as_of=self.business_date, dry_run=False)
+
+        self.assertEqual(first.stopped, 1)
+        self.assertEqual(second.stopped, 0)
+        self.customer_profile.refresh_from_db()
+        self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)
+        self.assertEqual(send_push.call_count, 2)
+        title = send_push.call_args_list[1][0][1]
+        self.assertEqual(title, 'Low Wallet Balance Alert')
+
+    def test_no_meal_stop_band_push_when_balance_at_or_above_threshold(self):
+        self._subscribe()
+        apply_meal_service_block(self.customer_profile)
+        self.wallet.balance = Decimal('250.00')
+        self.wallet.save(update_fields=['balance', 'updated_at'])
+        DeviceToken.objects.create(
+            user=self.customer_user,
+            token='thresh-resume-no-alert',
+            platform=DeviceToken.Platform.ANDROID,
+            is_active=True,
+        )
+
+        with patch(
+            'notifications.services.wallet_threshold_notifications.send_to_tokens',
+            return_value=[],
+        ) as send_push:
+            result = run_wallet_threshold_check(as_of=self.business_date, dry_run=False)
+
+        self.assertEqual(result.resumed, 1)
+        meal_stop_pushes = [
+            c for c in send_push.call_args_list if c[0][3].get('type') == 'wallet_meal_stop'
+        ]
+        self.assertEqual(meal_stop_pushes, [])
+        self.customer_profile.refresh_from_db()
+        self.assertFalse(self.customer_profile.meal_service_blocked_low_balance)
 
     def test_resume_on_credit_and_dry_run_mutates_nothing(self):
         self._subscribe()

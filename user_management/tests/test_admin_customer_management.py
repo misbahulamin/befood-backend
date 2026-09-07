@@ -15,7 +15,12 @@ from rest_framework.test import APITestCase
 
 from meals.models import MealCategory
 from orders.models import CustomerSubscription, Order, OrderDelivery
-from user_management.models import AdminProfile, CustomerAddress, CustomerProfile
+from user_management.models import (
+    AdminProfile,
+    CustomerAddress,
+    CustomerProfile,
+    SocialIdentity,
+)
 from wallet.models import Wallet, WalletTransaction
 
 
@@ -283,6 +288,69 @@ class AdminCustomerManagementAPITests(APITestCase):
         by_cc = self.client.get(self.list_url, {'q': '8801722222222'})
         self.assertEqual(by_cc.data['count'], 1)
         self.assertEqual(by_cc.data['results'][0]['email'], 'bob@example.com')
+
+    def test_search_by_full_name_username_and_public_id(self):
+        self._auth_admin()
+        by_full_name = self.client.get(self.list_url, {'q': 'Alice Active'})
+        self.assertEqual(by_full_name.data['count'], 1)
+        self.assertEqual(by_full_name.data['results'][0]['email'], 'alice@example.com')
+
+        by_multi_space = self.client.get(self.list_url, {'q': 'Bob   Inactive'})
+        self.assertEqual(by_multi_space.data['count'], 1)
+        self.assertEqual(by_multi_space.data['results'][0]['email'], 'bob@example.com')
+
+        by_username = self.client.get(self.list_url, {'q': 'cust_carol'})
+        self.assertEqual(by_username.data['count'], 1)
+        self.assertEqual(by_username.data['results'][0]['email'], 'carol@example.com')
+
+        by_public_id = self.client.get(
+            self.list_url, {'q': str(self.customer_d.public_id)}
+        )
+        self.assertEqual(by_public_id.data['count'], 1)
+        self.assertEqual(by_public_id.data['results'][0]['email'], 'dave@example.com')
+
+        self.assertEqual(
+            self.client.get(self.list_url, {'q': 'zzz-no-match'}).data['count'],
+            0,
+        )
+
+    def test_detail_crm_enrichment_fields(self):
+        SocialIdentity.objects.create(
+            user=self.customer_a.user,
+            provider=SocialIdentity.Provider.GOOGLE,
+            provider_user_id='google-1',
+        )
+        self.customer_a.is_phone_verified = True
+        self.customer_a.phone_verified_at = timezone.now()
+        self.customer_a.save(update_fields=['is_phone_verified', 'phone_verified_at'])
+        self.customer_a.user.last_login = timezone.now()
+        self.customer_a.user.save(update_fields=['last_login'])
+
+        self._auth_admin()
+        url = reverse(
+            'web_customers:admin-customer-detail',
+            kwargs={'public_id': self.customer_a.public_id},
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        providers = {
+            item['provider']: item['connected']
+            for item in response.data['social_identities']
+        }
+        self.assertEqual(
+            set(providers), {'google', 'facebook', 'apple'}
+        )
+        self.assertTrue(providers['google'])
+        self.assertFalse(providers['facebook'])
+        self.assertFalse(providers['apple'])
+        self.assertTrue(response.data['google_connected'])
+        self.assertFalse(response.data['facebook_connected'])
+        self.assertFalse(response.data['apple_connected'])
+        self.assertTrue(response.data['is_phone_verified'])
+        self.assertIsNotNone(response.data['phone_verified_at'])
+        self.assertIsNotNone(response.data['last_login'])
+        self.assertFalse(response.data['apple_connected'])
 
     def test_filters_active_verified_and_subscription(self):
         self._auth_admin()
