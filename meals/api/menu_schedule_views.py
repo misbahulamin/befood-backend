@@ -61,6 +61,16 @@ def _django_validation_to_response(exc: DjangoValidationError):
     retrieve=extend_schema(
         tags=['Admin Meal Menu Schedule'],
         summary='Retrieve monthly menu schedule',
+        description=(
+            'Admin schedule detail including assignments. For each slot with price '
+            'snapshots, response includes additive dual pricing: '
+            'selected_ingredients_cost, operational_cost, subscriber_pricing, '
+            'instant_pricing, plus flat subscriber_price / instant_price aliases. '
+            'Legacy final_meal_price remains the subscriber selling price. '
+            'Instant profit_percent comes from Instant meal settings (live); '
+            'changing Instant settings refreshes Instant ladder without republish. '
+            'Clients must not recalculate prices.'
+        ),
     ),
     create=extend_schema(
         tags=['Admin Meal Menu Schedule'],

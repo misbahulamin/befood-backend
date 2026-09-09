@@ -411,6 +411,8 @@ class MealDemandPackageSerializer(serializers.Serializer):
     total_customers = serializers.IntegerField()
     expected_meal_count = serializers.IntegerField()
     meal_off_count = serializers.IntegerField()
+    customer_meal_off_count = serializers.IntegerField(required=False)
+    low_balance_blocked_count = serializers.IntegerField(required=False)
     final_cooking_count = serializers.IntegerField()
 
 
@@ -428,6 +430,8 @@ class MealDemandPeriodSerializer(serializers.Serializer):
     total_customers = serializers.IntegerField()
     expected_meal_count = serializers.IntegerField()
     meal_off_count = serializers.IntegerField()
+    customer_meal_off_count = serializers.IntegerField(required=False)
+    low_balance_blocked_count = serializers.IntegerField(required=False)
     final_cooking_count = serializers.IntegerField()
     remaining_meal_count = serializers.IntegerField()
     packages = MealDemandPackageSerializer(many=True)
@@ -455,6 +459,8 @@ class KitchenTodayRequirementSerializer(serializers.Serializer):
     confirmation_status = serializers.ChoiceField(choices=['estimated', 'confirmed'])
     expected_meal_count = serializers.IntegerField()
     meal_off_count = serializers.IntegerField()
+    customer_meal_off_count = serializers.IntegerField(required=False)
+    low_balance_blocked_count = serializers.IntegerField(required=False)
     final_cooking_count = serializers.IntegerField()
     total_customers = serializers.IntegerField()
     packages = MealDemandPackageSerializer(many=True)
@@ -511,30 +517,67 @@ class MealCloseMealOffRowSerializer(serializers.Serializer):
     customer_name = serializers.CharField(allow_null=True)
     customer_phone = serializers.CharField(allow_null=True)
     customer_email = serializers.EmailField(allow_null=True)
+    package_name = serializers.CharField(allow_null=True, required=False)
     service_date = serializers.DateField()
     meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'])
     status = serializers.CharField()
     skip_source = serializers.CharField(allow_null=True)
     note = serializers.CharField(allow_null=True)
+    reason = serializers.CharField(allow_null=True, required=False)
 
 
 class MealCloseMealOffResponseSerializer(serializers.Serializer):
     service_date = serializers.DateField()
+    meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'], required=False)
     count = serializers.IntegerField()
     results = MealCloseMealOffRowSerializer(many=True)
 
 
 class MealCloseLowBalanceRowSerializer(serializers.Serializer):
     customer_public_id = serializers.UUIDField()
-    customer_name = serializers.CharField()
-    customer_phone = serializers.CharField()
+    customer_name = serializers.CharField(allow_null=True)
+    customer_phone = serializers.CharField(allow_null=True)
     customer_email = serializers.EmailField(allow_null=True)
+    package_name = serializers.CharField(allow_null=True, required=False)
     wallet_balance = serializers.CharField()
+    meal_stop_threshold = serializers.CharField(required=False)
     meal_service_blocked_low_balance = serializers.BooleanField()
     meal_service_blocked_at = serializers.DateTimeField(allow_null=True)
+    meal_status = serializers.CharField(required=False)
+    service_date = serializers.DateField(required=False)
+    meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'], required=False)
 
 
 class MealCloseLowBalanceResponseSerializer(serializers.Serializer):
+    service_date = serializers.DateField(required=False)
+    meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'], required=False)
     meal_stop_threshold = serializers.CharField()
     count = serializers.IntegerField()
     results = MealCloseLowBalanceRowSerializer(many=True)
+
+
+class KitchenExclusionCustomerSerializer(serializers.Serializer):
+    name = serializers.CharField(allow_blank=True)
+    phone = serializers.CharField(allow_blank=True)
+    package_name = serializers.CharField(allow_blank=True, allow_null=True)
+    package_public_id = serializers.UUIDField(allow_null=True, required=False)
+    customer_public_id = serializers.UUIDField(allow_null=True, required=False)
+    service_date = serializers.DateField()
+    meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'])
+    reason = serializers.CharField(required=False)
+    skip_source = serializers.CharField(allow_null=True, required=False)
+    note = serializers.CharField(allow_null=True, required=False)
+    wallet_balance = serializers.CharField(allow_null=True, required=False)
+    meal_stop_threshold = serializers.CharField(allow_null=True, required=False)
+    meal_status = serializers.CharField(required=False)
+    meal_service_blocked_low_balance = serializers.BooleanField(required=False)
+
+
+class KitchenTodayExclusionDetailsSerializer(serializers.Serializer):
+    service_date = serializers.DateField()
+    meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'])
+    exclusion_type = serializers.ChoiceField(
+        choices=['customer_meal_off', 'low_balance']
+    )
+    count = serializers.IntegerField()
+    customers = KitchenExclusionCustomerSerializer(many=True)

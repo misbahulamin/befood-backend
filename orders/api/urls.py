@@ -2,6 +2,7 @@ from django.urls import include, path, re_path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    KitchenTodayExclusionDetailsView,
     KitchenTodayMealRequirementView,
     KitchenTodayOrderDetailsView,
     MealCloseLowBalanceView,
@@ -47,6 +48,11 @@ urlpatterns = [
         'kitchen/today-order-details/',
         KitchenTodayOrderDetailsView.as_view(),
         name='kitchen-today-order-details',
+    ),
+    path(
+        'kitchen/today-exclusion-details/',
+        KitchenTodayExclusionDetailsView.as_view(),
+        name='kitchen-today-exclusion-details',
     ),
     path('meal-history/', MealDemandHistoryView.as_view(), name='meal-history'),
     path('', include(router.urls)),

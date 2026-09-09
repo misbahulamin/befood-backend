@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 from collections import defaultdict
 from datetime import date
+from decimal import Decimal
 from math import ceil, floor
 
 from django.core.exceptions import ValidationError
@@ -16,7 +17,9 @@ from meals.models import (
     MonthlyMenuSlot,
     MonthlyMenuSlotItem,
 )
+from meals.services.instant_meals import get_instant_meal_settings
 from meals.services.plan_roles import MAIN_ROLE, plan_ingredient_role_map
+from meals.services.pricing import calculate_meal_price, _quantize_money
 from meals.services.slot_pricing import (
     clear_price_snapshots_for_schedule,
     snapshot_prices_for_schedule,
@@ -91,6 +94,80 @@ def build_quota_summary(schedule: MonthlyMenuSchedule) -> list[dict]:
     return summary
 
 
+def _null_dual_pricing_fields() -> dict:
+    return {
+        'selected_ingredients_cost': None,
+        'operational_cost': None,
+        'subscriber_pricing': None,
+        'instant_pricing': None,
+        'subscriber_price': None,
+        'instant_price': None,
+    }
+
+
+def _pricing_ladder(priced: dict) -> dict[str, str]:
+    return {
+        'profit_percent': priced['profit_percent'],
+        'profit_amount': priced['profit_amount'],
+        'final_price': priced['final_price'],
+    }
+
+
+def _dual_pricing_for_slot(
+    slot: MonthlyMenuSlot,
+    *,
+    plan_profit_percent: Decimal,
+    instant_profit_percent: Decimal,
+) -> dict:
+    """
+    Build additive dual-pricing fields for admin schedule detail.
+
+    Prefers publish snapshots; does not fabricate zero prices when unpriceable.
+    """
+    ingredient_cost = slot.ingredient_cost_snapshot
+    operational_cost = slot.operational_cost_snapshot
+    if ingredient_cost is None or operational_cost is None:
+        return _null_dual_pricing_fields()
+
+    ingredient_q = _quantize_money(Decimal(ingredient_cost))
+    operational_q = _quantize_money(Decimal(operational_cost))
+
+    subscriber = calculate_meal_price(
+        ingredient_q,
+        operational_q,
+        plan_profit_percent,
+    )
+    # Prefer locked subscriber snapshots when present (authoritative charge).
+    if slot.final_meal_price_snapshot is not None:
+        subscriber_final = str(_quantize_money(Decimal(slot.final_meal_price_snapshot)))
+        if slot.profit_snapshot is not None:
+            subscriber_profit = str(_quantize_money(Decimal(slot.profit_snapshot)))
+        else:
+            subscriber_profit = subscriber['profit_amount']
+        subscriber_ladder = {
+            'profit_percent': subscriber['profit_percent'],
+            'profit_amount': subscriber_profit,
+            'final_price': subscriber_final,
+        }
+    else:
+        subscriber_ladder = _pricing_ladder(subscriber)
+        subscriber_final = subscriber['final_price']
+
+    instant = calculate_meal_price(
+        ingredient_q,
+        operational_q,
+        instant_profit_percent,
+    )
+    return {
+        'selected_ingredients_cost': str(ingredient_q),
+        'operational_cost': str(operational_q),
+        'subscriber_pricing': subscriber_ladder,
+        'instant_pricing': _pricing_ladder(instant),
+        'subscriber_price': subscriber_final,
+        'instant_price': instant['final_price'],
+    }
+
+
 def serialize_schedule_assignments(
     schedule: MonthlyMenuSchedule,
     *,
@@ -102,6 +179,7 @@ def serialize_schedule_assignments(
 
     ``include_final_price`` defaults to False for customer-visible payloads and
     True for admin (full) payloads — admin-first slot pricing exposure.
+    Admin path also attaches dual subscriber/Instant pricing ladders.
     """
     if include_final_price is None:
         include_final_price = not customer_visible_only
@@ -111,6 +189,12 @@ def serialize_schedule_assignments(
         .order_by('service_date', 'meal_period')
         .all()
     )
+    instant_profit_percent = None
+    plan_profit_percent = None
+    if include_final_price:
+        instant_profit_percent = get_instant_meal_settings().profit_percent
+        plan_profit_percent = schedule.plan.profit_percent
+
     result = []
     for slot in slots:
         ingredients = []
@@ -132,6 +216,13 @@ def serialize_schedule_assignments(
         if include_final_price:
             final_price = slot.final_meal_price_snapshot
             entry['final_meal_price'] = str(final_price) if final_price is not None else None
+            entry.update(
+                _dual_pricing_for_slot(
+                    slot,
+                    plan_profit_percent=plan_profit_percent,
+                    instant_profit_percent=instant_profit_percent,
+                )
+            )
         result.append(entry)
     return result
 

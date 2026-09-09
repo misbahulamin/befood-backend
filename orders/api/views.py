@@ -14,6 +14,7 @@ from orders.api.permissions import IsOrderOwnerOrAdmin, IsVerifiedCustomer
 from orders.filters import OrderFilter
 from orders.models import MealDemandSnapshot, Order, OrderDelivery
 from orders.services.meal_demand import (
+    build_kitchen_exclusion_details,
     build_kitchen_order_details,
     build_kitchen_requirement,
     demand_to_dict,
@@ -37,7 +38,11 @@ from orders.services.subscription_service import (
 )
 from orders.api.subscription_serializers import CustomerSubscriptionDetailSerializer
 from orders.services.order_status import OrderStatusError, change_order_status
-from orders.services.meal_close import build_low_balance_list, build_meal_off_list
+from orders.services.meal_close import (
+    build_low_balance_list,
+    build_meal_off_list,
+    parse_meal_close_date,
+)
 from orders.services.order_wallet_settings import (
     get_order_wallet_settings,
     update_order_wallet_settings,
@@ -49,6 +54,7 @@ from user_management.services.admin_access import is_verified_admin
 from .serializers import (
     AdminOrderDetailSerializer,
     AdminOrderListSerializer,
+    KitchenTodayExclusionDetailsSerializer,
     KitchenTodayOrderDetailsSerializer,
     KitchenTodayRequirementSerializer,
     MarkDeliverySerializer,
@@ -781,29 +787,42 @@ class OrderWalletSettingsView(APIView):
 
 
 class MealCloseMealOffView(APIView):
-    """Preset list: today's skipped (meal-off) deliveries for admin Meal Close."""
+    """Preset list: skipped (meal-off) deliveries for admin Meal Close."""
 
     permission_classes = [IsVerifiedAdmin]
 
     @extend_schema(
         tags=['Admin Order Management'],
-        summary='Meal Close — today’s meal-offs',
+        summary='Meal Close — meal-offs for a slot',
         description=(
-            'Returns live deliveries for business today (meal-off timezone) with status=skipped. '
-            'No query filters required.'
+            'Returns live skipped deliveries for the requested (or default kitchen) slot. '
+            'Optional service_date / meal_period; omitted values use the same default as '
+            'kitchen today (lunch before dinner_off_time, else dinner). Excludes '
+            'low-balance blocked customers (those appear on the Low Balance list).'
         ),
+        parameters=[
+            OpenApiParameter(name='service_date', type=str, description='YYYY-MM-DD'),
+            OpenApiParameter(name='meal_period', type=str, description='lunch|dinner'),
+        ],
         responses={
             200: MealCloseMealOffResponseSerializer,
+            400: OpenApiResponse(description='Invalid query'),
             403: OpenApiResponse(description='Admin required'),
         },
     )
     def get(self, request):
-        payload = build_meal_off_list()
+        error, service_date, meal_period = _parse_meal_close_slot(request)
+        if error is not None:
+            return error
+        payload = build_meal_off_list(
+            service_date=service_date,
+            meal_period=meal_period,
+        )
         return Response(MealCloseMealOffResponseSerializer(payload).data)
 
 
 class MealCloseLowBalanceView(APIView):
-    """Preset list: customers blocked or below meal-stop threshold."""
+    """Slot-scoped customers whose meal is affected by low balance / meal-stop."""
 
     permission_classes = [IsVerifiedAdmin]
 
@@ -811,17 +830,72 @@ class MealCloseLowBalanceView(APIView):
         tags=['Admin Order Management'],
         summary='Meal Close — low balance / meal-stop cohort',
         description=(
-            'Returns customers with meal_service_blocked_low_balance or wallet balance below '
-            'order-wallet meal_stop_threshold. No query filters required.'
+            'Returns customers with a live delivery for the slot who are meal-stop blocked '
+            'or below order-wallet meal_stop_threshold. Optional service_date / meal_period '
+            'use the same default kitchen slot when omitted.'
         ),
+        parameters=[
+            OpenApiParameter(name='service_date', type=str, description='YYYY-MM-DD'),
+            OpenApiParameter(name='meal_period', type=str, description='lunch|dinner'),
+        ],
         responses={
             200: MealCloseLowBalanceResponseSerializer,
+            400: OpenApiResponse(description='Invalid query'),
             403: OpenApiResponse(description='Admin required'),
         },
     )
     def get(self, request):
-        payload = build_low_balance_list()
+        error, service_date, meal_period = _parse_meal_close_slot(request)
+        if error is not None:
+            return error
+        payload = build_low_balance_list(
+            service_date=service_date,
+            meal_period=meal_period,
+        )
         return Response(MealCloseLowBalanceResponseSerializer(payload).data)
+
+
+def _parse_meal_close_slot(request):
+    """
+    Optional service_date / meal_period for meal-close lists.
+
+    Returns (error_response | None, service_date | None, meal_period | None).
+    None date/period means build_* will resolve the default kitchen slot.
+    """
+    raw_date = request.query_params.get('service_date')
+    raw_period = request.query_params.get('meal_period')
+    service_date = None
+    meal_period = None
+
+    if raw_date:
+        try:
+            service_date = parse_meal_close_date(raw_date)
+        except (TypeError, ValueError):
+            return (
+                Response(
+                    {'detail': 'service_date must be YYYY-MM-DD.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                ),
+                None,
+                None,
+            )
+
+    if raw_period:
+        if raw_period not in {
+            OrderDelivery.MealPeriod.LUNCH,
+            OrderDelivery.MealPeriod.DINNER,
+        }:
+            return (
+                Response(
+                    {'detail': 'meal_period must be lunch or dinner.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                ),
+                None,
+                None,
+            )
+        meal_period = raw_period
+
+    return None, service_date, meal_period
 
 
 def _parse_demand_service_date(raw_value, *, settings_obj):
@@ -1153,6 +1227,63 @@ class KitchenTodayOrderDetailsView(APIView):
             package_public_id=package_public_id,
         )
         return Response(payload)
+
+
+class KitchenTodayExclusionDetailsView(APIView):
+    """Customer list for kitchen exclusion drill-down (meal-off or low-balance)."""
+
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=['Admin Order Management'],
+        summary='Kitchen today exclusion details',
+        description=(
+            'Returns customers excluded from cooking for the slot. '
+            'exclusion_type=customer_meal_off (skipped, not low-balance blocked) or '
+            'exclusion_type=low_balance (meal-stop blocked). Same default slot resolution '
+            'as today-meal-requirement.'
+        ),
+        parameters=[
+            OpenApiParameter(name='service_date', type=str, description='YYYY-MM-DD override'),
+            OpenApiParameter(name='meal_period', type=str, description='lunch|dinner override'),
+            OpenApiParameter(
+                name='exclusion_type',
+                type=str,
+                required=True,
+                description='customer_meal_off | low_balance',
+            ),
+            OpenApiParameter(
+                name='package_public_id',
+                type=str,
+                description='Optional meal package UUID filter',
+            ),
+        ],
+        responses={
+            200: KitchenTodayExclusionDetailsSerializer,
+            400: OpenApiResponse(description='Invalid filter'),
+            403: OpenApiResponse(description='Admin required'),
+            404: OpenApiResponse(description='package_public_id not found'),
+        },
+    )
+    def get(self, request):
+        exclusion_type = request.query_params.get('exclusion_type')
+        if exclusion_type not in {'customer_meal_off', 'low_balance'}:
+            return Response(
+                {'detail': 'exclusion_type must be customer_meal_off or low_balance.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        error, service_date, meal_period, package_public_id, _settings_obj = (
+            _resolve_kitchen_today_slot(request)
+        )
+        if error is not None:
+            return error
+        payload = build_kitchen_exclusion_details(
+            service_date,
+            meal_period,
+            exclusion_type,
+            package_public_id=package_public_id,
+        )
+        return Response(KitchenTodayExclusionDetailsSerializer(payload).data)
 
 
 class MealDemandHistoryView(APIView):

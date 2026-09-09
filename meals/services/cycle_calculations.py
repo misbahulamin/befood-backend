@@ -8,7 +8,7 @@ from meals.models import Ingredient, MealCyclePlan, MealCyclePlanLine
 from meals.services.meal_offering import publish_meal_price_from_plan
 from meals.services.operational_cost import resolve_per_meal_operational_cost
 from meals.services.plan_roles import MAIN_ROLE
-from meals.services.pricing import expected_servings
+from meals.services.pricing import calculate_meal_price, expected_servings
 
 
 MONEY_PLACES = Decimal('0.01')
@@ -214,15 +214,17 @@ def build_one_meal_price_preview(
         Decimal('0'),
     )
     selected_cost = _quantize(selected_cost, COST_PLACES)
-    other_one = _quantize(Decimal(per_meal_operational_cost))
-    profit_one = _quantize(selected_cost * (Decimal(profit_percent) / Decimal('100')))
-    final_price = _quantize(selected_cost + other_one + profit_one)
+    priced = calculate_meal_price(
+        selected_cost,
+        per_meal_operational_cost,
+        profit_percent,
+    )
     return {
-        'selected_ingredients_cost': str(_quantize(selected_cost)),
-        'per_meal_operational_cost': str(other_one),
-        'profit_percent': str(_quantize(Decimal(profit_percent))),
-        'profit': str(profit_one),
-        'final_meal_price': str(final_price),
+        'selected_ingredients_cost': priced['ingredient_cost'],
+        'per_meal_operational_cost': priced['operational_cost'],
+        'profit_percent': priced['profit_percent'],
+        'profit': priced['profit_amount'],
+        'final_meal_price': priced['final_price'],
         'ingredients': [
             {
                 'public_id': str(ingredient.public_id),

@@ -24,6 +24,7 @@ from meals.services.cycle_calculations import (
 )
 from meals.services.operational_cost import resolve_per_meal_operational_cost
 from meals.services.plan_roles import plan_ingredient_role_map
+from meals.services.pricing import calculate_meal_price
 
 
 ROLE_SORT_ORDER = {
@@ -126,24 +127,23 @@ def compute_instant_slot_price(
             return None
 
     if slot.ingredient_cost_snapshot is not None:
-        ingredient_cost = Decimal(slot.ingredient_cost_snapshot).quantize(MONEY_PLACES)
         try:
             for ingredient in ingredients:
                 require_resolvable_ingredient_cost(ingredient)
         except ValidationError:
             # Snapshot locked at publish; still usable for Instant display.
             pass
-        profit = (ingredient_cost * (Decimal(profit_percent) / Decimal('100'))).quantize(
-            MONEY_PLACES
+        priced = calculate_meal_price(
+            slot.ingredient_cost_snapshot,
+            per_meal_op,
+            profit_percent,
         )
-        operational_cost = Decimal(per_meal_op).quantize(MONEY_PLACES)
-        price = (ingredient_cost + operational_cost + profit).quantize(MONEY_PLACES)
         return {
-            'ingredient_cost': ingredient_cost,
-            'operational_cost': operational_cost,
-            'profit': profit,
-            'profit_percent': Decimal(profit_percent).quantize(MONEY_PLACES),
-            'price': price,
+            'ingredient_cost': Decimal(priced['ingredient_cost']),
+            'operational_cost': Decimal(priced['operational_cost']),
+            'profit': Decimal(priced['profit_amount']),
+            'profit_percent': Decimal(priced['profit_percent']),
+            'price': Decimal(priced['final_price']),
         }
 
     try:
