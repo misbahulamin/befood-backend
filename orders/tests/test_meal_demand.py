@@ -375,7 +375,7 @@ class MealDemandServiceTestCase(TestCase):
         refreshed = MealDemandSnapshot.objects.get(package=self.premium)
         self.assertNotEqual(refreshed.ingredient_requirements, rice_qty)
 
-    def test_low_balance_blocked_meal_on_omitted_from_demand_and_ingredients(self):
+    def test_low_balance_blocked_meal_on_counted_separately_from_cooking(self):
         from orders.services.meal_demand import build_kitchen_requirement
 
         blocked = self._make_customer('blocked_on')
@@ -388,10 +388,17 @@ class MealDemandServiceTestCase(TestCase):
             'dinner',
             settings_obj=self.settings_obj,
         )
-        # Seed baseline: 5 expected, 1 off, 4 final — blocked meal-on must not add.
-        self.assertEqual(demand.expected_meal_count, 5)
+        # Seed baseline: 5 expected, 1 off, 4 final — blocked meal-on adds to expected + LB.
+        self.assertEqual(demand.expected_meal_count, 6)
         self.assertEqual(demand.meal_off_count, 1)
+        self.assertEqual(demand.low_balance_blocked_count, 1)
         self.assertEqual(demand.final_cooking_count, 4)
+        self.assertEqual(
+            demand.expected_meal_count,
+            demand.final_cooking_count
+            + demand.meal_off_count
+            + demand.low_balance_blocked_count,
+        )
 
         payload = build_kitchen_requirement(
             self.service_date,
@@ -399,11 +406,13 @@ class MealDemandServiceTestCase(TestCase):
             settings_obj=self.settings_obj,
         )
         self.assertEqual(payload['final_cooking_count'], 4)
+        self.assertEqual(payload['customer_meal_off_count'], 1)
+        self.assertEqual(payload['low_balance_blocked_count'], 1)
         rice = next(i for i in payload['ingredients'] if i['name'] == 'Rice Demand')
         self.assertEqual(rice['customer_count'], 4)
         self.assertEqual(rice['quantity'], '0.800000')
 
-    def test_low_balance_blocked_skipped_contributes_neither_count(self):
+    def test_low_balance_blocked_skipped_counts_as_low_balance_only(self):
         blocked = self._make_customer('blocked_off')
         blocked.meal_service_blocked_low_balance = True
         blocked.save(update_fields=['meal_service_blocked_low_balance'])
@@ -414,8 +423,10 @@ class MealDemandServiceTestCase(TestCase):
             'dinner',
             settings_obj=self.settings_obj,
         )
-        self.assertEqual(demand.expected_meal_count, 5)
+        # Blocked+skipped must not inflate customer meal-off; only low-balance bucket.
+        self.assertEqual(demand.expected_meal_count, 6)
         self.assertEqual(demand.meal_off_count, 1)
+        self.assertEqual(demand.low_balance_blocked_count, 1)
         self.assertEqual(demand.final_cooking_count, 4)
 
     def test_build_kitchen_order_details_excludes_low_balance_blocked(self):
@@ -442,6 +453,35 @@ class MealDemandServiceTestCase(TestCase):
         # Seed: 4 non-skipped unblocked finals + 1 new unblocked = 5 listed
         self.assertEqual(payload['count'], 5)
         self.assertEqual(len(payload['customers']), payload['count'])
+
+    def test_build_kitchen_exclusion_details_split_cohorts(self):
+        from orders.services.meal_demand import build_kitchen_exclusion_details
+
+        blocked = self._make_customer('blocked_excl')
+        blocked.user.first_name = 'Wallet'
+        blocked.user.last_name = 'Blocked'
+        blocked.user.save(update_fields=['first_name', 'last_name'])
+        blocked.meal_service_blocked_low_balance = True
+        blocked.save(update_fields=['meal_service_blocked_low_balance'])
+        self._create_order_with_dinner(blocked, self.premium, skipped=False)
+
+        meal_off = build_kitchen_exclusion_details(
+            self.service_date,
+            'dinner',
+            'customer_meal_off',
+        )
+        self.assertEqual(meal_off['count'], 1)
+        self.assertEqual(len(meal_off['customers']), 1)
+        self.assertIn('reason', meal_off['customers'][0])
+
+        low_balance = build_kitchen_exclusion_details(
+            self.service_date,
+            'dinner',
+            'low_balance',
+        )
+        names = {row['name'] for row in low_balance['customers']}
+        self.assertIn('Wallet Blocked', names)
+        self.assertEqual(low_balance['count'], 1)
 
 
 @override_settings(MEDIA_ROOT='test_media', EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
@@ -827,6 +867,8 @@ class MealDemandAPITestCase(APITestCase):
             'confirmation_status',
             'expected_meal_count',
             'meal_off_count',
+            'customer_meal_off_count',
+            'low_balance_blocked_count',
             'final_cooking_count',
             'total_customers',
             'packages',
@@ -834,9 +876,11 @@ class MealDemandAPITestCase(APITestCase):
             'ingredients',
         ):
             self.assertIn(key, kitchen.data)
-        self.assertEqual(kitchen.data['expected_meal_count'], 1)
+        # Blocked customer remains in expected + low_balance; cooking stays Peer only.
+        self.assertEqual(kitchen.data['expected_meal_count'], 2)
+        self.assertEqual(kitchen.data['low_balance_blocked_count'], 1)
         self.assertEqual(kitchen.data['final_cooking_count'], 1)
-        self.assertEqual(kitchen.data['total_customers'], 1)
+        self.assertEqual(kitchen.data['total_customers'], 2)
 
         details = self.client.get(
             self.order_details_url,

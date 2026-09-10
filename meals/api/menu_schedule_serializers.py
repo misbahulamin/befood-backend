@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from meals.models import (
     MealCyclePlan,
@@ -12,6 +13,34 @@ from meals.services.menu_schedule import (
     create_schedule_for_plan,
     serialize_schedule_assignments,
 )
+
+
+class MenuSlotPricingLadderSerializer(serializers.Serializer):
+    """Subscriber or Instant one-meal pricing ladder (admin schedule detail)."""
+
+    profit_percent = serializers.CharField(allow_null=True)
+    profit_amount = serializers.CharField(allow_null=True)
+    final_price = serializers.CharField(allow_null=True)
+
+
+class MenuAssignmentSlotDetailSerializer(serializers.Serializer):
+    """
+    Admin assignment entry including dual pricing.
+
+    Frontend MUST render these amounts; do not recalculate on the client.
+    ``final_meal_price`` remains the legacy subscriber selling price.
+    """
+
+    service_date = serializers.DateField()
+    meal_period = serializers.ChoiceField(choices=MonthlyMenuSlot.MealPeriod.choices)
+    ingredients = serializers.ListField(child=serializers.DictField())
+    final_meal_price = serializers.CharField(allow_null=True, required=False)
+    selected_ingredients_cost = serializers.CharField(allow_null=True, required=False)
+    operational_cost = serializers.CharField(allow_null=True, required=False)
+    subscriber_pricing = MenuSlotPricingLadderSerializer(allow_null=True, required=False)
+    instant_pricing = MenuSlotPricingLadderSerializer(allow_null=True, required=False)
+    subscriber_price = serializers.CharField(allow_null=True, required=False)
+    instant_price = serializers.CharField(allow_null=True, required=False)
 
 
 class MonthlyMenuScheduleSerializer(serializers.ModelSerializer):
@@ -66,6 +95,7 @@ class MonthlyMenuScheduleSerializer(serializers.ModelSerializer):
             'quota_summary',
         )
 
+    @extend_schema_field(MenuAssignmentSlotDetailSerializer(many=True))
     def get_assignments(self, obj):
         return serialize_schedule_assignments(obj)
 

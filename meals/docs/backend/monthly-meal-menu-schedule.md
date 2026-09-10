@@ -9,9 +9,10 @@ After a **meal cycle plan** is finalized (how many times each ingredient is serv
 1. Finalize a cycle plan for a package (Regular, Student, …) for a month.
 2. Create a monthly menu schedule for that plan.
 3. Assign ingredients to each `(date, lunch|dinner)` slot — never more than the plan’s `servings_count`.
-4. Publish when every slot has exactly one **main** protein. Publish also **locks** each slot’s `final_meal_price` (ingredient + operational + profit). Unpublish clears those snapshots; republish recomputes from catalog costs at that time.
-5. Kitchen uses the full month (admin only). Customers with an active order only see **today’s** menu after reveal times (default lunch 08:00, dinner 16:00, `Asia/Dhaka`).
-6. Delivery wallet charges use the published slot final price — **not** package average `per_meal_rate`.
+4. Publish when every slot has exactly one **main** protein. Publish also **locks** each slot’s subscriber `final_meal_price` (ingredient + operational + plan profit). Unpublish clears those snapshots; republish recomputes from catalog costs at that time.
+5. Admin schedule detail also returns **Instant** pricing for the same cost basis using live `InstantMealSettings.profit_percent` (does not rewrite subscriber snapshots).
+6. Kitchen uses the full month (admin only). Customers with an active order only see **today’s** menu after reveal times (default lunch 08:00, dinner 16:00, `Asia/Dhaka`).
+7. Delivery wallet charges use the published slot final price — **not** package average `per_meal_rate` and **not** Instant display price.
 
 **Who can use what:**
 
@@ -35,9 +36,21 @@ MealCycle (2026-07 → 31 days → 62 meals)
   └── MealCyclePlan (finalized) — Chicken × 20, Beef × 42, …
         └── MonthlyMenuSchedule (draft | published)
               └── MonthlyMenuSlot (date + lunch|dinner)
-                    ├── final_meal_price_snapshot (locked on publish)
+                    ├── final_meal_price_snapshot (subscriber, locked on publish)
+                    ├── ingredient_cost_snapshot / operational_cost_snapshot / profit_snapshot
                     └── MonthlyMenuSlotItem (ingredient)
 ```
+
+**Dual pricing (admin detail only):**
+
+```text
+subscriber: ingredient + operational + (ingredient × plan.profit_percent / 100)
+instant:    ingredient + operational + (ingredient × InstantMealSettings.profit_percent / 100)
+```
+
+Shared helper: `meals.services.pricing.calculate_meal_price`. Frontend must not recalculate.
+
+Changing Instant settings refreshes Instant ladder on the next `GET` schedule detail — **no republish** required. Subscriber snapshots stay locked.
 
 Each **meal package × month** has its own schedule. Publishing Premium July never mutates Regular July.
 | Concept | Meaning |
@@ -154,6 +167,41 @@ Success `201` (important fields):
   ]
 }
 ```
+
+### 6.1b Published schedule detail — dual pricing
+
+`GET /meals/menu-schedules/{public_id}/` (verified admin)
+
+Each assignment with publish snapshots includes additive fields (legacy `final_meal_price` = subscriber):
+
+```json
+{
+  "service_date": "2026-07-01",
+  "meal_period": "lunch",
+  "ingredients": [{"id": 1, "name": "Fish", "product_role": "main"}],
+  "final_meal_price": "59.24",
+  "selected_ingredients_cost": "48.15",
+  "operational_cost": "4.13",
+  "subscriber_pricing": {
+    "profit_percent": "14.45",
+    "profit_amount": "6.96",
+    "final_price": "59.24"
+  },
+  "instant_pricing": {
+    "profit_percent": "70.00",
+    "profit_amount": "33.71",
+    "final_price": "85.99"
+  },
+  "subscriber_price": "59.24",
+  "instant_price": "85.99"
+}
+```
+
+Notes:
+
+- Amounts use project money precision (`ROUND_HALF_UP` to 0.01). Example: `48.15 × 70%` → `33.71`, Instant final `85.99`.
+- Draft / missing snapshots: dual fields are `null` (no fabricated `0.00` prices).
+- Customer-visible serializers do not receive Instant margin internals.
 
 ### 6.2 Bulk assignments
 

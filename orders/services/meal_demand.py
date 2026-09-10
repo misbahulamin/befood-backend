@@ -42,6 +42,7 @@ class PackageDemandRow:
     total_customers: int
     expected_meal_count: int
     meal_off_count: int
+    low_balance_blocked_count: int
     final_cooking_count: int
 
 
@@ -53,9 +54,17 @@ class DemandResult:
     meal_off_deadline_at: datetime
     expected_meal_count: int
     meal_off_count: int
+    low_balance_blocked_count: int
     final_cooking_count: int
     total_customers: int
     packages: list[PackageDemandRow] = field(default_factory=list)
+
+
+def _low_balance_blocked_q() -> Q:
+    """Customer meal-stop blocked via subscription or one-shot order parent."""
+    return Q(subscription__customer__meal_service_blocked_low_balance=True) | Q(
+        order__customer__meal_service_blocked_low_balance=True
+    )
 
 
 @dataclass
@@ -121,20 +130,21 @@ def _demand_queryset(
     *,
     package_id: int | None = None,
     package_public_id: UUID | str | None = None,
+    exclude_low_balance_blocked: bool = False,
 ):
-    # Align with auto_meal_delivery.eligible_delivery_queryset: low-balance
-    # meal-stop blocked customers are not cooked for, so omit from all demand
-    # counts, ingredient scaling, kitchen Order Details, and new snapshots.
+    """
+    Live deliveries for a slot.
+
+    By default includes low-balance meal-stop blocked customers so kitchen can
+    report Expected / Customer Meal Off / Low Balance Blocked separately.
+    Pass exclude_low_balance_blocked=True for cooking-only lists (Order Details).
+    """
     qs = (
         OrderDelivery.objects.filter(
             service_date=service_date,
             meal_period=meal_period,
         )
         .filter(live_delivery_q(service_date))
-        .exclude(
-            Q(subscription__customer__meal_service_blocked_low_balance=True)
-            | Q(order__customer__meal_service_blocked_low_balance=True)
-        )
         .select_related('order', 'order__meal', 'subscription', 'subscription__meal')
         .annotate(
             demand_meal_id=Coalesce('subscription__meal_id', 'order__meal_id'),
@@ -152,6 +162,8 @@ def _demand_queryset(
             ),
         )
     )
+    if exclude_low_balance_blocked:
+        qs = qs.exclude(_low_balance_blocked_q())
     if package_id is not None:
         qs = qs.filter(demand_meal_id=package_id)
     if package_public_id is not None:
@@ -168,22 +180,39 @@ def get_demand(
     now: datetime | None = None,
     settings_obj: MealOffSettings | None = None,
 ) -> DemandResult:
+    """
+    Slot demand with disjoint exclusions:
+
+    - expected = all live deliveries
+    - meal_off / customer meal-off = skipped AND not low-balance blocked
+    - low_balance_blocked = meal-stop blocked (any delivery status)
+    - final_cooking = not skipped AND not blocked
+
+    Invariant: expected == final_cooking + meal_off + low_balance_blocked
+    """
     settings_obj = settings_obj or get_meal_off_settings()
     qs = _demand_queryset(
         service_date,
         meal_period,
         package_id=package_id,
         package_public_id=package_public_id,
+        exclude_low_balance_blocked=False,
     )
+
+    blocked_q = _low_balance_blocked_q()
+    skipped_q = Q(status=OrderDelivery.DeliveryStatus.SKIPPED)
 
     overall = qs.aggregate(
         expected=Count('id'),
-        meal_off=Count('id', filter=Q(status=OrderDelivery.DeliveryStatus.SKIPPED)),
+        meal_off=Count('id', filter=skipped_q & ~blocked_q),
+        low_balance=Count('id', filter=blocked_q),
+        cooking=Count('id', filter=~skipped_q & ~blocked_q),
         customers=Count('demand_customer_id', distinct=True),
     )
     expected = int(overall['expected'] or 0)
     meal_off = int(overall['meal_off'] or 0)
-    final = expected - meal_off
+    low_balance = int(overall['low_balance'] or 0)
+    final = int(overall['cooking'] or 0)
     total_customers = int(overall['customers'] or 0)
 
     package_rows: list[PackageDemandRow] = []
@@ -195,23 +224,24 @@ def get_demand(
         )
         .annotate(
             expected=Count('id'),
-            meal_off=Count('id', filter=Q(status=OrderDelivery.DeliveryStatus.SKIPPED)),
+            meal_off=Count('id', filter=skipped_q & ~blocked_q),
+            low_balance=Count('id', filter=blocked_q),
+            cooking=Count('id', filter=~skipped_q & ~blocked_q),
             customers=Count('demand_customer_id', distinct=True),
         )
         .order_by('demand_meal_name', 'demand_meal_id')
     )
     for row in package_agg:
-        pkg_expected = int(row['expected'] or 0)
-        pkg_off = int(row['meal_off'] or 0)
         package_rows.append(
             PackageDemandRow(
                 package_id=row['demand_meal_id'],
                 package_public_id=str(row['demand_meal_public_id']),
                 package_name=row['demand_meal_name'],
                 total_customers=int(row['customers'] or 0),
-                expected_meal_count=pkg_expected,
-                meal_off_count=pkg_off,
-                final_cooking_count=pkg_expected - pkg_off,
+                expected_meal_count=int(row['expected'] or 0),
+                meal_off_count=int(row['meal_off'] or 0),
+                low_balance_blocked_count=int(row['low_balance'] or 0),
+                final_cooking_count=int(row['cooking'] or 0),
             )
         )
 
@@ -225,6 +255,7 @@ def get_demand(
         meal_off_deadline_at=deadline,
         expected_meal_count=expected,
         meal_off_count=meal_off,
+        low_balance_blocked_count=low_balance,
         final_cooking_count=final,
         total_customers=total_customers,
         packages=package_rows,
@@ -332,6 +363,8 @@ def demand_to_dict(demand: DemandResult) -> dict[str, Any]:
         'total_customers': demand.total_customers,
         'expected_meal_count': demand.expected_meal_count,
         'meal_off_count': demand.meal_off_count,
+        'customer_meal_off_count': demand.meal_off_count,
+        'low_balance_blocked_count': demand.low_balance_blocked_count,
         'final_cooking_count': demand.final_cooking_count,
         'remaining_meal_count': demand.final_cooking_count,
         'packages': [
@@ -341,6 +374,8 @@ def demand_to_dict(demand: DemandResult) -> dict[str, Any]:
                 'total_customers': row.total_customers,
                 'expected_meal_count': row.expected_meal_count,
                 'meal_off_count': row.meal_off_count,
+                'customer_meal_off_count': row.meal_off_count,
+                'low_balance_blocked_count': row.low_balance_blocked_count,
                 'final_cooking_count': row.final_cooking_count,
             }
             for row in demand.packages
@@ -376,6 +411,19 @@ def ingredient_qty_to_dict(
     return payload
 
 
+def _package_demand_dict(row: PackageDemandRow) -> dict[str, Any]:
+    return {
+        'package_public_id': row.package_public_id,
+        'package_name': row.package_name,
+        'total_customers': row.total_customers,
+        'expected_meal_count': row.expected_meal_count,
+        'meal_off_count': row.meal_off_count,
+        'customer_meal_off_count': row.meal_off_count,
+        'low_balance_blocked_count': row.low_balance_blocked_count,
+        'final_cooking_count': row.final_cooking_count,
+    }
+
+
 def build_kitchen_requirement(
     service_date: date,
     meal_period: str,
@@ -398,19 +446,11 @@ def build_kitchen_requirement(
         'confirmation_status': demand.confirmation_status,
         'expected_meal_count': demand.expected_meal_count,
         'meal_off_count': demand.meal_off_count,
+        'customer_meal_off_count': demand.meal_off_count,
+        'low_balance_blocked_count': demand.low_balance_blocked_count,
         'final_cooking_count': demand.final_cooking_count,
         'total_customers': demand.total_customers,
-        'packages': [
-            {
-                'package_public_id': row.package_public_id,
-                'package_name': row.package_name,
-                'total_customers': row.total_customers,
-                'expected_meal_count': row.expected_meal_count,
-                'meal_off_count': row.meal_off_count,
-                'final_cooking_count': row.final_cooking_count,
-            }
-            for row in demand.packages
-        ],
+        'packages': [_package_demand_dict(row) for row in demand.packages],
         'ingredients_incomplete': incomplete,
         'ingredients': [ingredient_qty_to_dict(row) for row in ingredients],
     }
@@ -493,6 +533,7 @@ def build_kitchen_order_details(
             service_date,
             meal_period,
             package_public_id=package_public_id,
+            exclude_low_balance_blocked=True,
         )
         .exclude(status=OrderDelivery.DeliveryStatus.SKIPPED)
         .select_related(
@@ -535,6 +576,124 @@ def build_kitchen_order_details(
     return {
         'service_date': service_date.isoformat(),
         'meal_period': meal_period,
+        'count': len(customers),
+        'customers': customers,
+    }
+
+
+def _meal_off_reason(delivery: OrderDelivery) -> str:
+    source = (delivery.skip_source or '').strip()
+    note = (delivery.note or '').strip()
+    if source == OrderDelivery.SkipSource.CUSTOMER:
+        label = 'Customer meal off'
+    elif source == OrderDelivery.SkipSource.ADMIN:
+        label = 'Admin meal off'
+    elif source == OrderDelivery.SkipSource.SYSTEM:
+        label = 'System meal off'
+    elif source:
+        label = source.replace('_', ' ').strip().capitalize()
+    else:
+        label = 'Meal off'
+    if note:
+        return f'{label}: {note}'
+    return label
+
+
+def build_kitchen_exclusion_details(
+    service_date: date,
+    meal_period: str,
+    exclusion_type: str,
+    *,
+    package_public_id: UUID | str | None = None,
+) -> dict[str, Any]:
+    """
+    Per-customer exclusion list for kitchen drill-down.
+
+    exclusion_type:
+      - customer_meal_off: skipped and not low-balance blocked
+      - low_balance: meal-stop blocked customers (any delivery status)
+    """
+    from orders.services.order_wallet_settings import get_order_wallet_settings
+    from orders.services.wallet_balance_thresholds import spendable_balance
+
+    qs = _demand_queryset(
+        service_date,
+        meal_period,
+        package_public_id=package_public_id,
+        exclude_low_balance_blocked=False,
+    ).select_related(
+        'order__customer__user',
+        'order__customer__wallet',
+        'order__meal',
+        'subscription__customer__user',
+        'subscription__customer__wallet',
+        'subscription__meal',
+    )
+
+    blocked_q = _low_balance_blocked_q()
+    if exclusion_type == 'customer_meal_off':
+        qs = qs.filter(status=OrderDelivery.DeliveryStatus.SKIPPED).exclude(blocked_q)
+    elif exclusion_type == 'low_balance':
+        qs = qs.filter(blocked_q)
+    else:
+        raise ValueError('exclusion_type must be customer_meal_off or low_balance')
+
+    threshold = None
+    if exclusion_type == 'low_balance':
+        threshold = get_order_wallet_settings().meal_stop_threshold
+
+    customers: list[dict[str, Any]] = []
+    for delivery in qs:
+        customer = delivery_customer(delivery)
+        package_name = delivery_meal_name(delivery) or ''
+        base = {
+            'name': _customer_display_name(customer),
+            'phone': (
+                (format_bd_phone_e164(customer.phone) or '')
+                if customer is not None
+                else ''
+            ),
+            'package_name': package_name,
+            'package_public_id': (
+                str(delivery_meal(delivery).public_id)
+                if delivery_meal(delivery) is not None
+                else None
+            ),
+            'service_date': service_date.isoformat(),
+            'meal_period': meal_period,
+            'customer_public_id': str(customer.public_id) if customer is not None else None,
+        }
+        if exclusion_type == 'customer_meal_off':
+            customers.append(
+                {
+                    **base,
+                    'reason': _meal_off_reason(delivery),
+                    'skip_source': delivery.skip_source,
+                    'note': delivery.note or None,
+                }
+            )
+        else:
+            balance = spendable_balance(customer) if customer is not None else None
+            blocked = bool(
+                customer is not None and customer.meal_service_blocked_low_balance
+            )
+            customers.append(
+                {
+                    **base,
+                    'wallet_balance': f'{balance:.2f}' if balance is not None else None,
+                    'meal_stop_threshold': (
+                        f'{threshold:.2f}' if threshold is not None else None
+                    ),
+                    'meal_status': 'Blocked' if blocked else 'Low balance',
+                    'meal_service_blocked_low_balance': blocked,
+                }
+            )
+
+    customers.sort(key=lambda row: (row['name'].casefold(), row['phone']))
+    return {
+        'service_date': service_date.isoformat(),
+        'meal_period': meal_period,
+        'exclusion_type': exclusion_type,
         'count': len(customers),
         'customers': customers,
     }
@@ -589,6 +748,7 @@ def upsert_demand_snapshots_for_slot(
             meal_off_deadline_at=demand.meal_off_deadline_at,
             expected_meal_count=pkg.expected_meal_count,
             meal_off_count=pkg.meal_off_count,
+            low_balance_blocked_count=pkg.low_balance_blocked_count,
             final_cooking_count=pkg.final_cooking_count,
             total_customers=pkg.total_customers,
             packages=[pkg],

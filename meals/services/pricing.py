@@ -5,6 +5,37 @@ from calendar import monthrange
 
 from django.utils import timezone
 
+MONEY_PLACES = Decimal('0.01')
+
+
+def _quantize_money(value: Decimal) -> Decimal:
+    return Decimal(value).quantize(MONEY_PLACES, rounding=ROUND_HALF_UP)
+
+
+def calculate_meal_price(
+    ingredient_cost,
+    operational_cost,
+    profit_percent,
+) -> dict[str, str]:
+    """
+    Shared one-meal selling price (subscriber or Instant).
+
+    profit_amount = ingredient_cost × profit_percent / 100
+    final_price = ingredient_cost + operational_cost + profit_amount
+    """
+    ingredient = _quantize_money(Decimal(ingredient_cost))
+    operational = _quantize_money(Decimal(operational_cost))
+    percent = _quantize_money(Decimal(profit_percent))
+    profit_amount = _quantize_money(ingredient * (percent / Decimal('100')))
+    final_price = _quantize_money(ingredient + operational + profit_amount)
+    return {
+        'ingredient_cost': str(ingredient),
+        'operational_cost': str(operational),
+        'profit_percent': str(percent),
+        'profit_amount': str(profit_amount),
+        'final_price': str(final_price),
+    }
+
 
 def get_present_month_days(reference_date=None):
     reference_date = reference_date or timezone.localdate()
