@@ -26,12 +26,29 @@ def _set_meal_stop_threshold(amount: Decimal) -> None:
     settings_obj.save(update_fields=['meal_stop_threshold', 'updated_at'])
 
 
-def _make_customer(username='u1', phone='1711111111', verified=True):
+def _make_customer(
+    username='u1',
+    phone='1711111111',
+    verified=True,
+    *,
+    phone_verified=False,
+    email=None,
+):
+    """
+    Test customer fixture.
+
+    ``verified`` controls ``is_email_verified`` (legacy name kept for call sites).
+    Pass ``phone_verified=True`` and ``email=''`` for phone-only identity.
+    """
+    resolved_email = f'{username}@example.com' if email is None else email
     user = User.objects.create_user(
         username=username,
-        email=f'{username}@example.com',
+        email=resolved_email or f'{username}-placeholder@example.com',
         password='StrongPassword123',
     )
+    if email == '':
+        user.email = ''
+        user.save(update_fields=['email'])
     group, _ = Group.objects.get_or_create(name='CUSTOMER')
     user.groups.add(group)
     profile = CustomerProfile.objects.create(
@@ -40,6 +57,7 @@ def _make_customer(username='u1', phone='1711111111', verified=True):
         occupation=CustomerProfile.Occupation.STUDENT,
         is_bachelor=True,
         is_email_verified=verified,
+        is_phone_verified=phone_verified,
     )
     return user, profile
 

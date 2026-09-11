@@ -10,6 +10,9 @@ IDENTITY_VERIFICATION_REQUIRED_MESSAGE = (
 IDENTITY_VERIFICATION_REQUIRED_SUBSCRIBE_MESSAGE = (
     'Identity verification is required before subscribing.'
 )
+IDENTITY_VERIFICATION_REQUIRED_WALLET_MESSAGE = (
+    'Identity verification is required before accessing your wallet.'
+)
 
 
 def _customer_profile(user):
