@@ -13,10 +13,11 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
 - Customer **recharge** increases Admin Wallet cash (`type=customer_funding`).
 - Customer **withdraw** decreases Admin Wallet cash (`type=customer_withdraw`).
 - Meal delivery charges do **not** increase Admin Wallet cash; `total_customer_payments` is recognized meal revenue from charged deliveries.
+- **Meal profit** (`total_profit` / `month_profit`) is realized margin from published slot `profit_snapshot` — **not** the same as `month_revenue` (cash credits).
 
 ## Recommended call order
 
-1. `GET /dashboard/` — paint summary cards + recent table
+1. `GET /dashboard/` — paint summary cards + recent table (**includes profit cards + package breakdown**)
 2. `GET /transactions/?…` — full history with filters (on Wallet → History)
 3. Mutations: `POST /deposits/`, `POST /withdrawals/`, `POST /expenses/`
 4. Optional: `GET /audit-logs/` for compliance view
@@ -51,6 +52,7 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
     "total_customer_payments": "62.00",
     "total_customer_funding": "500.00",
     "total_customer_withdrawals": "0.00",
+    "net_customer_funding": "500.00",
     "created_at": "…",
     "updated_at": "…"
   },
@@ -63,7 +65,30 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
   "total_customer_payments": "62.00",
   "total_customer_funding": "500.00",
   "total_customer_withdrawals": "0.00",
+  "net_customer_funding": "500.00",
   "total_withdrawn": "0.00",
+  "total_profit": "3.10",
+  "month_profit": "3.10",
+  "profit_by_package": {
+    "lifetime": [
+      {
+        "package_public_id": "uuid",
+        "package_name": "Student",
+        "charged_deliveries": 1,
+        "revenue": "62.00",
+        "profit": "3.10"
+      }
+    ],
+    "month": [
+      {
+        "package_public_id": "uuid",
+        "package_name": "Student",
+        "charged_deliveries": 1,
+        "revenue": "62.00",
+        "profit": "3.10"
+      }
+    ]
+  },
   "recent_transactions": [ /* same shape as history rows */ ]
 }
 ```
@@ -71,17 +96,41 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
 | Field | UI meaning |
 |-------|------------|
 | `balance` | Current platform cash |
-| `today_income` / `month_revenue` | Cash credits in period (includes `customer_funding` + manual deposits) |
+| `today_income` / `month_revenue` | Cash credits in period (includes `customer_funding` + manual deposits). **Not meal profit.** |
 | `today_expense` / `month_expense` | **BREAKING semantics:** business `EXPENSE_TYPES` only (ops/onahar/promo/platform/inventory purchase/etc.). Does **not** include `customer_withdraw` or admin `withdrawal`. |
 | `today_customer_withdrawals` / `month_customer_withdrawals` | Period custody outflows (`customer_withdraw`) — show separately from Expense cards |
-| `total_customer_funding` | Lifetime customer recharge custody in |
-| `total_customer_withdrawals` | Lifetime customer withdraw custody out |
+| `total_customer_funding` | Lifetime customer recharge custody **in** (does **not** fall on withdraw) |
+| `total_customer_withdrawals` | Lifetime customer withdraw custody **out** |
+| `net_customer_funding` | Remaining customer custody liability: `max(0, funding − withdrawals)` — use this as “funding left” |
 | `total_customer_payments` | **Meal revenue recognized** (charged deliveries), not cash-in from recharge |
+| `total_profit` | **Lifetime realized meal profit** (Σ published slot `profit_snapshot` on charged deliveries) |
+| `month_profit` | **This month** realized meal profit (same recognition; `updated_at` in current calendar month) |
+| `profit_by_package.lifetime` | Package rows for the Total Profit card drill-down |
+| `profit_by_package.month` | Package rows for the This Month Profit card drill-down |
 | `total_withdrawn` | Admin-initiated withdrawals |
 
-Suggested cards: **Current Balance**, **Today’s Income**, **Today’s Expense** (business only), **Today’s Customer Withdrawals**, **This Month’s Cash In**, **This Month’s Expense**, **This Month’s Customer Withdrawals**, **Meal Revenue (recognized)**, **Customer Funding**, **Total Withdrawn**.
+Suggested cards: **Current Balance**, **Today’s Income**, **Today’s Expense** (business only), **Today’s Customer Withdrawals**, **This Month’s Cash In**, **This Month’s Expense**, **This Month’s Customer Withdrawals**, **Meal Revenue (recognized)**, **Total Profit**, **This Month Profit**, **Customer Funding (lifetime)**, **Net Customer Funding**, **Total Withdrawn**.
 
-Do **not** map customer withdraw approve to an Expense card — it reduces balance as custody settlement (`customer_withdraw`).
+Do **not** map customer withdraw approve to an Expense card — it reduces balance as custody settlement (`customer_withdraw`). Do **not** expect the lifetime Customer Funding counter to drop on withdraw; bind “funding remaining” to `net_customer_funding`.
+
+### Customer wallet funding approve (panel)
+
+For pending **customer** withdraw requests (`/api/v1/web/wallet-funding/`), show:
+
+- Balance before / withdraw amount / remaining after reservation
+- `meal_stop_threshold` context (customers cannot request below the floor on new submits)
+
+See `wallet/docs/frontend/manual-wallet-funding.md`.
+
+### Profit cards UX (Admin Panel `/admin/wallet`)
+
+1. Render **Total Profit** from `total_profit` and **This Month Profit** from `month_profit`.
+2. On card click, open a modal/drawer listing the matching array:
+   - Total Profit → `profit_by_package.lifetime`
+   - This Month Profit → `profit_by_package.month`
+3. Table columns: package name, charged deliveries, revenue, profit (BDT decimal strings).
+4. **Do not** bind profit cards to `month_revenue` — that field is cash income (funding + deposits).
+5. No second API call needed for v1; breakdown ships in the same `GET /dashboard/` response.
 
 ## Deposit
 
@@ -196,3 +245,5 @@ Common custody types:
 - Frozen wallet (`status=frozen`): disable mutations; show banner (mutations will fail).
 - After customers recharge, refresh dashboard to see `customer_funding` credits and higher balance.
 - Meal deliveries increase **Meal Revenue** (`total_customer_payments`), not cash balance.
+- Meal deliveries with published slot profit increase **Total Profit** / **This Month Profit**; click those cards for package breakdown from `profit_by_package`.
+- Customer funding / `month_revenue` must never be shown as profit.

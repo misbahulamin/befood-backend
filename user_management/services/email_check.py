@@ -22,6 +22,7 @@ def check_customer_email(raw_email: str) -> dict:
     Does not create users, issue tokens, or return password material.
     Credential flags (has_password / password_setup_required) are attached only
     when status is verified ``exists``.
+    ``referral_input_allowed`` is true only for brand-new signup (available).
     """
     email = normalize_email(raw_email)
     if email_owned_by_verified_customer(email):
@@ -32,7 +33,16 @@ def check_customer_email(raw_email: str) -> dict:
             'status': STATUS_EXISTS,
             'has_password': has_password,
             'password_setup_required': not has_password,
+            'referral_input_allowed': False,
         }
     if get_active_pending(email) is not None:
-        return {'email': email, 'status': STATUS_PENDING}
-    return {'email': email, 'status': STATUS_AVAILABLE}
+        return {
+            'email': email,
+            'status': STATUS_PENDING,
+            'referral_input_allowed': False,
+        }
+    return {
+        'email': email,
+        'status': STATUS_AVAILABLE,
+        'referral_input_allowed': True,
+    }

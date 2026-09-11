@@ -47,6 +47,7 @@ class EmailCheckAPITests(TestCase):
         self.assertEqual(response.data['email'], 'exists@example.com')
         self.assertTrue(response.data['has_password'])
         self.assertFalse(response.data['password_setup_required'])
+        self.assertFalse(response.data['referral_input_allowed'])
 
     def test_exists_social_without_password(self):
         user = _make_verified_email_customer('social@example.com', password='TempPass123!')
@@ -70,6 +71,7 @@ class EmailCheckAPITests(TestCase):
         response = self.client.post(self.url, {'email': 'pending@example.com'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'pending')
+        self.assertFalse(response.data['referral_input_allowed'])
         self.assertNotIn('has_password', response.data)
         self.assertNotIn('password_setup_required', response.data)
 
@@ -77,6 +79,7 @@ class EmailCheckAPITests(TestCase):
         response = self.client.post(self.url, {'email': 'fresh@example.com'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'available')
+        self.assertTrue(response.data['referral_input_allowed'])
         self.assertNotIn('has_password', response.data)
         self.assertNotIn('password_setup_required', response.data)
 

@@ -28,6 +28,8 @@ urlpatterns = [
     path('blogs/', include('blogs.api.urls')),
     path('onahar/', include('onahar.api.urls')),
     path('api/v1/web/onahar/', include('onahar.api.web_urls')),
+    path('referrals/', include('referrals.api.urls')),
+    path('api/v1/web/referrals/', include('referrals.api.web_urls')),
     path('api/v1/web/admin-wallet/', include('admin_wallet.api.web_urls')),
     path('api/v1/web/inventory/', include('inventory.api.web_urls')),
     path('api/v1/service-areas/', include('service_area.api.urls')),

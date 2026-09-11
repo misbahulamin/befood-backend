@@ -84,6 +84,8 @@ class WalletDetailView(APIView):
             'Creates an active BDT wallet with balance 0.00 on first access. '
             'Includes admin-configured thresholds: min_wallet_balance_to_order '
             '(subscribe floor), low_balance_reminder_threshold, and meal_stop_threshold. '
+            'withdrawable_balance is max(0, recharge_balance - meal_stop_threshold) '
+            '(commission is never withdrawable). '
             'Clients must use public_id, never the integer primary key.'
         ),
         responses={
@@ -233,8 +235,10 @@ class WalletWithdrawView(APIView):
         summary='Submit wallet withdraw request (manual verification)',
         description=(
             'Creates a pending withdraw with method=manual and immediately reserves '
-            '(debits) spendable balance. Admin Wallet custody is debited only on approve. '
-            'Reject restores the reservation.'
+            '(debits) recharge_balance only. Amount must not exceed '
+            'max(0, recharge_balance - meal_stop_threshold). '
+            'Admin Wallet custody is debited as type customer_withdraw only on approve. '
+            'Reject restores the reservation. Commission balance is never withdrawn.'
         ),
         request=WithdrawRequestSerializer,
         parameters=[
@@ -247,7 +251,12 @@ class WalletWithdrawView(APIView):
         ],
         responses={
             200: FundingResponseSerializer,
-            400: OpenApiResponse(description='Invalid amount, insufficient balance, or frozen wallet'),
+            400: OpenApiResponse(
+                description=(
+                    'Invalid amount, exceeds meal-stop-aware maximum withdrawable, '
+                    'or frozen wallet'
+                )
+            ),
             401: OpenApiResponse(description='Unauthenticated'),
             403: OpenApiResponse(description='Manual funding disabled or not verified customer'),
             409: OpenApiResponse(description='Idempotency key conflict'),

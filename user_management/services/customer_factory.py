@@ -31,7 +31,13 @@ def _unique_username(prefix: str) -> str:
 @transaction.atomic
 def create_phone_only_customer(phone: str) -> tuple[User, CustomerProfile]:
     """Create a password-less customer with verified phone only."""
+    from user_management.services.identity_resolve import find_customer_by_phone
+
     canonical = normalize_phone_number(phone)
+    existing = find_customer_by_phone(canonical)
+    if existing is not None:
+        raise ValueError(f'Customer already exists for phone {canonical}')
+
     user = User(username=_unique_username(f'phone-{canonical[-4:]}'), email='')
     user.set_unusable_password()
     user.save()
@@ -49,6 +55,9 @@ def create_phone_only_customer(phone: str) -> tuple[User, CustomerProfile]:
         profile_completion_percentage=0,
     )
     update_profile_completion(profile)
+    from referrals.services.codes import ensure_referral_profile
+
+    ensure_referral_profile(profile)
     return user, profile
 
 
@@ -63,8 +72,19 @@ def create_social_customer(
     phone_verified: bool = False,
 ) -> tuple[User, CustomerProfile]:
     """Create a password-less customer from a social provider profile."""
+    from user_management.services.identity_resolve import find_customer_by_phone
+
     normalized_email = normalize_email(email) if email else ''
     prefix = normalized_email.split('@')[0] if normalized_email else 'social'
+
+    canonical_phone = None
+    if phone:
+        canonical_phone = normalize_phone_number(phone)
+        # Never mint a second profile for an owned phone (callers should resolve first).
+        if find_customer_by_phone(canonical_phone) is not None:
+            canonical_phone = None
+            phone_verified = False
+
     user = User(
         username=_unique_username(prefix),
         email=normalized_email,
@@ -78,9 +98,6 @@ def create_social_customer(
     user.groups.add(group)
 
     now = timezone.now()
-    canonical_phone = None
-    if phone:
-        canonical_phone = normalize_phone_number(phone)
 
     profile = CustomerProfile.objects.create(
         user=user,
@@ -93,4 +110,7 @@ def create_social_customer(
         profile_completion_percentage=0,
     )
     update_profile_completion(profile)
+    from referrals.services.codes import ensure_referral_profile
+
+    ensure_referral_profile(profile)
     return user, profile

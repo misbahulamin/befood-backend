@@ -293,6 +293,24 @@ def mark_delivery(
             logging.getLogger(__name__).exception(
                 'Onahar credit_for_delivery failed for delivery_id=%s', locked.pk
             )
+        try:
+            from referrals.services.commission import (
+                credit_pending_commissions_after_referrer_meal,
+                credit_referral_commission_for_delivery,
+            )
+
+            # Primary: referred delivery may accrue if referrer already consumed.
+            credit_referral_commission_for_delivery(locked, actor=marked_by)
+            # Secondary: this customer may be a referrer whose matching meal unlocks
+            # prior skipped commissions for referred users (same date/period).
+            credit_pending_commissions_after_referrer_meal(locked, actor=marked_by)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(
+                'Referral commission accrual failed for delivery_id=%s',
+                locked.pk,
+            )
 
     if locked.order_id:
         locked.order.refresh_from_db()

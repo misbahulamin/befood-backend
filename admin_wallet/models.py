@@ -103,6 +103,11 @@ class AdminWalletTransaction(PublicIdMixin, TimeStampedModel):
             'inventory_purchase_reversal',
             'Inventory purchase reversal',
         )
+        REFERRAL_COMMISSION = 'referral_commission', 'Referral commission'
+        REFERRAL_COMMISSION_REVERSAL = (
+            'referral_commission_reversal',
+            'Referral commission reversal',
+        )
 
     class Direction(models.TextChoices):
         CREDIT = 'credit', 'Credit'
@@ -129,6 +134,7 @@ class AdminWalletTransaction(PublicIdMixin, TimeStampedModel):
         Type.REFUND_REVERSAL,
         Type.OTHER_INCOME,
         Type.INVENTORY_PURCHASE_REVERSAL,
+        Type.REFERRAL_COMMISSION_REVERSAL,
     }
     DEBIT_TYPES = {
         Type.WITHDRAWAL,
@@ -142,6 +148,7 @@ class AdminWalletTransaction(PublicIdMixin, TimeStampedModel):
         Type.PLATFORM_EXPENSE,
         Type.MANUAL_ADJUSTMENT,
         Type.INVENTORY_PURCHASE,
+        Type.REFERRAL_COMMISSION,
     }
     EXPENSE_TYPES = DEBIT_TYPES - {Type.WITHDRAWAL, Type.CUSTOMER_WITHDRAW}
 

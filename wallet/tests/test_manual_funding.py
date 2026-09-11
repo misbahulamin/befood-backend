@@ -11,6 +11,7 @@ from rest_framework.test import APITestCase
 
 from admin_wallet.models import AdminWalletTransaction
 from admin_wallet.services.ledger import get_or_create_platform_wallet
+from orders.models import OrderWalletSettings
 from user_management.models import AdminProfile, CustomerProfile
 from wallet.models import Wallet, WalletTransaction
 from wallet.services.funding import (
@@ -31,6 +32,13 @@ from wallet.services.ledger import (
     get_or_create_wallet,
 )
 from wallet.services.ledger import MAX_FUNDING_AMOUNT
+from wallet.services.withdrawable import compute_maximum_withdrawable
+
+
+def _set_meal_stop_threshold(amount: Decimal) -> None:
+    settings_obj = OrderWalletSettings.load()
+    settings_obj.meal_stop_threshold = amount
+    settings_obj.save(update_fields=['meal_stop_threshold', 'updated_at'])
 
 
 def _make_customer(username='u1', phone='1711111111', verified=True):
@@ -75,6 +83,8 @@ class ManualFundingServiceTests(TestCase):
         platform = get_or_create_platform_wallet()
         platform.balance = Decimal('10000.00')
         platform.save(update_fields=['balance', 'updated_at'])
+        # Default meal_stop is 200; zero it so legacy funding tests focus on custody.
+        _set_meal_stop_threshold(Decimal('0.00'))
 
     def test_request_recharge_pending_no_balance_change(self):
         with self.captureOnCommitCallbacks(execute=True):
@@ -184,6 +194,7 @@ class ManualFundingServiceTests(TestCase):
         platform = get_or_create_platform_wallet()
         expenses_before = platform.total_expenses or Decimal('0.00')
         withdrawals_before = platform.total_customer_withdrawals or Decimal('0.00')
+        funding_before = platform.total_customer_funding or Decimal('0.00')
         balance_before = platform.balance
 
         _, txn, _ = request_withdraw(self.profile, Decimal('200.00'))
@@ -200,6 +211,10 @@ class ManualFundingServiceTests(TestCase):
         self.assertEqual(platform.balance, balance_before - Decimal('200.00'))
         self.assertEqual(platform.total_expenses, expenses_before)
         self.assertEqual(
+            platform.total_customer_funding,
+            funding_before,
+        )
+        self.assertEqual(
             platform.total_customer_withdrawals,
             withdrawals_before + Decimal('200.00'),
         )
@@ -209,6 +224,59 @@ class ManualFundingServiceTests(TestCase):
         )
         self.assertEqual(debit.amount, Decimal('200.00'))
         self.assertNotIn(debit.type, AdminWalletTransaction.EXPENSE_TYPES)
+
+    def test_compute_maximum_withdrawable_formula(self):
+        self.assertEqual(
+            compute_maximum_withdrawable(Decimal('420.00'), Decimal('100.00')),
+            Decimal('320.00'),
+        )
+        self.assertEqual(
+            compute_maximum_withdrawable(Decimal('100.00'), Decimal('100.00')),
+            Decimal('0.00'),
+        )
+        self.assertEqual(
+            compute_maximum_withdrawable(Decimal('80.00'), Decimal('100.00')),
+            Decimal('0.00'),
+        )
+
+    def test_withdraw_respects_meal_stop_threshold(self):
+        _set_meal_stop_threshold(Decimal('100.00'))
+        credit_wallet(self.wallet, Decimal('420.00'))
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.withdrawable_balance, Decimal('320.00'))
+
+        with self.assertRaises(InsufficientFundsError):
+            request_withdraw(self.profile, Decimal('400.00'))
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.recharge_balance, Decimal('420.00'))
+
+        _, txn, _ = request_withdraw(self.profile, Decimal('300.00'))
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.recharge_balance, Decimal('120.00'))
+        self.assertEqual(txn.status, WalletTransaction.Status.PENDING)
+
+    def test_withdraw_blocked_when_recharge_at_meal_stop_floor(self):
+        _set_meal_stop_threshold(Decimal('100.00'))
+        credit_wallet(self.wallet, Decimal('100.00'))
+        with self.assertRaises(InsufficientFundsError):
+            request_withdraw(self.profile, Decimal('1.00'))
+
+    def test_withdraw_ignores_commission_for_maximum(self):
+        _set_meal_stop_threshold(Decimal('100.00'))
+        credit_wallet(self.wallet, Decimal('150.00'))
+        self.wallet.commission_balance = Decimal('500.00')
+        self.wallet.balance = Decimal('650.00')
+        self.wallet.save(
+            update_fields=['commission_balance', 'balance', 'updated_at']
+        )
+        self.assertEqual(self.wallet.withdrawable_balance, Decimal('50.00'))
+        with self.assertRaises(InsufficientFundsError):
+            request_withdraw(self.profile, Decimal('51.00'))
+        _, txn, _ = request_withdraw(self.profile, Decimal('50.00'))
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.commission_balance, Decimal('500.00'))
+        self.assertEqual(self.wallet.recharge_balance, Decimal('100.00'))
+        self.assertEqual(txn.amount, Decimal('50.00'))
 
     def test_withdraw_reserves_and_reject_releases(self):
         credit_wallet(self.wallet, Decimal('200.00'))
@@ -433,6 +501,7 @@ class ManualFundingAPITests(APITestCase):
         platform = get_or_create_platform_wallet()
         platform.balance = Decimal('5000.00')
         platform.save(update_fields=['balance', 'updated_at'])
+        _set_meal_stop_threshold(Decimal('0.00'))
 
     def test_customer_recharge_and_admin_approve(self):
         with self.captureOnCommitCallbacks(execute=True):

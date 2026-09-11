@@ -25,6 +25,10 @@ OTP_EXPIRED_MESSAGE = 'OTP expired.'
 OTP_RATE_LIMITED_MESSAGE = 'Too many OTP requests. Please try again later.'
 OTP_COOLDOWN_MESSAGE = 'Please wait before requesting another OTP.'
 PHONE_CONFLICT_MESSAGE = 'This phone number is already linked to another account.'
+USE_BIND_ENDPOINT_MESSAGE = (
+    'You are already signed in. Use phone bind endpoints to attach a phone '
+    'to this account instead of anonymous phone registration.'
+)
 
 
 class PhoneOtpIssueStatus(str, Enum):
@@ -150,8 +154,32 @@ def verify_phone_otp(
     device_token: str | None = None,
     platform: str | None = None,
     user_agent: str = '',
+    referral_code: str | None = None,
+    client_type: str | None = None,
+    authenticated_user=None,
 ) -> dict:
-    """Verify OTP and create-or-login customer; returns unified auth envelope."""
+    """
+    Verify OTP and create-or-login customer; returns unified auth envelope.
+
+    If ``authenticated_user`` is a customer session, bind the phone to that
+    profile (never create a second User). Referral applies only when a new
+    customer is created on the anonymous path.
+    """
+    auth_user = authenticated_user
+    if auth_user is not None and getattr(auth_user, 'is_authenticated', False):
+        if not hasattr(auth_user, 'customer_profile'):
+            raise PhoneOtpError(USE_BIND_ENDPOINT_MESSAGE, code='USE_BIND_ENDPOINT')
+        # Prefer bind semantics so a logged-in email/social user never mints a
+        # second account via anonymous create-or-login.
+        return bind_phone_otp_to_user(
+            auth_user,
+            raw_phone,
+            code,
+            device_token=device_token,
+            platform=platform,
+            user_agent=user_agent,
+        )
+
     try:
         phone = normalize_phone_number(raw_phone)
     except PhoneNormalizationError as exc:
@@ -161,19 +189,33 @@ def verify_phone_otp(
     _consume_valid_otp(phone, normalized_code)
     now = timezone.now()
 
-    profile = (
-        CustomerProfile.objects.select_related('user')
-        .filter(phone=phone)
-        .first()
-    )
+    from user_management.services.identity_resolve import find_customer_by_phone
+
+    profile = find_customer_by_phone(phone)
+    created = False
     if profile is None:
         user, profile = create_phone_only_customer(phone)
+        created = True
     else:
         user = profile.user
         if not profile.is_phone_verified:
             profile.is_phone_verified = True
             profile.phone_verified_at = now
             profile.save(update_fields=['is_phone_verified', 'phone_verified_at', 'updated_at'])
+
+    # Referral only for brand-new customers; ignore code on existing login.
+    if created and (referral_code or '').strip():
+        from referrals.services.attribution import attribute_on_signup
+        from referrals.services.eligibility import ReferralError
+
+        try:
+            attribute_on_signup(
+                referred_customer=profile,
+                referral_code=referral_code,
+                client_type=client_type or 'mobile',
+            )
+        except ReferralError as exc:
+            raise PhoneOtpError(exc.message, code=exc.code) from exc
 
     return build_customer_auth_response(
         user,

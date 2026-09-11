@@ -20,7 +20,7 @@ from admin_wallet.services.ledger import (
     get_or_create_platform_wallet,
 )
 from admin_wallet.services.operations import manual_deposit, post_expense, withdraw
-from admin_wallet.services.queries import dashboard_payload, reconcile_balance
+from admin_wallet.services.queries import dashboard_payload, reconcile_balance, wallet_summary, wallet_summary
 from meals.models import MealCategory, MealCycle, MealCyclePlan, MonthlyMenuSchedule, MonthlyMenuSlot
 from orders.models import OrderDelivery, OrderWalletSettings
 from orders.services.order_delivery import DeliveryError, mark_delivery
@@ -61,7 +61,14 @@ def make_test_image(name='meal.jpg', size=(100, 100), color='red'):
     return SimpleUploadedFile(name, buffer.read(), content_type='image/jpeg')
 
 
-def ensure_priced_delivery_slot(meal, service_date, meal_period, price=Decimal('62.00')):
+def ensure_priced_delivery_slot(
+    meal,
+    service_date,
+    meal_period,
+    price=Decimal('62.00'),
+    *,
+    profit=Decimal('2.00'),
+):
     from django.utils import timezone
 
     cycle, _ = MealCycle.objects.get_or_create(year=service_date.year, month=service_date.month)
@@ -100,7 +107,7 @@ def ensure_priced_delivery_slot(meal, service_date, meal_period, price=Decimal('
             'final_meal_price_snapshot': price,
             'ingredient_cost_snapshot': Decimal('20.00'),
             'operational_cost_snapshot': Decimal('31.00'),
-            'profit_snapshot': Decimal('2.00'),
+            'profit_snapshot': profit,
         },
     )
     return slot
@@ -248,18 +255,20 @@ class AdminWalletIngestionTests(APITestCase):
         )
         settings_obj = OrderWalletSettings.load()
         settings_obj.min_wallet_balance_to_order = Decimal('0.00')
+        settings_obj.meal_stop_threshold = Decimal('0.00')
         settings_obj.save()
 
         self.wallet = get_or_create_wallet(self.customer_profile)
         credit_wallet(self.wallet, Decimal('500.00'))
         self.slot_charge_price = Decimal('62.00')
 
-    def _prepare_chargeable(self, delivery, price=None):
-        ensure_priced_delivery_slot(
+    def _prepare_chargeable(self, delivery, price=None, profit=Decimal('2.00')):
+        return ensure_priced_delivery_slot(
             delivery.order.meal,
             delivery.service_date,
             delivery.meal_period,
             price=price or self.slot_charge_price,
+            profit=profit,
         )
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
@@ -287,6 +296,124 @@ class AdminWalletIngestionTests(APITestCase):
             mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
         wallet.refresh_from_db()
         self.assertEqual(wallet.balance, before)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
+    def test_dashboard_meal_profit_totals_and_package_breakdown(self, _mock_date):
+        from django.utils import timezone
+
+        from admin_wallet.services.profit import meal_profit_by_package, meal_profit_recognized
+        from admin_wallet.services.queries import _period_bounds_month
+
+        other_user = User.objects.create_user(
+            username='aw_customer_b',
+            email='aw_customer_b@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        other_user.groups.add(Group.objects.get(name='CUSTOMER'))
+        other_profile = CustomerProfile.objects.create(
+            user=other_user,
+            phone='1713333099',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=True,
+        )
+        other_wallet = get_or_create_wallet(other_profile)
+        credit_wallet(other_wallet, Decimal('500.00'))
+
+        other_meal = MealCategory.objects.create(
+            meal_name='Profit Package B',
+            total_price=Decimal('70.00'),
+            meal_thumbnail=make_test_image('aw-pkg-b.jpg'),
+            meal_type=MealCategory.MealType.DAILY,
+            meal_period=MealCategory.MealPeriod.LUNCH,
+            is_active=True,
+        )
+
+        order_a = create_meal_order(self.customer_profile, self.daily_meal)
+        delivery_a = order_a.deliveries.get()
+        self._prepare_chargeable(delivery_a, profit=Decimal('3.10'))
+
+        order_b = create_meal_order(other_profile, other_meal)
+        delivery_b = order_b.deliveries.get()
+        self._prepare_chargeable(delivery_b, price=Decimal('70.00'), profit=Decimal('5.00'))
+
+        with patch('orders.services.order_delivery.timezone.localdate', return_value=date(2026, 8, 5)):
+            mark_delivery(delivery_a, 'delivered', marked_by=self.admin_user)
+            mark_delivery(delivery_b, 'delivered', marked_by=self.admin_user)
+
+        self.assertEqual(meal_profit_recognized(), Decimal('8.10'))
+
+        # Prior-month charge should count in lifetime only.
+        OrderDelivery.objects.filter(pk=delivery_a.pk).update(
+            updated_at=timezone.now().replace(year=2025, month=1, day=15),
+        )
+        month_start, month_end = _period_bounds_month()
+        month_profit = meal_profit_recognized(start=month_start, end=month_end)
+        self.assertEqual(month_profit, Decimal('5.00'))
+        self.assertEqual(meal_profit_recognized(), Decimal('8.10'))
+
+        lifetime_rows = meal_profit_by_package()
+        self.assertEqual(len(lifetime_rows), 2)
+        self.assertEqual(lifetime_rows[0]['package_name'], 'Profit Package B')
+        self.assertEqual(lifetime_rows[0]['profit'], Decimal('5.00'))
+        self.assertEqual(lifetime_rows[1]['profit'], Decimal('3.10'))
+        self.assertEqual(
+            sum((row['profit'] for row in lifetime_rows), Decimal('0.00')),
+            Decimal('8.10'),
+        )
+
+        month_rows = meal_profit_by_package(start=month_start, end=month_end)
+        self.assertEqual(len(month_rows), 1)
+        self.assertEqual(month_rows[0]['profit'], Decimal('5.00'))
+        self.assertEqual(month_rows[0]['charged_deliveries'], 1)
+
+        payload = dashboard_payload()
+        self.assertEqual(payload['total_profit'], Decimal('8.10'))
+        self.assertEqual(payload['month_profit'], Decimal('5.00'))
+        self.assertEqual(
+            sum((r['profit'] for r in payload['profit_by_package']['lifetime']), Decimal('0.00')),
+            payload['total_profit'],
+        )
+        self.assertEqual(
+            sum((r['profit'] for r in payload['profit_by_package']['month']), Decimal('0.00')),
+            payload['month_profit'],
+        )
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
+    def test_funding_does_not_inflate_profit_and_missing_snapshot_is_zero(self, _mock_date):
+        _approved_recharge(
+            self.customer_profile,
+            Decimal('100.00'),
+            self.admin_user,
+            trx_suffix='profit-fund',
+        )
+        payload_funding_only = dashboard_payload()
+        # Funding raises month_revenue/cash but must not create meal profit.
+        self.assertGreaterEqual(payload_funding_only['month_revenue'], Decimal('100.00'))
+        profit_before = payload_funding_only['total_profit']
+
+        order = create_meal_order(self.customer_profile, self.daily_meal)
+        delivery = order.deliveries.get()
+        # Charge with snapshot, then clear profit_snapshot — profit must fall back to 0.
+        slot = self._prepare_chargeable(delivery, profit=Decimal('4.00'))
+        with patch('orders.services.order_delivery.timezone.localdate', return_value=date(2026, 8, 5)):
+            mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
+        slot.profit_snapshot = None
+        slot.save(update_fields=['profit_snapshot', 'updated_at'])
+
+        payload = dashboard_payload()
+        self.assertEqual(payload['total_profit'], profit_before)
+        self.assertIn('profit_by_package', payload)
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.payment_status, OrderDelivery.PaymentStatus.CHARGED)
+        self.assertIsNotNone(delivery.charged_amount)
+
+        # Dashboard must not fail when slot cannot be resolved at all.
+        MonthlyMenuSlot.objects.filter(pk=slot.pk).delete()
+        payload_ok = dashboard_payload()
+        self.assertEqual(payload_ok['total_profit'], profit_before)
+        self.assertIsInstance(payload_ok['profit_by_package']['lifetime'], list)
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
     def test_recharge_then_meal_does_not_double_count_cash(self, _mock_date):
@@ -399,16 +526,33 @@ class AdminWalletIngestionTests(APITestCase):
             self.admin_user,
             trx_suffix='wd-80',
         )
-        before = get_or_create_platform_wallet().balance
+        platform = get_or_create_platform_wallet()
+        before = platform.balance
+        funding_before = platform.total_customer_funding or Decimal('0.00')
+        withdrawals_before = platform.total_customer_withdrawals or Decimal('0.00')
         _, pending, _ = request_withdraw(self.customer_profile, Decimal('30.00'))
         txn = approve_withdraw(pending, reviewed_by=self.admin_user)
-        platform = get_or_create_platform_wallet()
+        platform.refresh_from_db()
         self.assertEqual(platform.balance, before - Decimal('30.00'))
+        self.assertEqual(platform.total_customer_funding, funding_before)
+        self.assertEqual(
+            platform.total_customer_withdrawals,
+            withdrawals_before + Decimal('30.00'),
+        )
+        self.assertEqual(
+            platform.total_customer_funding - platform.total_customer_withdrawals,
+            funding_before - withdrawals_before - Decimal('30.00'),
+        )
         debit = AdminWalletTransaction.objects.get(
             type=AdminWalletTransaction.Type.CUSTOMER_WITHDRAW,
             customer_wallet_transaction=txn,
         )
         self.assertEqual(debit.amount, Decimal('30.00'))
+        summary = wallet_summary(platform)
+        self.assertEqual(
+            summary['net_customer_funding'],
+            max(Decimal('0.00'), funding_before - withdrawals_before - Decimal('30.00')),
+        )
 
     def test_dashboard_expense_excludes_customer_withdraw(self):
         _approved_recharge(
@@ -512,12 +656,27 @@ class AdminWalletAPITests(APITestCase):
         res = self.client.get(url)
         self.assertIn(res.status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_401_UNAUTHORIZED))
 
+        dash_denied = self.client.get(reverse('web_admin_wallet:dashboard'))
+        self.assertIn(
+            dash_denied.status_code,
+            (status.HTTP_403_FORBIDDEN, status.HTTP_401_UNAUTHORIZED),
+        )
+
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
         res = self.client.get(url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertIn('balance', res.data)
         self.assertIn('total_customer_funding', res.data)
         self.assertIn('total_customer_withdrawals', res.data)
+        self.assertIn('net_customer_funding', res.data)
+
+        dash = self.client.get(reverse('web_admin_wallet:dashboard'))
+        self.assertEqual(dash.status_code, status.HTTP_200_OK)
+        self.assertIn('total_profit', dash.data)
+        self.assertIn('month_profit', dash.data)
+        self.assertIn('net_customer_funding', dash.data)
+        self.assertIn('lifetime', dash.data['profit_by_package'])
+        self.assertIn('month', dash.data['profit_by_package'])
 
     def test_dashboard_deposit_filter_search(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
@@ -536,6 +695,12 @@ class AdminWalletAPITests(APITestCase):
         self.assertIn('month_customer_withdrawals', dash.data)
         self.assertIn('total_customer_funding', dash.data)
         self.assertIn('total_customer_withdrawals', dash.data)
+        self.assertIn('net_customer_funding', dash.data)
+        self.assertIn('total_profit', dash.data)
+        self.assertIn('month_profit', dash.data)
+        self.assertEqual(Decimal(dash.data['total_profit']), Decimal('0.00'))
+        self.assertEqual(dash.data['profit_by_package']['lifetime'], [])
+        self.assertEqual(dash.data['profit_by_package']['month'], [])
 
         listed = self.client.get(
             reverse('web_admin_wallet:transactions'),

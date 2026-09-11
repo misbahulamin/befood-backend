@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from admin_wallet.models import AdminWallet, AdminWalletTransaction
 from admin_wallet.services.ledger import get_or_create_platform_wallet
+from admin_wallet.services.profit import meal_profit_by_package, meal_profit_recognized
 from orders.models import OrderDelivery
 
 
@@ -77,6 +78,16 @@ def meal_revenue_recognized(*, start: datetime | None = None, end: datetime | No
     return Decimal(total).quantize(Decimal('0.01'))
 
 
+def _net_customer_funding(wallet: AdminWallet) -> Decimal:
+    """Remaining customer custody liability (lifetime in − lifetime out), floored at 0."""
+    funding = wallet.total_customer_funding or Decimal('0.00')
+    withdrawals = wallet.total_customer_withdrawals or Decimal('0.00')
+    net = funding - withdrawals
+    if net <= 0:
+        return Decimal('0.00')
+    return net.quantize(Decimal('0.01'))
+
+
 def wallet_summary(wallet: AdminWallet | None = None) -> dict:
     wallet = wallet or get_or_create_platform_wallet()
     return {
@@ -92,6 +103,7 @@ def wallet_summary(wallet: AdminWallet | None = None) -> dict:
         'total_customer_payments': meal_revenue_recognized(),
         'total_customer_funding': wallet.total_customer_funding,
         'total_customer_withdrawals': wallet.total_customer_withdrawals,
+        'net_customer_funding': _net_customer_funding(wallet),
         'updated_at': wallet.updated_at,
         'created_at': wallet.created_at,
     }
@@ -134,6 +146,8 @@ def dashboard_payload(*, recent_limit: int = 10) -> dict:
         )
         .order_by('-created_at', '-id')[:recent_limit]
     )
+    lifetime_profit = meal_profit_recognized()
+    month_profit = meal_profit_recognized(start=month_start, end=month_end)
     return {
         'wallet': wallet_summary(wallet),
         'today_income': today['income'],
@@ -145,7 +159,15 @@ def dashboard_payload(*, recent_limit: int = 10) -> dict:
         'total_customer_payments': meal_revenue_recognized(),
         'total_customer_funding': wallet.total_customer_funding,
         'total_customer_withdrawals': wallet.total_customer_withdrawals,
+        'net_customer_funding': _net_customer_funding(wallet),
         'total_withdrawn': wallet.total_withdrawn,
+        # Realized meal margin (published slot profit_snapshot), not cash credits.
+        'total_profit': lifetime_profit,
+        'month_profit': month_profit,
+        'profit_by_package': {
+            'lifetime': meal_profit_by_package(),
+            'month': meal_profit_by_package(start=month_start, end=month_end),
+        },
         'recent_transactions': recent,
     }
 

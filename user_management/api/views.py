@@ -70,6 +70,7 @@ class CustomerEmailCheckView(APIView):
             'Email-first lookup for unified auth UX. Returns status '
             '`exists` (with has_password / password_setup_required for verified emails), '
             '`pending` (resume verification), or `available` (start deferred registration). '
+            'Also returns `referral_input_allowed` (true only when status is `available`). '
             'Does not create a user or issue a token.'
         ),
         responses={
@@ -83,6 +84,7 @@ class CustomerEmailCheckView(APIView):
                             'status': 'exists',
                             'has_password': True,
                             'password_setup_required': False,
+                            'referral_input_allowed': False,
                         },
                         response_only=True,
                     ),
@@ -93,17 +95,26 @@ class CustomerEmailCheckView(APIView):
                             'status': 'exists',
                             'has_password': False,
                             'password_setup_required': True,
+                            'referral_input_allowed': False,
                         },
                         response_only=True,
                     ),
                     OpenApiExample(
                         'Pending registration',
-                        value={'email': 'new@example.com', 'status': 'pending'},
+                        value={
+                            'email': 'new@example.com',
+                            'status': 'pending',
+                            'referral_input_allowed': False,
+                        },
                         response_only=True,
                     ),
                     OpenApiExample(
                         'Available',
-                        value={'email': 'fresh@example.com', 'status': 'available'},
+                        value={
+                            'email': 'fresh@example.com',
+                            'status': 'available',
+                            'referral_input_allowed': True,
+                        },
                         response_only=True,
                     ),
                 ],
@@ -163,7 +174,9 @@ class CustomerRegistrationView(APIView):
         ),
     )
     def post(self, request):
-        serializer = CustomerRegistrationSerializer(data=request.data)
+        serializer = CustomerRegistrationSerializer(
+            data=request.data, context={'request': request}
+        )
         serializer.is_valid(raise_exception=True)
         pending, _ = register_customer(serializer.validated_data, request)
         return Response(
@@ -569,7 +582,9 @@ class PhoneAvailabilityCheckView(APIView):
         description=(
             'Pre-OTP phone availability. Pass context=bind (authenticated link) or '
             'context=login (anonymous phone OTP). Does not send SMS. '
-            'If context is omitted: authenticated → bind, else → login.'
+            'If context is omitted: authenticated → bind, else → login. '
+            'Response includes `referral_input_allowed` (true only for login context '
+            'when the phone is not yet registered — new-customer path only).'
         ),
         responses={
             200: OpenApiResponse(description='Availability result.'),
@@ -713,13 +728,22 @@ class PhoneOtpVerifyView(APIView):
         request=PhoneOtpVerifySerializer,
         description=(
             'Verify phone OTP and create-or-login a password-less customer. '
-            'Returns the unified auth success envelope.'
+            'Returns the unified auth success envelope. '
+            'If the request is already authenticated as a customer, the phone is '
+            'bound to that account (same as bind verify) — a second User is never created. '
+            'Referral code is applied only when a brand-new customer is created; '
+            'ignored on existing phone login / bind.'
         ),
+        responses={
+            200: OpenApiResponse(description='Unified auth success envelope.'),
+            400: OpenApiResponse(description='Invalid OTP or referral error.'),
+            409: OpenApiResponse(description='Phone already linked to another account.'),
+        },
     )
     def post(self, request):
         from user_management.services.phone_otp import PhoneOtpError, verify_phone_otp
 
-        serializer = PhoneOtpVerifySerializer(data=request.data)
+        serializer = PhoneOtpVerifySerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         try:
             response_data = verify_phone_otp(
@@ -728,9 +752,21 @@ class PhoneOtpVerifyView(APIView):
                 device_token=serializer.validated_data.get('device_token'),
                 platform=serializer.validated_data.get('platform'),
                 user_agent=request.META.get('HTTP_USER_AGENT', ''),
+                referral_code=serializer.validated_data.get('referral_code') or '',
+                client_type=serializer.validated_data.get('referral_client_type') or 'web',
+                authenticated_user=(
+                    request.user
+                    if getattr(request.user, 'is_authenticated', False)
+                    else None
+                ),
             )
         except PhoneOtpError as exc:
-            return Response({'detail': exc.message, 'code': exc.code}, status=status.HTTP_400_BAD_REQUEST)
+            status_code = (
+                status.HTTP_409_CONFLICT
+                if exc.code == 'PHONE_CONFLICT'
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return Response({'detail': exc.message, 'code': exc.code}, status=status_code)
         return Response(response_data)
 
 
@@ -821,7 +857,7 @@ class PhoneOtpBindVerifyView(APIView):
     def post(self, request):
         from user_management.services.phone_otp import PhoneOtpError, bind_phone_otp_to_user
 
-        serializer = PhoneOtpVerifySerializer(data=request.data)
+        serializer = PhoneOtpVerifySerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         try:
             response_data = bind_phone_otp_to_user(
@@ -858,7 +894,7 @@ class GoogleOAuthLoginView(APIView):
     def post(self, request):
         from user_management.services.google_oauth import GoogleOAuthError, login_with_google
 
-        serializer = GoogleOAuthLoginSerializer(data=request.data)
+        serializer = GoogleOAuthLoginSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         try:
             response_data = login_with_google(
@@ -866,6 +902,8 @@ class GoogleOAuthLoginView(APIView):
                 device_token=serializer.validated_data.get('device_token'),
                 platform=serializer.validated_data.get('platform'),
                 user_agent=request.META.get('HTTP_USER_AGENT', ''),
+                referral_code=serializer.validated_data.get('referral_code') or '',
+                client_type=serializer.validated_data.get('referral_client_type') or 'web',
             )
         except GoogleOAuthError as exc:
             status_code = (
@@ -893,7 +931,7 @@ class FacebookOAuthLoginView(APIView):
     def post(self, request):
         from user_management.services.facebook_oauth import FacebookOAuthError, login_with_facebook
 
-        serializer = FacebookOAuthLoginSerializer(data=request.data)
+        serializer = FacebookOAuthLoginSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         try:
             response_data = login_with_facebook(
@@ -901,6 +939,8 @@ class FacebookOAuthLoginView(APIView):
                 device_token=serializer.validated_data.get('device_token'),
                 platform=serializer.validated_data.get('platform'),
                 user_agent=request.META.get('HTTP_USER_AGENT', ''),
+                referral_code=serializer.validated_data.get('referral_code') or '',
+                client_type=serializer.validated_data.get('referral_client_type') or 'web',
             )
         except FacebookOAuthError as exc:
             status_code = (

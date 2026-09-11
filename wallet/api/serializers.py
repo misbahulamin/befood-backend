@@ -1,4 +1,4 @@
-from decimal import Decimal, InvalidOperation
+﻿from decimal import Decimal, InvalidOperation
 
 from rest_framework import serializers
 
@@ -25,12 +25,16 @@ class WalletSerializer(serializers.ModelSerializer):
     min_wallet_balance_to_order = serializers.SerializerMethodField()
     low_balance_reminder_threshold = serializers.SerializerMethodField()
     meal_stop_threshold = serializers.SerializerMethodField()
+    withdrawable_balance = serializers.SerializerMethodField()
 
     class Meta:
         model = Wallet
         fields = (
             'public_id',
             'balance',
+            'recharge_balance',
+            'commission_balance',
+            'withdrawable_balance',
             'currency',
             'status',
             'min_wallet_balance_to_order',
@@ -40,6 +44,10 @@ class WalletSerializer(serializers.ModelSerializer):
             'updated_at',
         )
         read_only_fields = fields
+
+    def get_withdrawable_balance(self, obj):
+        """max(0, recharge_balance - meal_stop_threshold); not full recharge."""
+        return self._threshold_str(obj.withdrawable_balance)
 
     def _threshold_str(self, amount: Decimal) -> str:
         return f'{amount.quantize(Decimal("0.01")):.2f}'
@@ -67,6 +75,8 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
             'direction',
             'amount',
             'balance_after',
+            'recharge_balance_after',
+            'commission_balance_after',
             'status',
             'method',
             'transaction_id',

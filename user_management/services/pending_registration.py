@@ -113,6 +113,18 @@ def upsert_pending_registration(validated_data) -> PendingCustomerRegistration:
 
     password = validated_data['password']
     password_hash = make_password(password)
+    referral_code = (validated_data.get('referral_code') or '').strip().upper()
+    referral_client_type = (validated_data.get('referral_client_type') or '').strip().lower()
+    referrer_snapshot_id = None
+    referral_intent_created_at = None
+    if referral_code:
+        from referrals.services.eligibility import get_profile_by_code
+
+        profile = get_profile_by_code(referral_code)
+        if profile is not None:
+            referrer_snapshot_id = profile.customer_id
+        referral_intent_created_at = timezone.now()
+
     defaults = {
         'password_hash': password_hash,
         'first_name': validated_data.get('first_name') or '',
@@ -121,6 +133,10 @@ def upsert_pending_registration(validated_data) -> PendingCustomerRegistration:
         'occupation': validated_data.get('occupation'),
         'is_bachelor': validated_data.get('is_bachelor'),
         'expires_at': pending_lifetime_expires_at(),
+        'referral_code': referral_code,
+        'referrer_snapshot_id': referrer_snapshot_id,
+        'referral_client_type': referral_client_type,
+        'referral_intent_created_at': referral_intent_created_at,
     }
     pending, _created = PendingCustomerRegistration.objects.update_or_create(
         email=email,
@@ -306,6 +322,16 @@ def finalize_pending_registration(pending: PendingCustomerRegistration) -> User:
     # Clear any leftover unverified user for this email.
     delete_legacy_unverified_customer(pending.email)
 
+    # If pending stored a phone already owned by another customer, omit it so we
+    # never attach a conflicting phone; caller can bind later.
+    from user_management.services.identity_resolve import find_customer_by_phone
+
+    profile_phone = pending.phone
+    if profile_phone:
+        owner = find_customer_by_phone(profile_phone)
+        if owner is not None:
+            profile_phone = None
+
     user = User(
         username=build_username(pending.email),
         email=pending.email,
@@ -317,7 +343,7 @@ def finalize_pending_registration(pending: PendingCustomerRegistration) -> User:
     user.save()
     profile = CustomerProfile.objects.create(
         user=user,
-        phone=pending.phone,
+        phone=profile_phone,
         occupation=pending.occupation,
         is_bachelor=pending.is_bachelor,
         is_email_verified=True,
@@ -325,9 +351,33 @@ def finalize_pending_registration(pending: PendingCustomerRegistration) -> User:
     )
     group, _ = Group.objects.get_or_create(name='CUSTOMER')
     user.groups.add(group)
+
+    referral_code = (pending.referral_code or '').strip()
+    referral_client_type = (pending.referral_client_type or '').strip() or 'web'
     pending.delete()
-    # Touch profile for callers that expect it.
-    _ = profile
+
+    from referrals.services.codes import ensure_referral_profile
+
+    ensure_referral_profile(profile)
+    if referral_code:
+        from referrals.services.attribution import attribute_on_signup
+        from referrals.services.eligibility import ReferralError
+
+        try:
+            attribute_on_signup(
+                referred_customer=profile,
+                referral_code=referral_code,
+                client_type=referral_client_type,
+            )
+        except ReferralError:
+            # Account creation succeeds; attribution fails closed when ineligible.
+            import logging
+
+            logging.getLogger(__name__).info(
+                'Referral attribution skipped/failed for customer_id=%s',
+                profile.pk,
+            )
+
     return user
 
 

@@ -55,15 +55,18 @@ def check_phone_availability(
             'phone_exists': phone_exists,
             'available': True,
             'verification_allowed': True,
+            # Show referral only for brand-new phone create-or-register.
+            'referral_input_allowed': not phone_exists,
         }
 
-    # bind
+    # bind — never a new-customer referral step
     if owner is None:
         return {
             'phone': phone,
             'phone_exists': False,
             'available': True,
             'verification_allowed': True,
+            'referral_input_allowed': False,
         }
     if user is not None and owner.user_id == user.id:
         return {
@@ -71,12 +74,14 @@ def check_phone_availability(
             'phone_exists': True,
             'available': True,
             'verification_allowed': True,
+            'referral_input_allowed': False,
         }
     return {
         'phone': phone,
         'phone_exists': True,
         'available': False,
         'verification_allowed': False,
+        'referral_input_allowed': False,
         'reason': REASON_PHONE_ALREADY_REGISTERED,
     }
 
