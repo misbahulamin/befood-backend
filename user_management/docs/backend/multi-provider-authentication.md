@@ -15,9 +15,9 @@ Customers can authenticate with:
 
 All auth success paths return the **same unified envelope**. Sessions are long-lived until logout (no idle expiry).
 
-**Phone gate (soft):** `phone_verification_required` is `true` when `CustomerProfile.is_phone_verified` is false. Tokens are still issued; clients run phone OTP / bind UX. Existing users are never force-logged-out.
+**Phone gate (soft):** `phone_verification_required` is `true` when `CustomerProfile.is_phone_verified` is false. Tokens are still issued; clients run phone OTP / bind UX. Existing users are never force-logged-out. Soft flag MUST NOT be used as a hard permission check when `identity_verified` is already true.
 
-**Identity gate (hard, authenticated customers only):** Customer feature access (orders, subscriptions, wallet endpoints using `IsVerifiedCustomer`, etc.) requires `identity_verified` — any one of email verified, phone verified, Google `SocialIdentity`, or Facebook `SocialIdentity`. Guest/anonymous service-area flows are **not** subject to this gate. Email verification remains for ownership, recovery, and messaging; it is **not** the sole access requirement.
+**Identity gate (hard, authenticated customers only):** Customer feature access (orders, subscriptions, wallet endpoints using `IsVerifiedCustomer` / `IsVerifiedWalletCustomer`, etc.) requires `identity_verified` — any one of email verified, phone verified, Google `SocialIdentity`, or Facebook `SocialIdentity`. Guest/anonymous service-area flows are **not** subject to this gate. Email verification remains for ownership, recovery, and messaging; it is **not** the sole access requirement.
 
 Google may set `is_email_verified` only when the ID token asserts `email_verified=true`. Facebook email presence alone does **not** set `is_email_verified` (provider identity ≠ email ownership).
 
@@ -56,7 +56,7 @@ Google may set `is_email_verified` only when the ID token asserts `email_verifie
 
 Header for authenticated calls: `Authorization: Token <token>`.
 
-`GET /me/` and customer profile reads also expose `phone_verification_required`.
+`GET /me/` and customer profile reads expose both `phone_verification_required` and `verification_status` (including `identity_verified`), matching the auth success envelope.
 
 ## Email-first check
 

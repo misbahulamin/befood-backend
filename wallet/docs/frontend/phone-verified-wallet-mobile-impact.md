@@ -6,6 +6,8 @@ Backend change: `phone-verified-wallet-access`.
 
 Phone OTP–registered customers must be able to recharge / withdraw without email verification. Email remains optional for phone accounts.
 
+See also: `user_management/docs/frontend/identity-verification-or-rule-mobile.md` (OR rule, Confirm Recharge toast misuse).
+
 ## Backend contract (already / after deploy)
 
 | Signal | Meaning |

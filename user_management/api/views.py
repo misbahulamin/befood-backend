@@ -631,7 +631,9 @@ class CurrentUserView(APIView):
         tags=['Customer Auth'],
         description=(
             'Get current authenticated customer information. Sessions do not idle-expire; '
-            'tokens remain valid until logout or a security revoke event.'
+            'tokens remain valid until logout or a security revoke event. '
+            'Includes verification_status (identity_verified = email OR phone OR social) '
+            'and soft phone_verification_required (prompt only; not a hard feature gate).'
         ),
     )
     def get(self, request):
