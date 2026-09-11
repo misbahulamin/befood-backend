@@ -70,7 +70,9 @@ class AdminWalletSummaryView(APIView):
         summary='Admin Wallet summary',
         description=(
             'Platform cash wallet summary. `total_customer_funding` / '
-            '`total_customer_withdrawals` are custody lifetime counters. '
+            '`total_customer_withdrawals` are custody lifetime counters '
+            '(funding never decreases on withdraw). '
+            '`net_customer_funding` is max(0, funding − withdrawals). '
             '`total_customer_payments` is recognized meal-delivery revenue '
             '(sum of charged deliveries), not a cash credit counter.'
         ),
@@ -89,9 +91,13 @@ class AdminWalletDashboardView(APIView):
         operation_id='adminWalletDashboard',
         summary='Admin Wallet dashboard cards and recent transactions',
         description=(
-            'Dashboard cards: today/month income are Admin Wallet cash credits '
-            '(includes `customer_funding`). `total_customer_payments` is meal '
-            'revenue from charged deliveries. Filter history by type '
+            'Dashboard cards: today/month income (`month_revenue`) are Admin Wallet '
+            'cash credits (includes `customer_funding`) — not meal margin. '
+            '`total_customer_payments` is meal revenue from charged deliveries. '
+            '`net_customer_funding` is remaining customer custody liability. '
+            '`total_profit` / `month_profit` are realized meal margin from published '
+            'slot `profit_snapshot` values; use `profit_by_package.lifetime` / '
+            '`.month` for package drill-down on those cards. Filter history by type '
             '`customer_funding`, `customer_withdraw`, or legacy `customer_payment`.'
         ),
         responses={200: AdminWalletDashboardSerializer},

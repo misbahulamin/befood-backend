@@ -35,6 +35,9 @@ class CustomerRegistrationSerializer(serializers.Serializer):
         default=None,
     )
     is_bachelor = serializers.BooleanField(required=False, allow_null=True, default=None)
+    referral_code = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=16, default=''
+    )
 
     def validate_phone(self, value):
         if value in (None, ''):
@@ -79,6 +82,24 @@ class CustomerRegistrationSerializer(serializers.Serializer):
     def validate_password(self, value):
         validate_password(value)
         return value
+
+    def validate(self, attrs):
+        code = (attrs.get('referral_code') or '').strip()
+        attrs['referral_code'] = code
+        request = self.context.get('request')
+        client = 'web'
+        if request is not None:
+            client = (request.headers.get('X-Client-Type') or 'web').strip().lower()
+        attrs['referral_client_type'] = client
+        if code and client != 'mobile':
+            raise serializers.ValidationError(
+                {
+                    'referral_code': [
+                        'Referral registration is only allowed from the mobile app.'
+                    ]
+                }
+            )
+        return attrs
 
     def create(self, validated_data):
         return validated_data
@@ -432,6 +453,9 @@ class PhoneOtpVerifySerializer(serializers.Serializer):
         allow_blank=True,
         allow_null=True,
     )
+    referral_code = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=16, default=''
+    )
 
     def validate_phone(self, value):
         try:
@@ -448,7 +472,23 @@ class PhoneOtpVerifySerializer(serializers.Serializer):
         return value
 
     def validate(self, attrs):
-        return _optional_device_fields(attrs)
+        attrs = _optional_device_fields(attrs)
+        code = (attrs.get('referral_code') or '').strip()
+        attrs['referral_code'] = code
+        request = self.context.get('request')
+        client = 'web'
+        if request is not None:
+            client = (request.headers.get('X-Client-Type') or 'web').strip().lower()
+        attrs['referral_client_type'] = client
+        if code and client != 'mobile':
+            raise serializers.ValidationError(
+                {
+                    'referral_code': [
+                        'Referral registration is only allowed from the mobile app.'
+                    ]
+                }
+            )
+        return attrs
 
 
 class GoogleOAuthLoginSerializer(serializers.Serializer):
@@ -462,9 +502,28 @@ class GoogleOAuthLoginSerializer(serializers.Serializer):
         allow_blank=True,
         allow_null=True,
     )
+    referral_code = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=16, default=''
+    )
 
     def validate(self, attrs):
-        return _optional_device_fields(attrs)
+        attrs = _optional_device_fields(attrs)
+        code = (attrs.get('referral_code') or '').strip()
+        attrs['referral_code'] = code
+        request = self.context.get('request')
+        client = 'web'
+        if request is not None:
+            client = (request.headers.get('X-Client-Type') or 'web').strip().lower()
+        attrs['referral_client_type'] = client
+        if code and client != 'mobile':
+            raise serializers.ValidationError(
+                {
+                    'referral_code': [
+                        'Referral registration is only allowed from the mobile app.'
+                    ]
+                }
+            )
+        return attrs
 
 
 class FacebookOAuthLoginSerializer(serializers.Serializer):
@@ -478,9 +537,28 @@ class FacebookOAuthLoginSerializer(serializers.Serializer):
         allow_blank=True,
         allow_null=True,
     )
+    referral_code = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=16, default=''
+    )
 
     def validate(self, attrs):
-        return _optional_device_fields(attrs)
+        attrs = _optional_device_fields(attrs)
+        code = (attrs.get('referral_code') or '').strip()
+        attrs['referral_code'] = code
+        request = self.context.get('request')
+        client = 'web'
+        if request is not None:
+            client = (request.headers.get('X-Client-Type') or 'web').strip().lower()
+        attrs['referral_client_type'] = client
+        if code and client != 'mobile':
+            raise serializers.ValidationError(
+                {
+                    'referral_code': [
+                        'Referral registration is only allowed from the mobile app.'
+                    ]
+                }
+            )
+        return attrs
 
 
 class LogoutSerializer(serializers.Serializer):

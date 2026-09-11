@@ -7,6 +7,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
 from user_management.models import CustomerProfile
+from orders.models import OrderWalletSettings
 from wallet.models import Wallet, WalletTransaction
 from wallet.services.funding import request_recharge, request_withdraw
 from wallet.services.ledger import (
@@ -17,6 +18,12 @@ from wallet.services.ledger import (
     debit_wallet,
     get_or_create_wallet,
 )
+
+
+def _set_meal_stop_threshold(amount: Decimal) -> None:
+    settings_obj = OrderWalletSettings.load()
+    settings_obj.meal_stop_threshold = amount
+    settings_obj.save(update_fields=['meal_stop_threshold', 'updated_at'])
 
 
 def _make_customer(username='u1', phone='1711111111', verified=True):
@@ -97,8 +104,11 @@ class WalletAPITests(APITestCase):
         self.recharge_url = reverse('wallet:wallet-recharge')
         self.withdraw_url = reverse('wallet:wallet-withdraw')
         self.txn_list_url = reverse('wallet:wallet-transaction-list')
+        # Keep legacy full-balance withdraw cases; meal-stop covered separately.
+        _set_meal_stop_threshold(Decimal('0.00'))
 
     def test_get_wallet_creates_zero_balance(self):
+        _set_meal_stop_threshold(Decimal('200.00'))
         self.assertFalse(Wallet.objects.filter(customer=self.profile).exists())
         response = self.client.get(self.wallet_url)
         self.assertEqual(response.status_code, 200)
@@ -108,8 +118,32 @@ class WalletAPITests(APITestCase):
         self.assertEqual(response.data['min_wallet_balance_to_order'], '500.00')
         self.assertEqual(response.data['low_balance_reminder_threshold'], '300.00')
         self.assertEqual(response.data['meal_stop_threshold'], '200.00')
+        self.assertEqual(response.data['withdrawable_balance'], '0.00')
         self.assertIn('public_id', response.data)
         self.assertNotIn('id', response.data)
+
+    def test_withdrawable_balance_respects_meal_stop(self):
+        _set_meal_stop_threshold(Decimal('100.00'))
+        credit_wallet(get_or_create_wallet(self.profile), Decimal('420.00'))
+        response = self.client.get(self.wallet_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['recharge_balance'], '420.00')
+        self.assertEqual(response.data['meal_stop_threshold'], '100.00')
+        self.assertEqual(response.data['withdrawable_balance'], '320.00')
+
+    def test_withdraw_over_meal_stop_maximum_rejected(self):
+        _set_meal_stop_threshold(Decimal('100.00'))
+        credit_wallet(get_or_create_wallet(self.profile), Decimal('420.00'))
+        response = self.client.post(
+            self.withdraw_url,
+            {'amount': '400.00'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('320.00', response.data['detail'])
+        wallet = get_or_create_wallet(self.profile)
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.recharge_balance, Decimal('420.00'))
 
     def test_unauthenticated_wallet_returns_401(self):
         self.client.credentials()

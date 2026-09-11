@@ -261,6 +261,93 @@ class CustomerProfileAPITests(APITestCase):
         self.profile.refresh_from_db()
         self.assertGreaterEqual(self.profile.profile_completion_percentage, 80)
 
+    def test_verified_phone_change_rejected(self):
+        self.profile.is_phone_verified = True
+        self.profile.phone_verified_at = timezone.now()
+        self.profile.save(update_fields=['is_phone_verified', 'phone_verified_at', 'updated_at'])
+
+        response = self.client.patch(
+            self.profile_url,
+            {'phone': '1711111111'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('phone', response.data)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.phone, '1712345678')
+        self.assertTrue(self.profile.is_phone_verified)
+
+    def test_verified_phone_clear_rejected(self):
+        self.profile.is_phone_verified = True
+        self.profile.phone_verified_at = timezone.now()
+        self.profile.save(update_fields=['is_phone_verified', 'phone_verified_at', 'updated_at'])
+
+        response = self.client.patch(
+            self.profile_url,
+            {'phone': None},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('phone', response.data)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.phone, '1712345678')
+
+    def test_verified_phone_same_value_noop(self):
+        self.profile.is_phone_verified = True
+        self.profile.phone_verified_at = timezone.now()
+        self.profile.save(update_fields=['is_phone_verified', 'phone_verified_at', 'updated_at'])
+
+        response = self.client.patch(
+            self.profile_url,
+            {'phone': '1712345678', 'first_name': 'LockedPhone'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.profile.refresh_from_db()
+        self.user.refresh_from_db()
+        self.assertEqual(self.profile.phone, '1712345678')
+        self.assertTrue(self.profile.is_phone_verified)
+        self.assertEqual(self.user.first_name, 'LockedPhone')
+
+    def test_set_email_rejects_when_already_set(self):
+        email_url = reverse('user_management:customer-profile-email')
+        response = self.client.post(
+            email_url,
+            {'email': 'replacement@example.com'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('email', response.data)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.email, 'customer1@example.com')
+
+    def test_set_email_allowed_when_blank(self):
+        blank_user = User.objects.create_user(
+            username='phoneonly1',
+            email='',
+            password='StrongPassword123',
+        )
+        CustomerProfile.objects.create(
+            user=blank_user,
+            phone='1612345678',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=False,
+            is_phone_verified=True,
+        )
+        token = Token.objects.create(user=blank_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        email_url = reverse('user_management:customer-profile-email')
+
+        response = self.client.post(
+            email_url,
+            {'email': 'fresh@example.com'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        blank_user.refresh_from_db()
+        self.assertEqual(blank_user.email, 'fresh@example.com')
+
 
 class ProgressiveOnboardingProfileTests(APITestCase):
     def setUp(self):

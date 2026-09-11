@@ -292,6 +292,21 @@ class CustomerExtendedProfileUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {'allergy_details': 'Allergy details are required when has_allergy is true.'}
             )
+
+        # Lock verified phone: reject change/clear; same-value is a no-op.
+        if (
+            'phone' in attrs
+            and self.instance is not None
+            and getattr(self.instance, 'is_phone_verified', False)
+        ):
+            new_phone = attrs.get('phone')
+            current_phone = self.instance.phone
+            if new_phone is None or new_phone != current_phone:
+                raise serializers.ValidationError(
+                    {'phone': ['Verified phone number cannot be changed.']}
+                )
+            attrs.pop('phone', None)
+
         return attrs
 
     def update(self, instance, validated_data):

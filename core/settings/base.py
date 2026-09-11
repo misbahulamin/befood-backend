@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'faqs',
     'blogs',
     'onahar',
+    'referrals',
     'app_config',
     'support',
 ]
@@ -309,6 +310,20 @@ ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED = config(
 
 # Onahar charity campaign: credit points on delivered meals.
 ONAHAR_ENABLED = config('ONAHAR_ENABLED', default=True, cast=bool)
+
+# Referral / affiliate commission program.
+REFERRAL_ENABLED = config('REFERRAL_ENABLED', default=True, cast=bool)
+# Seed / emergency fallback only. Runtime rate is ReferralProgramSettings
+# (admin GET/PATCH /api/v1/web/referrals/settings/).
+REFERRAL_COMMISSION_PERCENT = config(
+    'REFERRAL_COMMISSION_PERCENT',
+    default='5',
+    cast=str,
+)
+REFERRAL_LINK_BASE_URL = config(
+    'REFERRAL_LINK_BASE_URL',
+    default='https://befood.com.bd/invite',
+)
 
 # Reject meal package order create when delivery coords are outside active hubs.
 SERVICE_AREA_ORDER_GATE_ENABLED = config(

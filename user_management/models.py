@@ -610,6 +610,11 @@ class PendingCustomerRegistration(models.Model):
     )
     is_bachelor = models.BooleanField(null=True, blank=True)
 
+    referral_code = models.CharField(max_length=16, blank=True, default='')
+    referrer_snapshot_id = models.PositiveIntegerField(null=True, blank=True)
+    referral_client_type = models.CharField(max_length=16, blank=True, default='')
+    referral_intent_created_at = models.DateTimeField(null=True, blank=True)
+
     otp_code_hash = models.CharField(max_length=64, blank=True, default='')
     otp_created_at = models.DateTimeField(null=True, blank=True)
     otp_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)

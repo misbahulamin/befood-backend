@@ -12,6 +12,12 @@ from wallet.models import Wallet, WalletTransaction
 MAX_FUNDING_AMOUNT = Decimal('100000.00')
 MIN_FUNDING_AMOUNT = Decimal('0.01')
 
+BUCKET_RECHARGE = 'recharge'
+BUCKET_COMMISSION = 'commission'
+STRATEGY_RECHARGE_ONLY = 'recharge_only'
+STRATEGY_COMMISSION_ONLY = 'commission_only'
+STRATEGY_COMMISSION_FIRST = 'commission_first'
+
 
 class WalletError(Exception):
     """Base error for wallet domain operations."""
@@ -52,6 +58,10 @@ class PendingTransactionError(WalletError):
     pass
 
 
+class WalletBalanceInvariantError(WalletError):
+    pass
+
+
 def validate_amount(amount) -> Decimal:
     """Validate a monetary amount: positive, ≤2 decimal places, within max cap."""
     try:
@@ -71,12 +81,25 @@ def validate_amount(amount) -> Decimal:
     return value.quantize(Decimal('0.01'))
 
 
+def assert_wallet_invariant(wallet: Wallet) -> None:
+    total = (wallet.recharge_balance + wallet.commission_balance).quantize(Decimal('0.01'))
+    balance = wallet.balance.quantize(Decimal('0.01'))
+    if total != balance:
+        raise WalletBalanceInvariantError(
+            f'Wallet {wallet.pk} invariant broken: '
+            f'balance={balance} != recharge({wallet.recharge_balance})+'
+            f'commission({wallet.commission_balance}).'
+        )
+
+
 def get_or_create_wallet(customer_profile) -> Wallet:
     """Return the customer's wallet, creating an active zero-balance wallet if needed."""
     wallet, _ = Wallet.objects.get_or_create(
         customer=customer_profile,
         defaults={
             'balance': Decimal('0.00'),
+            'recharge_balance': Decimal('0.00'),
+            'commission_balance': Decimal('0.00'),
             'currency': 'BDT',
             'status': Wallet.Status.ACTIVE,
         },
@@ -93,6 +116,77 @@ def _manual_funding_enabled() -> bool:
     return bool(getattr(settings, 'WALLET_MANUAL_FUNDING_ENABLED', True))
 
 
+def _default_credit_bucket(txn_type: str) -> str:
+    if txn_type == WalletTransaction.Type.REFERRAL_COMMISSION:
+        return BUCKET_COMMISSION
+    return BUCKET_RECHARGE
+
+
+def _default_debit_strategy(txn_type: str) -> str:
+    if txn_type == WalletTransaction.Type.WITHDRAW:
+        return STRATEGY_RECHARGE_ONLY
+    if txn_type == WalletTransaction.Type.REFERRAL_COMMISSION_REVERSAL:
+        return STRATEGY_COMMISSION_ONLY
+    if txn_type == WalletTransaction.Type.PAYMENT:
+        return STRATEGY_COMMISSION_FIRST
+    return STRATEGY_COMMISSION_FIRST
+
+
+def _apply_credit(locked: Wallet, amount: Decimal, bucket: str) -> None:
+    if bucket == BUCKET_COMMISSION:
+        locked.commission_balance = (locked.commission_balance + amount).quantize(
+            Decimal('0.01')
+        )
+    else:
+        locked.recharge_balance = (locked.recharge_balance + amount).quantize(
+            Decimal('0.01')
+        )
+    locked.balance = (locked.recharge_balance + locked.commission_balance).quantize(
+        Decimal('0.01')
+    )
+    assert_wallet_invariant(locked)
+
+
+def _apply_debit(locked: Wallet, amount: Decimal, strategy: str) -> None:
+    if strategy == STRATEGY_RECHARGE_ONLY:
+        if amount > locked.recharge_balance:
+            raise InsufficientFundsError(
+                'Insufficient withdrawable (recharge) balance.'
+            )
+        locked.recharge_balance = (locked.recharge_balance - amount).quantize(
+            Decimal('0.01')
+        )
+    elif strategy == STRATEGY_COMMISSION_ONLY:
+        if amount > locked.commission_balance:
+            raise InsufficientFundsError('Insufficient commission balance.')
+        locked.commission_balance = (locked.commission_balance - amount).quantize(
+            Decimal('0.01')
+        )
+    else:
+        if amount > locked.balance:
+            raise InsufficientFundsError('Insufficient wallet balance.')
+        from_commission = min(locked.commission_balance, amount)
+        from_recharge = amount - from_commission
+        locked.commission_balance = (locked.commission_balance - from_commission).quantize(
+            Decimal('0.01')
+        )
+        locked.recharge_balance = (locked.recharge_balance - from_recharge).quantize(
+            Decimal('0.01')
+        )
+    locked.balance = (locked.recharge_balance + locked.commission_balance).quantize(
+        Decimal('0.01')
+    )
+    assert_wallet_invariant(locked)
+
+
+def _snapshot_after(locked: Wallet) -> dict:
+    return {
+        'balance_after': locked.balance,
+        'recharge_balance_after': locked.recharge_balance,
+        'commission_balance_after': locked.commission_balance,
+    }
+
+
 @transaction.atomic
 def credit_wallet(
     wallet: Wallet,
@@ -105,30 +199,41 @@ def credit_wallet(
     external_ref: str = '',
     idempotency_key: Optional[str] = None,
     metadata: Optional[dict] = None,
+    bucket: Optional[str] = None,
 ) -> WalletTransaction:
     """Credit wallet balance and append a ledger row (concurrency-safe)."""
     amount = validate_amount(amount)
     locked = Wallet.objects.select_for_update().get(pk=wallet.pk)
     _ensure_active(locked)
 
-    new_balance = locked.balance + amount
-    locked.balance = new_balance
-    locked.save(update_fields=['balance', 'updated_at'])
+    credit_bucket = bucket or _default_credit_bucket(type)
+    _apply_credit(locked, amount, credit_bucket)
+    locked.save(
+        update_fields=[
+            'balance',
+            'recharge_balance',
+            'commission_balance',
+            'updated_at',
+        ]
+    )
+    snap = _snapshot_after(locked)
 
     txn = WalletTransaction.objects.create(
         wallet=locked,
         type=type,
         direction=WalletTransaction.Direction.CREDIT,
         amount=amount,
-        balance_after=new_balance,
         status=status,
         method=method,
         note=note or '',
         external_ref=external_ref or '',
         idempotency_key=idempotency_key or None,
         metadata=metadata or {},
+        **snap,
     )
-    wallet.balance = new_balance
+    wallet.balance = locked.balance
+    wallet.recharge_balance = locked.recharge_balance
+    wallet.commission_balance = locked.commission_balance
 
     customer_id = locked.customer_id
 
@@ -140,7 +245,6 @@ def credit_wallet(
             customer = CustomerProfile.objects.filter(pk=customer_id).first()
             maybe_resume_after_wallet_credit(customer)
         except Exception:
-            # Never fail a successful credit because of resume side effects.
             import logging
 
             logging.getLogger(__name__).exception(
@@ -166,33 +270,41 @@ def debit_wallet(
     external_ref: str = '',
     idempotency_key: Optional[str] = None,
     metadata: Optional[dict] = None,
+    strategy: Optional[str] = None,
 ) -> WalletTransaction:
     """Debit wallet balance and append a ledger row (concurrency-safe)."""
     amount = validate_amount(amount)
     locked = Wallet.objects.select_for_update().get(pk=wallet.pk)
     _ensure_active(locked)
 
-    if amount > locked.balance:
-        raise InsufficientFundsError('Insufficient wallet balance.')
-
-    new_balance = locked.balance - amount
-    locked.balance = new_balance
-    locked.save(update_fields=['balance', 'updated_at'])
+    debit_strategy = strategy or _default_debit_strategy(type)
+    _apply_debit(locked, amount, debit_strategy)
+    locked.save(
+        update_fields=[
+            'balance',
+            'recharge_balance',
+            'commission_balance',
+            'updated_at',
+        ]
+    )
+    snap = _snapshot_after(locked)
 
     txn = WalletTransaction.objects.create(
         wallet=locked,
         type=type,
         direction=WalletTransaction.Direction.DEBIT,
         amount=amount,
-        balance_after=new_balance,
         status=status,
         method=method,
         note=note or '',
         external_ref=external_ref or '',
         idempotency_key=idempotency_key or None,
         metadata=metadata or {},
+        **snap,
     )
-    wallet.balance = new_balance
+    wallet.balance = locked.balance
+    wallet.recharge_balance = locked.recharge_balance
+    wallet.commission_balance = locked.commission_balance
     return txn
 
 
@@ -243,6 +355,7 @@ def recharge_wallet(
         status=WalletTransaction.Status.COMPLETED,
         note=note,
         idempotency_key=idempotency_key,
+        bucket=BUCKET_RECHARGE,
     )
     _sync_admin_wallet_recharge(txn)
     locked.refresh_from_db()
@@ -279,6 +392,7 @@ def withdraw_wallet(
         status=WalletTransaction.Status.COMPLETED,
         note=note,
         idempotency_key=idempotency_key,
+        strategy=STRATEGY_RECHARGE_ONLY,
     )
     _sync_admin_wallet_withdraw(txn)
     locked.refresh_from_db()
@@ -321,13 +435,30 @@ def complete_pending_credit(txn: WalletTransaction) -> WalletTransaction:
     wallet = Wallet.objects.select_for_update().get(pk=locked_txn.wallet_id)
     _ensure_active(wallet)
 
-    new_balance = wallet.balance + locked_txn.amount
-    wallet.balance = new_balance
-    wallet.save(update_fields=['balance', 'updated_at'])
+    _apply_credit(wallet, locked_txn.amount, BUCKET_RECHARGE)
+    wallet.save(
+        update_fields=[
+            'balance',
+            'recharge_balance',
+            'commission_balance',
+            'updated_at',
+        ]
+    )
 
     locked_txn.status = WalletTransaction.Status.COMPLETED
-    locked_txn.balance_after = new_balance
-    locked_txn.save(update_fields=['status', 'balance_after', 'updated_at'])
+    snap = _snapshot_after(wallet)
+    locked_txn.balance_after = snap['balance_after']
+    locked_txn.recharge_balance_after = snap['recharge_balance_after']
+    locked_txn.commission_balance_after = snap['commission_balance_after']
+    locked_txn.save(
+        update_fields=[
+            'status',
+            'balance_after',
+            'recharge_balance_after',
+            'commission_balance_after',
+            'updated_at',
+        ]
+    )
     return locked_txn
 
 

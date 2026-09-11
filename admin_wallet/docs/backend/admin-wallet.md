@@ -51,25 +51,45 @@ On successful **approved** customer recharge (`approve_recharge`):
 
 On successful **approved** customer withdraw (`approve_withdraw`):
 
-- Debit type `customer_withdraw`
+- Debit type `customer_withdraw` (never mutates historical `customer_funding` credit rows)
 - Idempotency: `customer-withdraw:{wallet_txn.public_id}`
-- Pending withdraw create reserves customer balance only; custody debit happens on approve
+- Pending withdraw create reserves customer **recharge** balance only (meal-stop capped at request); custody debit happens on approve
+- Platform `balance` decreases; `total_customer_withdrawals` increases; **`total_customer_funding` is unchanged** (lifetime inflow counter)
+- Summary/dashboard expose `net_customer_funding` = `max(0, total_customer_funding − total_customer_withdrawals)`
 - If Admin Wallet float is insufficient at approve → `PlatformFloatError` → admin API `409`; request stays pending; reservation untouched
+- Flag: same `ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED` gates funding credit **and** withdraw debit (default `True` — keep on in production)
 
 ### Meal delivery charge → no cash credit
 
 `charge_delivered_meal` debits the customer wallet only. It does **not** increase Admin Wallet balance (prepaid funds were already credited at recharge).
 
 - Dashboard field `total_customer_payments` = sum of charged `OrderDelivery.charged_amount` (meal revenue recognition)
+- Dashboard fields `total_profit` / `month_profit` = sum of published `MonthlyMenuSlot.profit_snapshot` for those charged deliveries (realized meal margin)
 - Legacy flag `ADMIN_WALLET_MEAL_PAYMENT_CREDIT_ENABLED` defaults to `False` (emergency rollback only; risks double-count)
 
 ```text
 Customer recharges ৳500  → Admin Wallet +৳500 (customer_funding)
 Meal charged ৳62         → Customer wallet −৳62; Admin cash unchanged
+  (slot profit_snapshot ৳3.10 counts toward total_profit / month_profit)
 Customer withdraws ৳100  → Admin Wallet −৳100 (customer_withdraw)
 ```
 
-Customer withdraw is **custody liability release**, not business expense. It increments `total_customer_withdrawals` and MUST NOT increment `total_expenses`. Dashboard `today_expense` / `month_expense` sum only `EXPENSE_TYPES`; use `today_customer_withdrawals` / `month_customer_withdrawals` for period custody outflows.
+Customer withdraw is **custody liability release**, not business expense. It increments `total_customer_withdrawals` and MUST NOT increment `total_expenses` or decrease `total_customer_funding`. Dashboard `today_expense` / `month_expense` sum only `EXPENSE_TYPES`; use `today_customer_withdrawals` / `month_customer_withdrawals` for period custody outflows and `net_customer_funding` for remaining liability.
+
+### Meal profit recognition
+
+| Rule | Detail |
+|------|--------|
+| Source | Published menu slot `profit_snapshot` via `resolve_published_slot_for_delivery` |
+| Scope | `OrderDelivery` with `payment_status=charged` and non-null `charged_amount` |
+| Period axis | `OrderDelivery.updated_at` (same as meal revenue recognition) |
+| Month window | Project `TIME_ZONE` calendar month (`_period_bounds_month`) |
+| Missing slot/snapshot | Contributes `0.00` profit; dashboard still `200` |
+| Not profit | `customer_funding`, manual deposits, or any Admin Wallet cash credit (`month_revenue`) |
+
+Package drill-down: `profit_by_package.lifetime` / `.month` rows with `package_public_id`, `package_name`, `charged_deliveries`, `revenue`, `profit`. Sum of row `profit` equals the matching top-level field.
+
+Implementation: `admin_wallet/services/profit.py` (`meal_profit_recognized`, `meal_profit_by_package`).
 
 ## Reconcile / cutover
 
@@ -123,4 +143,5 @@ OpenAPI tag: **Admin Wallet** (drf-spectacular).
 
 ## OpenSpec
 
+`openspec/changes/admin-wallet-meal-profit-dashboard/`
 `openspec/changes/admin-wallet-recharge-custody/`

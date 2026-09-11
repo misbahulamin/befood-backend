@@ -23,6 +23,21 @@ class Wallet(PublicIdMixin, TimeStampedModel):
         decimal_places=2,
         default=Decimal('0.00'),
         validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Total spendable = recharge_balance + commission_balance.',
+    )
+    recharge_balance = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Withdrawable balance from customer recharges/refunds.',
+    )
+    commission_balance = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Referral commission: meal-spendable, not withdrawable.',
     )
     currency = models.CharField(max_length=3, default='BDT')
     status = models.CharField(
@@ -37,6 +52,17 @@ class Wallet(PublicIdMixin, TimeStampedModel):
     def __str__(self):
         return f'Wallet {self.public_id} ({self.customer})'
 
+    @property
+    def withdrawable_balance(self) -> Decimal:
+        """Maximum withdrawable: recharge_balance minus meal_stop_threshold."""
+        from orders.services.order_wallet_settings import get_order_wallet_settings
+        from wallet.services.withdrawable import compute_maximum_withdrawable
+
+        return compute_maximum_withdrawable(
+            self.recharge_balance,
+            get_order_wallet_settings().meal_stop_threshold,
+        )
+
 
 class WalletTransaction(PublicIdMixin, TimeStampedModel):
     class Type(models.TextChoices):
@@ -45,6 +71,11 @@ class WalletTransaction(PublicIdMixin, TimeStampedModel):
         PAYMENT = 'payment', 'Payment'
         REFUND = 'refund', 'Refund'
         ADJUSTMENT = 'adjustment', 'Adjustment'
+        REFERRAL_COMMISSION = 'referral_commission', 'Referral commission'
+        REFERRAL_COMMISSION_REVERSAL = (
+            'referral_commission_reversal',
+            'Referral commission reversal',
+        )
 
     class Direction(models.TextChoices):
         CREDIT = 'credit', 'Credit'
@@ -69,7 +100,7 @@ class WalletTransaction(PublicIdMixin, TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='transactions',
     )
-    type = models.CharField(max_length=20, choices=Type.choices)
+    type = models.CharField(max_length=40, choices=Type.choices)
     direction = models.CharField(max_length=10, choices=Direction.choices)
     amount = models.DecimalField(
         max_digits=12,
@@ -77,6 +108,18 @@ class WalletTransaction(PublicIdMixin, TimeStampedModel):
         validators=[MinValueValidator(Decimal('0.01'))],
     )
     balance_after = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    recharge_balance_after = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    commission_balance_after = models.DecimalField(
         max_digits=12,
         decimal_places=2,
         null=True,

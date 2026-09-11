@@ -4,13 +4,30 @@
 
 The `wallet` app owns customer balances and an append-only ledger. Customer APIs are mounted at `/wallet/`. **Manual funding is admin-verified:** recharge/withdraw create `pending` requests; balance and Admin Wallet custody move only on admin approve (withdraw reserves spendable balance at submit).
 
+### Dual balance buckets
+
+| Field | Meaning |
+|-------|---------|
+| `balance` | Total spendable = `recharge_balance` + `commission_balance` |
+| `recharge_balance` | Customer recharge/refund funds (full recharge bucket) |
+| `withdrawable_balance` | **API computed:** `max(0, recharge_balance - meal_stop_threshold)` — maximum allowed withdraw |
+| `commission_balance` | Referral commission; meal-spendable, **not** withdrawable |
+
+Meal payment debits burn `commission_balance` first, then `recharge_balance`. Completed ledger rows store `balance_after`, `recharge_balance_after`, and `commission_balance_after` (must sum consistently).
+
+Withdraw never spends commission. Shared helper: `wallet.services.withdrawable.compute_maximum_withdrawable`.
+
+Ops: `python manage.py verify_wallet_balance_consistency` and `python manage.py audit_wallet_accounting`
+
+Provider recharge external refs are unique among live (pending/completed) rows. Approving a recharge may set `meal_service_restored` when low-balance meal-stop clears.
+
 | Endpoint | Auth | Notes |
 |----------|------|-------|
-| `GET /wallet/` | `IsVerifiedCustomer` | Lazy `get_or_create`; `min_wallet_balance_to_order` |
+| `GET /wallet/` | `IsVerifiedCustomer` | Lazy `get_or_create`; thresholds + `withdrawable_balance` |
 | `GET /wallet/transactions/` | same | Newest first, paginated |
 | `GET /wallet/transactions/{public_id}/` | same | Ownership-scoped |
 | `POST /wallet/recharge/` | same | Pending recharge (`bkash`/`nagad`/`bank` + `transaction_id`) |
-| `POST /wallet/withdraw/` | same | Pending withdraw; reserves balance; `method=manual` |
+| `POST /wallet/withdraw/` | same | Pending withdraw; reserves recharge only; meal-stop capped |
 
 Admin review (not gated by `WALLET_MANUAL_FUNDING_ENABLED`):
 
@@ -48,6 +65,8 @@ Product labels: approved ≈ `completed`, rejected ≈ `failed`.
 
 - `OneToOne` → `CustomerProfile`
 - `balance` `Decimal(12,2)` ≥ 0 — **spendable** (pending withdraw reservations already deducted)
+- `recharge_balance` / `commission_balance` — dual buckets; `balance == recharge + commission`
+- `withdrawable_balance` (computed property / API) — `max(0, recharge_balance - meal_stop_threshold)`
 - `currency` default `BDT`
 - `status` `active` \| `frozen`
 
@@ -80,9 +99,13 @@ Partial unique: provider-method recharge (`bkash|nagad|bank`) + non-empty `exter
 
 ### Withdraw
 
-1. Customer posts `amount` → pending debit, **immediate** spendable debit (`method=manual`), admin email on commit.
-2. Admin approve → `completed` + Admin Wallet custody debit (`customer_withdraw`, **not** expense). Float shortfall → `409`, leave pending, review fields untouched.
-3. Admin reject → restore reserved balance, `failed`.
+1. Customer posts `amount` → must be `<= max(0, recharge_balance - meal_stop_threshold)`. Pending debit **immediately** reserves `recharge_balance` only (`method=manual`); commission untouched. Admin email on commit. **No** Admin Wallet debit yet.
+2. Admin approve → `completed` + Admin Wallet custody debit type `customer_withdraw` (platform `balance` ↓, `total_customer_withdrawals` ↑). **Does not** decrease lifetime `total_customer_funding` or rewrite `customer_funding` credit rows. Float shortfall → `409`, leave pending, review fields untouched (full atomic rollback).
+3. Admin reject → restore reserved recharge, `failed`.
+
+**Production note:** Keep `ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED=true` so approve posts `customer_withdraw`. Missing historical custody rows → ops `reconcile_admin_wallet_customer_funding` (idempotent); do not recalculate live balances.
+
+Example: recharge `420`, meal_stop `100` → max withdraw `320`. After a `300` request, recharge left `120`.
 
 ### Pre-deploy audit
 
@@ -108,7 +131,7 @@ Must exit 0 (no live pending/completed provider-ref duplicates) before applying 
 
 | Case | Status |
 |------|--------|
-| Invalid amount/method/blank trx id / insufficient balance | `400` |
+| Invalid amount/method/blank trx id / insufficient or over meal-stop max | `400` |
 | Unauthenticated | `401` |
 | Forbidden / kill switch (customer create) | `403` |
 | Not found | `404` |
@@ -120,9 +143,10 @@ Must exit 0 (no live pending/completed provider-ref duplicates) before applying 
 
 | Function | Role |
 |----------|------|
-| `request_recharge` / `request_withdraw` | Customer pending creates |
+| `request_recharge` / `request_withdraw` | Customer pending creates (withdraw meal-stop capped) |
 | `approve_recharge` / `reject_recharge` | Admin recharge resolution |
-| `approve_withdraw` / `reject_withdraw` | Admin withdraw resolution |
+| `approve_withdraw` / `reject_withdraw` | Admin withdraw resolution + `customer_withdraw` custody |
+| `compute_maximum_withdrawable` | Shared `recharge − meal_stop` formula |
 | `credit_wallet` / `debit_wallet` | Core ledger helpers (meal payment, etc.) |
 | `complete_pending_credit` / `fail_pending` | Low-level gateway seams (not funding approve API) |
 

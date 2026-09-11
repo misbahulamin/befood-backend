@@ -11,11 +11,13 @@ Auth header after login: `Authorization: Token <token>`
 ```text
 Pick method
   ├─ Email → POST /customer/email-check/
-  │     exists    → password → POST /login/
-  │     pending   → resume verify OTP/link
-  │     available → password → POST /customer/register/ → verify
+  │     exists    → password → POST /login/          (no referral)
+  │     pending   → resume verify OTP/link           (no referral)
+  │     available → referral? → register → verify
   ├─ Google / Facebook → POST /oauth/google|facebook/
-  └─ Phone → POST /phone/otp/send/ → POST /phone/otp/verify/
+  └─ Phone → POST /phone/check-availability/ (context=login)
+        phone_exists → OTP login                     (no referral)
+        else         → referral? → OTP create/login
 ```
 
 After any success envelope (or after email verify), if `phone_verification_required === true`:
@@ -25,9 +27,13 @@ POST /phone/otp/bind/send/   (Authorization: Token …)
 POST /phone/otp/bind/verify/
 ```
 
-Do **not** use anonymous `/phone/otp/verify/` for a logged-in social/email user needing a phone — that can create a second account. Use **bind** endpoints.
+Do **not** use anonymous `/phone/otp/verify/` for a logged-in social/email user needing a phone. Use **bind** endpoints. Backend will bind if an authenticated session hits anonymous verify, but clients must still call bind explicitly.
+
+**Referral:** show input only when the pre-check returns `referral_input_allowed: true` (new email `available`, or new phone `phone_exists=false` on login context). Never show referral on bind, existing login, or after the account already exists.
 
 Existing users without phone: login still succeeds; show a non-blocking phone prompt from the flag.
+
+See also: [customer-identity-mobile-checklist.md](./customer-identity-mobile-checklist.md).
 
 ## Endpoints
 
@@ -36,8 +42,14 @@ Existing users without phone: login still succeeds; show a non-blocking phone pr
 `POST /customer/email-check/` `{ "email": "user@example.com" }`
 
 ```json
-{ "email": "user@example.com", "status": "exists" | "pending" | "available" }
+{
+  "email": "user@example.com",
+  "status": "exists" | "pending" | "available",
+  "referral_input_allowed": true
+}
 ```
+
+`referral_input_allowed` is `true` only for `available`.
 
 ### Email (existing)
 
@@ -45,14 +57,22 @@ Existing users without phone: login still succeeds; show a non-blocking phone pr
 2. Verify via OTP or link → includes `phone_verification_required` + existing `message`
 3. `POST /login/` `{ email, password, device_token?, platform? }`
 
+### Phone check (before OTP)
+
+`POST /phone/check-availability/` `{ "phone": "017…", "context": "login" | "bind" }`
+
+- Login: `phone_exists`, `referral_input_allowed` (`true` only when phone is new).
+- Bind: requires auth; `referral_input_allowed` always `false`.
+
 ### Phone OTP (anonymous create-or-login)
 
 1. `POST /phone/otp/send/` `{ "phone": "01712345678" }`  
    Also accept `+8801712345678` / `8801712345678`.
-2. `POST /phone/otp/verify/` `{ "phone", "otp", "device_token?", "platform?" }`  
-   → unified envelope; creates phone-only account if new.
+2. `POST /phone/otp/verify/` `{ "phone", "otp", "device_token?", "platform?", "referral_code?" }`  
+   → unified envelope; creates phone-only account **only if phone unknown**.  
+   Referral applies only on create + mobile client type. Existing phone → login; referral ignored.
 
-Cooldown limits: `429` with `code` `OTP_COOLDOWN` or `OTP_RATE_LIMITED`.
+Rate limits: `429` with `code` `OTP_COOLDOWN` or `OTP_RATE_LIMITED`.
 
 ### Authenticated phone bind
 

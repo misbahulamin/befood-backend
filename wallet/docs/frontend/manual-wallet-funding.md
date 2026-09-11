@@ -41,13 +41,39 @@ API field `transaction_id` maps to ledger `external_ref`.
 
 Reject does **not** clear `external_ref` (kept for audit). Only live `pending`/`completed` rows occupy the unique slot.
 
+### `GET /wallet/`
+
+Returns dual-bucket balances and thresholds. Important fields:
+
+| Field | Meaning |
+|-------|---------|
+| `balance` | Total spendable |
+| `recharge_balance` | Full recharge bucket |
+| `commission_balance` | Non-withdrawable commission |
+| `meal_stop_threshold` | From order wallet settings |
+| `withdrawable_balance` | **Maximum withdrawable** = `max(0, recharge_balance − meal_stop_threshold)` |
+
+Do **not** treat `withdrawable_balance` as equal to `recharge_balance` when threshold > 0.
+
 ### `POST /wallet/withdraw/`
 
-Creates a **pending** withdraw and **immediately reduces** spendable `wallet.balance` (reservation). Ledger `method` is always `manual`.
+Creates a **pending** withdraw and **immediately reduces** `recharge_balance` / `balance` (reservation). Ledger `method` is always `manual`. Commission is never withdrawn.
 
 ```json
 { "amount": "200.00" }
 ```
+
+**Validation (backend authoritative):**
+
+- `amount <= withdrawable_balance` from current wallet GET
+- Example: recharge `420`, meal_stop `100` → max `320`. Amount `400` → `400` with detail mentioning maximum and meal-stop reserve.
+
+**Mobile / customer web UX:**
+
+1. Show Available / recharge balance and **Maximum withdrawable** (`withdrawable_balance`).
+2. Cap the input max to `withdrawable_balance`.
+3. On over-limit: e.g. “You can withdraw maximum ৳320. Please keep ৳100 balance for meal service.”
+4. Always re-validate from latest `GET /wallet/` before submit.
 
 ### History
 
@@ -63,9 +89,22 @@ Base: `/api/v1/web/wallet-funding/`
 | Method | Path | Notes |
 |--------|------|-------|
 | GET | `/requests/?type=&status=&q=&page=` | Filter `type=recharge\|withdraw`, `status=pending\|completed\|failed`, optional people search `q` (name/email/username/phone/customer UUID) |
-| GET | `/requests/{public_id}/` | Full audit including reviewer |
-| POST | `/requests/{public_id}/approve/` | Empty body |
+| GET | `/requests/{public_id}/` | Full audit including reviewer; for withdraw show balance before / amount / remaining + meal-stop |
+| POST | `/requests/{public_id}/approve/` | Empty body; withdraw approve debits Admin Wallet `customer_withdraw` |
 | POST | `/requests/{public_id}/reject/` | `{ "reason": "optional" }` |
+
+### Admin withdraw approve UI (funding panel)
+
+When reviewing a **pending withdraw**, show:
+
+| Label | Source |
+|-------|--------|
+| Customer balance before | Wallet total / recharge at request time (or current remaining + amount) |
+| Withdraw amount | Request `amount` |
+| Remaining after approve | Projected recharge/total after reservation (already applied at submit) |
+| Meal stop threshold | `GET .../order-wallet-settings/` or wallet `meal_stop_threshold` |
+
+New requests are already capped at meal-stop-aware maximum. Do **not** expect Admin Wallet `total_customer_funding` to decrease on approve — platform cash falls via `customer_withdraw`; use `net_customer_funding` for remaining custody liability.
 
 Kill switch does **not** block these admin routes.
 
@@ -75,7 +114,7 @@ Status mapping for UI: `completed` ≈ approved, `failed` ≈ rejected.
 
 | HTTP | When |
 |------|------|
-| 400 | Invalid amount/decimals/method/blank trx id; insufficient balance; frozen (new submits) |
+| 400 | Invalid amount/decimals/method/blank trx id; exceeds meal-stop-aware maximum; frozen (new submits) |
 | 401 | Missing/invalid auth |
 | 403 | Not verified customer/admin; customer create while `WALLET_MANUAL_FUNDING_ENABLED=false` |
 | 404 | Unknown / foreign public_id |

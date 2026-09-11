@@ -95,10 +95,12 @@ def login_with_facebook(
     device_token: str | None = None,
     platform: str | None = None,
     user_agent: str = '',
+    referral_code: str | None = None,
+    client_type: str | None = None,
 ) -> dict:
     profile = verify_facebook_access_token(access_token)
     try:
-        user, _identity, _created = resolve_or_create_social_user(
+        user, _identity, created = resolve_or_create_social_user(
             provider=SocialIdentity.Provider.FACEBOOK,
             provider_user_id=str(profile['id']),
             email=profile.get('email') or '',
@@ -108,6 +110,19 @@ def login_with_facebook(
         )
     except SocialLinkConflict as exc:
         raise FacebookOAuthError(exc.message, code='SOCIAL_CONFLICT') from exc
+
+    if created and (referral_code or '').strip():
+        from referrals.services.attribution import attribute_on_signup
+        from referrals.services.eligibility import ReferralError
+
+        try:
+            attribute_on_signup(
+                referred_customer=user.customer_profile,
+                referral_code=referral_code,
+                client_type=client_type or 'web',
+            )
+        except ReferralError as exc:
+            raise FacebookOAuthError(exc.message, code=exc.code) from exc
 
     return build_customer_auth_response(
         user,

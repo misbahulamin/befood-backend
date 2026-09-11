@@ -22,6 +22,22 @@ from wallet.services.funding import (
 from wallet.services.ledger import credit_wallet, get_or_create_wallet
 
 
+def _set_recharge_balance(wallet, amount: Decimal) -> None:
+    """Test helper: keep dual-bucket invariant when seeding spendable funds."""
+    amount = amount.quantize(Decimal('0.01'))
+    wallet.balance = amount
+    wallet.recharge_balance = amount
+    wallet.commission_balance = Decimal('0.00')
+    wallet.save(
+        update_fields=[
+            'balance',
+            'recharge_balance',
+            'commission_balance',
+            'updated_at',
+        ]
+    )
+
+
 def _make_customer(username='resume_cust', phone='1712345001'):
     user = User.objects.create_user(
         username=username,
@@ -81,8 +97,7 @@ class ApproveRechargeMealResumeTests(TestCase):
         return txn
 
     def test_blocked_sufficient_recharge_clears_block(self):
-        self.wallet.balance = Decimal('100.00')
-        self.wallet.save(update_fields=['balance', 'updated_at'])
+        _set_recharge_balance(self.wallet, Decimal('100.00'))
         apply_meal_service_block(self.profile)
         self.profile.refresh_from_db()
         self.assertTrue(self.profile.meal_service_blocked_low_balance)
@@ -104,8 +119,7 @@ class ApproveRechargeMealResumeTests(TestCase):
         self.assertTrue(notify_approved.called)
 
     def test_blocked_insufficient_recharge_keeps_block(self):
-        self.wallet.balance = Decimal('100.00')
-        self.wallet.save(update_fields=['balance', 'updated_at'])
+        _set_recharge_balance(self.wallet, Decimal('100.00'))
         apply_meal_service_block(self.profile)
 
         txn = self._pending_recharge(Decimal('20.00'), 'RESUME-LOW-1')
@@ -118,8 +132,7 @@ class ApproveRechargeMealResumeTests(TestCase):
         self.assertFalse(result.meal_service_restored)
 
     def test_unblocked_recharge_leaves_flags(self):
-        self.wallet.balance = Decimal('200.00')
-        self.wallet.save(update_fields=['balance', 'updated_at'])
+        _set_recharge_balance(self.wallet, Decimal('200.00'))
         self.assertFalse(self.profile.meal_service_blocked_low_balance)
 
         txn = self._pending_recharge(Decimal('50.00'), 'RESUME-OPEN-1')
@@ -130,8 +143,7 @@ class ApproveRechargeMealResumeTests(TestCase):
         self.assertFalse(result.meal_service_restored)
 
     def test_latest_threshold_used_at_approve(self):
-        self.wallet.balance = Decimal('100.00')
-        self.wallet.save(update_fields=['balance', 'updated_at'])
+        _set_recharge_balance(self.wallet, Decimal('100.00'))
         apply_meal_service_block(self.profile)
 
         settings_obj = OrderWalletSettings.load()
@@ -148,8 +160,7 @@ class ApproveRechargeMealResumeTests(TestCase):
         self.assertFalse(result.meal_service_restored)
 
     def test_pending_and_reject_do_not_resume(self):
-        self.wallet.balance = Decimal('100.00')
-        self.wallet.save(update_fields=['balance', 'updated_at'])
+        _set_recharge_balance(self.wallet, Decimal('100.00'))
         apply_meal_service_block(self.profile)
 
         txn = self._pending_recharge(Decimal('200.00'), 'RESUME-PEND-1')
@@ -191,8 +202,7 @@ class ApproveRechargeMealResumeAPITests(APITestCase):
         settings_obj.save()
 
     def test_approve_response_includes_meal_service_restored(self):
-        self.wallet.balance = Decimal('100.00')
-        self.wallet.save(update_fields=['balance', 'updated_at'])
+        _set_recharge_balance(self.wallet, Decimal('100.00'))
         apply_meal_service_block(self.profile)
         _, txn, _ = request_recharge(
             self.profile,

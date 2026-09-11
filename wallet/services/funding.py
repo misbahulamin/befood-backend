@@ -1,4 +1,4 @@
-"""Manual-verification customer funding: request, approve, reject."""
+﻿"""Manual-verification customer funding: request, approve, reject."""
 
 from __future__ import annotations
 
@@ -9,8 +9,11 @@ from typing import Optional
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from orders.services.order_wallet_settings import get_order_wallet_settings
 from wallet.models import Wallet, WalletTransaction
 from wallet.services.ledger import (
+    BUCKET_RECHARGE,
+    STRATEGY_RECHARGE_ONLY,
     IdempotencyConflictError,
     InsufficientFundsError,
     InvalidAmountError,
@@ -19,12 +22,16 @@ from wallet.services.ledger import (
     PlatformFloatError,
     WalletError,
     WalletFrozenError,
+    _apply_credit,
+    _apply_debit,
     _manual_funding_enabled,
+    _snapshot_after,
     _sync_admin_wallet_recharge,
     _sync_admin_wallet_withdraw,
     get_or_create_wallet,
     validate_amount,
 )
+from wallet.services.withdrawable import compute_maximum_withdrawable
 
 logger = logging.getLogger(__name__)
 
@@ -303,13 +310,26 @@ def request_withdraw(
 
     _ensure_active_for_customer(locked)
 
-    if amount > locked.balance:
-        raise InsufficientFundsError('Insufficient wallet balance.')
+    meal_stop = get_order_wallet_settings().meal_stop_threshold
+    max_withdrawable = compute_maximum_withdrawable(locked.recharge_balance, meal_stop)
+    if amount > max_withdrawable:
+        raise InsufficientFundsError(
+            f'Maximum withdrawable is {max_withdrawable:.2f}. '
+            f'Please keep at least {meal_stop:.2f} recharge balance for meal service.'
+        )
 
     sid = transaction.savepoint()
-    new_balance = locked.balance - amount
-    locked.balance = new_balance
-    locked.save(update_fields=['balance', 'updated_at'])
+    # Recharge-only: commission_balance is never withdrawn.
+    _apply_debit(locked, amount, STRATEGY_RECHARGE_ONLY)
+    locked.save(
+        update_fields=[
+            'balance',
+            'recharge_balance',
+            'commission_balance',
+            'updated_at',
+        ]
+    )
+    snap = _snapshot_after(locked)
 
     try:
         txn = WalletTransaction.objects.create(
@@ -317,7 +337,9 @@ def request_withdraw(
             type=WalletTransaction.Type.WITHDRAW,
             direction=WalletTransaction.Direction.DEBIT,
             amount=amount,
-            balance_after=new_balance,
+            balance_after=snap['balance_after'],
+            recharge_balance_after=snap['recharge_balance_after'],
+            commission_balance_after=snap['commission_balance_after'],
             status=WalletTransaction.Status.PENDING,
             method=method,
             external_ref=external_ref,
@@ -352,7 +374,9 @@ def request_withdraw(
 
     transaction.savepoint_commit(sid)
     _schedule_funding_notification(txn.pk, 'withdraw')
-    wallet.balance = new_balance
+    wallet.balance = locked.balance
+    wallet.recharge_balance = locked.recharge_balance
+    wallet.commission_balance = locked.commission_balance
     return locked, txn, True
 
 
@@ -376,13 +400,22 @@ def approve_recharge(txn: WalletTransaction, *, reviewed_by) -> WalletTransactio
     # Admin resolution allowed even if wallet is frozen after submit.
 
     previous_balance = wallet.balance
-    new_balance = previous_balance + locked_txn.amount
-    wallet.balance = new_balance
-    wallet.save(update_fields=['balance', 'updated_at'])
+    _apply_credit(wallet, locked_txn.amount, BUCKET_RECHARGE)
+    wallet.save(
+        update_fields=[
+            'balance',
+            'recharge_balance',
+            'commission_balance',
+            'updated_at',
+        ]
+    )
+    snap = _snapshot_after(wallet)
 
     now = timezone.now()
     locked_txn.status = WalletTransaction.Status.COMPLETED
-    locked_txn.balance_after = new_balance
+    locked_txn.balance_after = snap['balance_after']
+    locked_txn.recharge_balance_after = snap['recharge_balance_after']
+    locked_txn.commission_balance_after = snap['commission_balance_after']
     locked_txn.reviewed_by = reviewed_by
     locked_txn.reviewed_at = now
     locked_txn.rejection_reason = ''
@@ -390,6 +423,8 @@ def approve_recharge(txn: WalletTransaction, *, reviewed_by) -> WalletTransactio
         update_fields=[
             'status',
             'balance_after',
+            'recharge_balance_after',
+            'commission_balance_after',
             'reviewed_by',
             'reviewed_at',
             'rejection_reason',
@@ -453,7 +488,7 @@ def approve_withdraw(txn: WalletTransaction, *, reviewed_by) -> WalletTransactio
 
     Wallet.objects.select_for_update().get(pk=locked_txn.wallet_id)
 
-    # Custody sync first while still pending conceptually — if it fails, rollback.
+    # Custody sync first while still pending conceptually ÔÇö if it fails, rollback.
     # Mark completed only after custody succeeds so float shortfall is non-mutating.
     now = timezone.now()
     locked_txn.status = WalletTransaction.Status.COMPLETED
@@ -493,13 +528,22 @@ def reject_withdraw(
 
     wallet = Wallet.objects.select_for_update().get(pk=locked_txn.wallet_id)
     # Release reservation even if wallet was frozen after submit.
-    new_balance = wallet.balance + locked_txn.amount
-    wallet.balance = new_balance
-    wallet.save(update_fields=['balance', 'updated_at'])
+    _apply_credit(wallet, locked_txn.amount, BUCKET_RECHARGE)
+    wallet.save(
+        update_fields=[
+            'balance',
+            'recharge_balance',
+            'commission_balance',
+            'updated_at',
+        ]
+    )
+    snap = _snapshot_after(wallet)
 
     now = timezone.now()
     locked_txn.status = WalletTransaction.Status.FAILED
-    locked_txn.balance_after = new_balance
+    locked_txn.balance_after = snap['balance_after']
+    locked_txn.recharge_balance_after = snap['recharge_balance_after']
+    locked_txn.commission_balance_after = snap['commission_balance_after']
     locked_txn.reviewed_by = reviewed_by
     locked_txn.reviewed_at = now
     locked_txn.rejection_reason = (reason or '').strip()[:500]
@@ -507,6 +551,8 @@ def reject_withdraw(
         update_fields=[
             'status',
             'balance_after',
+            'recharge_balance_after',
+            'commission_balance_after',
             'reviewed_by',
             'reviewed_at',
             'rejection_reason',
