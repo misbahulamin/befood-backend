@@ -23,7 +23,7 @@ Provider recharge external refs are unique among live (pending/completed) rows. 
 
 | Endpoint | Auth | Notes |
 |----------|------|-------|
-| `GET /wallet/` | `IsVerifiedCustomer` | Lazy `get_or_create`; thresholds + `withdrawable_balance` |
+| `GET /wallet/` | `IsVerifiedWalletCustomer` | Lazy `get_or_create`; thresholds + `withdrawable_balance` |
 | `GET /wallet/transactions/` | same | Newest first, paginated |
 | `GET /wallet/transactions/{public_id}/` | same | Ownership-scoped |
 | `POST /wallet/recharge/` | same | Pending recharge (`bkash`/`nagad`/`bank` + `transaction_id`) |
@@ -53,9 +53,11 @@ Product labels: approved ≈ `completed`, rejected ≈ `failed`.
 | Actor | Access |
 |-------|--------|
 | Anonymous | `401` |
-| Unverified / non-customer | `403` via `IsVerifiedCustomer` |
-| Verified customer | Own wallet only; funding create when kill switch on |
+| Identity-unverified / non-customer | `403` via `IsVerifiedWalletCustomer` (detail: wallet identity message; phone **or** email **or** social satisfies identity) |
+| Identity-verified customer (incl. phone-only) | Own wallet only; funding create when kill switch on |
 | Verified admin / superuser | Funding review APIs (`IsVerifiedAdmin`) |
+
+Phone OTP registration sets `is_phone_verified=True`; email verification is **not** required for wallet access.
 
 ---
 

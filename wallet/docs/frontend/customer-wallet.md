@@ -2,11 +2,11 @@
 
 ## Summary
 
-Authenticated verified customers can view their wallet balance, browse ledger history, recharge (manual credit), and withdraw (manual debit). Live bKash/Nagad gateways are **not** integrated yet; the server always sets `method=manual` for funding APIs.
+Authenticated **identity-verified** customers can view their wallet balance, browse ledger history, and submit manual recharge / withdraw requests. Identity means **phone verified OR email verified OR linked Google/Facebook** — phone-registered users do **not** need email verification to use wallet APIs. Live bKash/Nagad gateways are **not** integrated yet; customer funding is admin-reviewed (pending until approve).
 
 **Base path:** `/wallet/`  
 **Auth:** `Authorization: Token <token>`  
-**Permission:** verified customer (`CUSTOMER` group + email verified)  
+**Permission:** `IsVerifiedWalletCustomer` (`CUSTOMER` group + unified identity verification)  
 **Identity:** use `public_id` (UUID) only — never integer database IDs
 
 ---
@@ -18,8 +18,8 @@ Authenticated verified customers can view their wallet balance, browse ledger hi
 | `GET` | `/wallet/` | Show balance / status; creates wallet on first call |
 | `GET` | `/wallet/transactions/` | Paginated history (newest first) |
 | `GET` | `/wallet/transactions/{public_id}/` | Single transaction detail |
-| `POST` | `/wallet/recharge/` | Add money (manual, immediate) |
-| `POST` | `/wallet/withdraw/` | Reduce balance (manual, immediate) |
+| `POST` | `/wallet/recharge/` | Submit pending recharge (amount + method + transaction id) |
+| `POST` | `/wallet/withdraw/` | Submit pending withdraw (reserves recharge balance) |
 
 ---
 
@@ -27,8 +27,8 @@ Authenticated verified customers can view their wallet balance, browse ledger hi
 
 1. After login, call `GET /wallet/` to render balance.
 2. Optionally load `GET /wallet/transactions/?page=1` for history.
-3. Recharge screen → `POST /wallet/recharge/` with amount.
-4. Withdraw screen → `POST /wallet/withdraw/` with amount (ensure UI checks balance first; server still enforces).
+3. Recharge screen → `POST /wallet/recharge/` with amount, `payment_method`, and `transaction_id`.
+4. Withdraw screen → `POST /wallet/withdraw/` with amount (ensure UI checks `withdrawable_balance` first; server still enforces).
 5. On flaky networks, send `Idempotency-Key` (UUID) so retries do not double-apply.
 
 ---
@@ -59,6 +59,29 @@ Idempotency-Key: <optional-uuid-for-funding>
 ```
 
 Optional: body field `idempotency_key` is accepted if the header is omitted. Header wins when both are present.
+
+---
+
+## Identity verification (phone vs email)
+
+| Customer type | Wallet access |
+|---------------|---------------|
+| Phone OTP registered (`phone_verified=true`) | Allowed — email optional |
+| Email verified | Allowed |
+| Google / Facebook linked | Allowed |
+| None of the above | `403` — see message below |
+
+Do **not** hard-block recharge UI solely because email is missing when `verification_status.identity_verified` or `phone_verified` is true.
+
+### Identity `403` (English API)
+
+```text
+Identity verification is required before accessing your wallet.
+```
+
+**Recommended Bangla UI (mobile):** e.g. `ওয়ালেট ব্যবহার করতে আগে পরিচয় যাচাই করুন (ফোন OTP)।` — do **not** tell phone users to verify email.
+
+See also: `wallet/docs/frontend/phone-verified-wallet-mobile-impact.md`.
 
 ---
 

@@ -4,7 +4,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from orders.api.permissions import IsVerifiedCustomer
+from wallet.api.permissions import IsVerifiedWalletCustomer
 from wallet.models import WalletTransaction
 from wallet.services.funding import (
     DuplicateProviderRefError,
@@ -74,13 +74,14 @@ def _resolve_idempotency_key(request, validated_data):
 
 
 class WalletDetailView(APIView):
-    permission_classes = [IsVerifiedCustomer]
+    permission_classes = [IsVerifiedWalletCustomer]
 
     @extend_schema(
         tags=['Customer Wallet'],
         summary='Get caller wallet summary',
         description=(
-            'Returns the authenticated verified customer\'s wallet. '
+            'Returns the authenticated identity-verified customer\'s wallet '
+            '(phone or email or social — email not required for phone users). '
             'Creates an active BDT wallet with balance 0.00 on first access. '
             'Includes admin-configured thresholds: min_wallet_balance_to_order '
             '(subscribe floor), low_balance_reminder_threshold, and meal_stop_threshold. '
@@ -91,7 +92,12 @@ class WalletDetailView(APIView):
         responses={
             200: WalletSerializer,
             401: OpenApiResponse(description='Unauthenticated'),
-            403: OpenApiResponse(description='Not a verified customer'),
+            403: OpenApiResponse(
+                description=(
+                    'Identity not verified (phone/email/social) or not a customer; '
+                    'detail uses wallet identity message'
+                )
+            ),
         },
     )
     def get(self, request):
@@ -110,7 +116,7 @@ class WalletTransactionViewSet(
     mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
-    permission_classes = [IsVerifiedCustomer]
+    permission_classes = [IsVerifiedWalletCustomer]
     serializer_class = WalletTransactionSerializer
     pagination_class = WalletTransactionPagination
     lookup_field = 'public_id'
@@ -148,7 +154,7 @@ class WalletTransactionViewSet(
 
 
 class WalletRechargeView(APIView):
-    permission_classes = [IsVerifiedCustomer]
+    permission_classes = [IsVerifiedWalletCustomer]
 
     @extend_schema(
         tags=['Customer Wallet'],
@@ -156,7 +162,8 @@ class WalletRechargeView(APIView):
         description=(
             'Creates a pending recharge request. Balance is NOT credited until a verified '
             'admin approves. Requires payment_method (bkash|nagad|bank) and transaction_id. '
-            'Optional Idempotency-Key prevents duplicate creates on retries.'
+            'Optional Idempotency-Key prevents duplicate creates on retries. '
+            'Phone-verified customers may submit without email verification.'
         ),
         request=RechargeRequestSerializer,
         parameters=[
@@ -171,7 +178,12 @@ class WalletRechargeView(APIView):
             200: FundingResponseSerializer,
             400: OpenApiResponse(description='Invalid amount/method/transaction_id or frozen wallet'),
             401: OpenApiResponse(description='Unauthenticated'),
-            403: OpenApiResponse(description='Manual funding disabled or not verified customer'),
+            403: OpenApiResponse(
+                description=(
+                    'Manual funding disabled, or identity not verified '
+                    '(phone/email/social required; email not mandatory for phone users)'
+                )
+            ),
             409: OpenApiResponse(
                 description='Idempotency conflict or duplicate provider transaction id'
             ),
@@ -228,7 +240,7 @@ class WalletRechargeView(APIView):
 
 
 class WalletWithdrawView(APIView):
-    permission_classes = [IsVerifiedCustomer]
+    permission_classes = [IsVerifiedWalletCustomer]
 
     @extend_schema(
         tags=['Customer Wallet'],
@@ -238,7 +250,8 @@ class WalletWithdrawView(APIView):
             '(debits) recharge_balance only. Amount must not exceed '
             'max(0, recharge_balance - meal_stop_threshold). '
             'Admin Wallet custody is debited as type customer_withdraw only on approve. '
-            'Reject restores the reservation. Commission balance is never withdrawn.'
+            'Reject restores the reservation. Commission balance is never withdrawn. '
+            'Phone-verified customers may submit without email verification.'
         ),
         request=WithdrawRequestSerializer,
         parameters=[
@@ -258,7 +271,12 @@ class WalletWithdrawView(APIView):
                 )
             ),
             401: OpenApiResponse(description='Unauthenticated'),
-            403: OpenApiResponse(description='Manual funding disabled or not verified customer'),
+            403: OpenApiResponse(
+                description=(
+                    'Manual funding disabled, or identity not verified '
+                    '(phone/email/social required; email not mandatory for phone users)'
+                )
+            ),
             409: OpenApiResponse(description='Idempotency key conflict'),
         },
         examples=[

@@ -4,10 +4,20 @@ Manual off-platform verification. Frontend shows bKash/Nagad/Bank payment instru
 
 ## Auth
 
-- Customer: verified customer token (`Authorization: Token …` or project JWT as used elsewhere).
+- Customer: **identity-verified** customer token (`Authorization: Token …` or project JWT as used elsewhere). Identity = phone **or** email **or** social — email is **not** required for phone OTP accounts.
 - Admin: verified admin / superuser (`IsVerifiedAdmin`).
 
 Optional: `Idempotency-Key` header (or body `idempotency_key`) on create.
+
+### Identity denial (`403`)
+
+English API detail:
+
+```text
+Identity verification is required before accessing your wallet.
+```
+
+Mobile Bangla: tell users to complete phone/identity verification — **not** “verify email first” for phone-registered users. Full mobile checklist: `phone-verified-wallet-mobile-impact.md`.
 
 ## Customer endpoints
 
@@ -16,6 +26,8 @@ Base: `/wallet/`
 ### `POST /wallet/recharge/`
 
 Creates a **pending** recharge. Balance does **not** increase until admin approve.
+
+Phone-verified customers may submit this without email verification.
 
 ```json
 {
