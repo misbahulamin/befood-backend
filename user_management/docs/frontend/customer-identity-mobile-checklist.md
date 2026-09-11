@@ -5,9 +5,12 @@ Use with `multi-provider-auth-integration.md`. Backend is authoritative.
 ## Golden rules
 
 1. **Email OR phone** on the same `CustomerProfile` = one customer.
-2. Show **referral input only** when pre-check says `referral_input_allowed: true`.
-3. After email/social login with `phone_verification_required: true`, use **bind OTP** — never anonymous `/phone/otp/verify/`.
-4. Never show referral again on phone bind / existing login.
+2. **Hard feature access** uses `verification_status.identity_verified` only — never `email AND phone`, never soft `phone_verification_required` alone.
+3. Show **referral input only** when pre-check says `referral_input_allowed: true`.
+4. After email/social login with `phone_verification_required: true`, use **bind OTP** — never anonymous `/phone/otp/verify/`. Soft bind prompt; do not block wallet if identity is already true.
+5. Never show referral again on phone bind / existing login.
+
+See also: `identity-verification-or-rule-mobile.md` and `wallet/docs/frontend/phone-verified-wallet-mobile-impact.md`.
 
 ## Pre-check → UI
 

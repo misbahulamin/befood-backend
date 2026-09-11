@@ -100,7 +100,22 @@ Requires `Authorization: Token <token>`.
 
 ### Me
 
-`GET /me/` — requires valid token. Includes `phone_verification_required`. Tokens do **not** idle-expire.
+`GET /me/` — requires valid token. Includes:
+
+- `phone_verification_required` — **soft** prompt to bind phone (true when phone not verified, even if email already verified)
+- `verification_status` — same shape as auth success; use **`identity_verified`** for hard feature gates
+
+Tokens do **not** idle-expire.
+
+**Hard vs soft (critical):**
+
+| Flag | Gate type | Client action |
+|------|-----------|---------------|
+| `verification_status.identity_verified` | Hard | If `false` → block wallet / subscribe / orders; show identity Bangla toast |
+| `phone_verification_required` | Soft | Prompt phone bind only; **do not** block Confirm Recharge when `identity_verified` is true |
+| `is_email_verified` / `is_phone_verified` | Display | Never require **both** (`AND`) for access |
+
+Identity rule: **email OR phone OR Google OR Facebook** — never email AND phone.
 
 ## Unified success envelope (all methods)
 
@@ -129,9 +144,9 @@ Required top-level keys:
 }
 ```
 
-Use **`identity_verified`** to decide whether the customer may use gated features (orders, subscriptions, wallet). Do **not** require `email_verified` for phone / Google / Facebook users.
+Use **`identity_verified`** to decide whether the customer may use gated features (orders, subscriptions, wallet). Do **not** require `email_verified` for phone / Google / Facebook users. Do **not** require `phone_verified` for email-verified users. Do **not** hard-block features solely because `phone_verification_required` is true.
 
-Phone-only / social users may have blank `user.email`. Prefer `phone_verification_required` over inferring from onboarding alone.
+Phone-only / social users may have blank `user.email`. Use `phone_verification_required` only for **soft bind UX**, not as a substitute for `identity_verified`.
 
 Onboarding treats phone as complete only when verified (`is_phone_verified`).
 

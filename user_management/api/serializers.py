@@ -237,6 +237,7 @@ class CurrentUserSerializer(serializers.Serializer):
     groups = serializers.SerializerMethodField()
     customer_profile = serializers.SerializerMethodField()
     phone_verification_required = serializers.SerializerMethodField()
+    verification_status = serializers.SerializerMethodField()
     has_password = serializers.SerializerMethodField()
     onboarding_completion = serializers.SerializerMethodField()
     location_confirmation = serializers.SerializerMethodField()
@@ -269,6 +270,11 @@ class CurrentUserSerializer(serializers.Serializer):
         from user_management.services.auth_session import is_phone_verification_required
 
         return is_phone_verification_required(obj.customer_profile)
+
+    def get_verification_status(self, obj):
+        from user_management.services.identity_verification import build_verification_status
+
+        return build_verification_status(obj)
 
     def get_onboarding_completion(self, obj):
         from ..services.profile_onboarding import get_onboarding_completion
