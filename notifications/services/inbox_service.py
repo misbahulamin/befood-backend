@@ -17,9 +17,13 @@ def create_inbox_notification(
     notification_type: str = '',
     screen: str = '',
     data: dict | None = None,
+    content_object=None,
 ) -> Notification | None:
     """
     Persist an unread inbox row for [user].
+
+    Optional [content_object] sets the existing GenericForeignKey (e.g. PushCampaign)
+    so admin campaign detail can resolve read status.
 
     Never raises into callers — FCM send must proceed even if persistence fails.
     """
@@ -34,6 +38,7 @@ def create_inbox_notification(
             notification_type=(notification_type or '')[:50],
             screen=(screen or '')[:100],
             data=data or {},
+            content_object=content_object,
         )
     except Exception:
         logger.exception(

@@ -319,6 +319,74 @@ class AdminPushNotificationAPITests(APITestCase):
         self.assertIn('recipients', detail_response.data)
         self.assertIn('total_skipped', detail_response.data)
 
+    def test_detail_recipients_include_name_public_id_sent_at_and_is_read(self):
+        from notifications.models import Notification
+
+        self.customer.first_name = 'Raiyan'
+        self.customer.last_name = 'Muntasir'
+        self.customer.save(update_fields=['first_name', 'last_name'])
+
+        self._auth_admin()
+        with self._sync_dispatch(), patch(
+            'notifications.api.admin_notification_views.enqueue_dispatch',
+            side_effect=lambda campaign_id: __import__(
+                'notifications.services.notification_sender', fromlist=['dispatch_push_campaign']
+            ).dispatch_push_campaign(campaign_id),
+        ), self._mock_fcm_success():
+            created = self.client.post(self.send_url, self._unique_payload(), format='json')
+
+        campaign = PushCampaign.objects.get(public_id=created.data['public_id'])
+        inbox = Notification.objects.get(user=self.customer, object_id=campaign.pk)
+        self.assertFalse(inbox.is_read)
+
+        detail_url = reverse(
+            'web_notifications:admin-push-campaign-detail',
+            kwargs={'public_id': campaign.public_id},
+        )
+        detail = self.client.get(detail_url)
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        recipient = detail.data['recipients'][0]
+        self.assertEqual(recipient['user_name'], 'Raiyan Muntasir')
+        self.assertEqual(recipient['user_email'], self.customer.email)
+        self.assertEqual(recipient['user_public_id'], str(self.customer.customer_profile.public_id))
+        self.assertEqual(recipient['status'], PushCampaignRecipient.Status.SENT)
+        self.assertIsNotNone(recipient['sent_at'])
+        self.assertIs(recipient['is_read'], False)
+
+        inbox.is_read = True
+        inbox.save(update_fields=['is_read'])
+        detail_after = self.client.get(detail_url)
+        self.assertIs(detail_after.data['recipients'][0]['is_read'], True)
+
+    def test_detail_is_read_null_without_inbox_link(self):
+        self._auth_admin()
+        campaign = PushCampaign.objects.create(
+            title='Legacy',
+            body='Body',
+            notification_type='system',
+            target_type=PushCampaign.TargetType.SINGLE_USER,
+            target_config={'type': 'user', 'user_id': self.customer.id},
+            created_by=self.admin,
+            status=PushCampaign.Status.COMPLETED,
+            total_targets=1,
+            total_failed=1,
+        )
+        PushCampaignRecipient.objects.create(
+            campaign=campaign,
+            user=self.customer,
+            status=PushCampaignRecipient.Status.FAILED,
+            error_message='No active device',
+        )
+        detail_url = reverse(
+            'web_notifications:admin-push-campaign-detail',
+            kwargs={'public_id': campaign.public_id},
+        )
+        detail = self.client.get(detail_url)
+        recipient = detail.data['recipients'][0]
+        self.assertIsNone(recipient['is_read'])
+        self.assertIsNone(recipient['sent_at'])
+        self.assertEqual(recipient['user_name'], self.customer.email)
+
     @patch('notifications.services.fcm_service._get_firebase_app')
     @patch('firebase_admin.messaging.send_each_for_multicast')
     def test_fcm_batching_splits_at_500(self, mock_multicast, _mock_app):

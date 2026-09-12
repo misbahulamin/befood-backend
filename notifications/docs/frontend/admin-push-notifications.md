@@ -179,12 +179,15 @@ Show campaign info + recipients table:
 
 | Column | Field |
 |--------|-------|
-| User | `user_email` |
+| User | `user_name` (primary; link via `user_public_id`); `user_email` secondary |
 | Platform | `device_platform` |
 | Status | `status` (`sent` / `failed` / `skipped`) |
+| Read | `is_read` (`true` / `false` / `null` when no inbox row) |
 | Error | `error_message` |
 | FCM Message ID | `firebase_message_id` |
-| Sent at | `sent_at` |
+| Sent at | `sent_at` (set when status is `sent`) |
+
+When `user_public_id` is present, the name SHOULD link to `/admin/customers/{user_public_id}`.
 
 **Skipped recipients:** use neutral styling — label "Push disabled by user", not error red.
 

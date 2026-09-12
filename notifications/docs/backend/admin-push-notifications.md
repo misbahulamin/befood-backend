@@ -28,7 +28,16 @@ Permission class: `IsVerifiedAdmin` (`user_management/api/permissions.py`).
 |-------|---------|
 | `PushCampaign` | Admin broadcast lifecycle, counters, audit fields |
 | `PushCampaignRecipient` | Per-user/device delivery row |
+| `Notification` | Customer inbox row; campaign dispatch sets GFK → `PushCampaign` for read audit |
 | `DeviceToken` (`user_management`) | Reused for FCM tokens — not duplicated |
+
+### Detail recipient fields
+
+Each recipient on `GET .../{public_id}/` includes:
+
+- `user_email`, `user_name`, `user_public_id` (`CustomerProfile.public_id` or null)
+- `device_platform`, `status`, `error_message`, `firebase_message_id`, `sent_at`
+- `is_read` — from linked inbox `Notification` (boolean), or `null` if no GFK-linked inbox row
 
 ### Campaign status
 
@@ -60,6 +69,7 @@ POST /send/
   → return 202
 
 dispatch_push_campaign(campaign_id)
+  → create inbox Notification per unique pending user (GFK → campaign)
   → FCM batches (500 tokens)
   → update recipients + counters
   → status = completed | failed

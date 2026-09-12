@@ -9,6 +9,8 @@ Twice a day, production cron marks **eligible** `OrderDelivery` slots as `delive
 | Lunch | 15:00 | `0 9 * * *` | `auto_deliver_meals --meal-period lunch` |
 | Dinner | 23:00 | `0 17 * * *` | `auto_deliver_meals --meal-period dinner` |
 
+**What 15:00 / 23:00 do:** mark eligible `scheduled` slots as `delivered` and charge the wallet. They do **not** create subscription/order slots (those come from subscribe / `ensure_subscription_deliveries`). After each successful meal debit, meal-stop is evaluated immediately (`evaluate_meal_stop_after_debit`); the separate 08:00 / 20:00 wallet-threshold cron remains for reminders, resume, and non-charge balance drift.
+
 **Timezone layers (production):** EC2 host = UTC (`Etc/UTC`). Ubuntu cron evaluates minute/hour in UTC. Business “today” / product times stay Asia/Dhaka inside Django. **`CRON_TZ` is intentionally not used** — schedules are hard-converted BD → UTC in `install_managed_cron.sh`.
 
 Wrappers: `scripts/cron/run_auto_deliver.sh lunch|dinner`  

@@ -392,7 +392,11 @@ class MealDeliveryWalletPaymentTests(APITestCase):
 
         recharge = self.client.post(
             reverse('wallet:wallet-recharge'),
-            {'amount': '10.00'},
+            {
+                'amount': '10.00',
+                'payment_method': 'bkash',
+                'transaction_id': 'TX-MEAL-PAY-HIST-001',
+            },
             format='json',
         )
         self.assertEqual(recharge.status_code, status.HTTP_200_OK)
@@ -408,3 +412,258 @@ class MealDeliveryWalletPaymentTests(APITestCase):
         self.assertEqual(ctx.exception.code, 'MEAL_SLOT_PRICE_MISSING')
         delivery.refresh_from_db()
         self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+
+
+@override_settings(MEDIA_ROOT='test_media', EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+class PostMealChargeMealStopTests(APITestCase):
+    """Immediate meal-stop after successful meal-delivery debit."""
+
+    def setUp(self):
+        self._publish_patcher = patch(
+            'orders.services.order_service.published_schedule_for_meal',
+            return_value=object(),
+        )
+        self._publish_patcher.start()
+        self.addCleanup(self._publish_patcher.stop)
+        self._sub_publish_patcher = patch(
+            'orders.services.subscription_service.published_schedule_for_meal',
+            return_value=object(),
+        )
+        self._sub_publish_patcher.start()
+        self.addCleanup(self._sub_publish_patcher.stop)
+
+        customer_group, _ = Group.objects.get_or_create(name='CUSTOMER')
+        admin_group, _ = Group.objects.get_or_create(name='ADMIN')
+
+        self.customer_user = User.objects.create_user(
+            username='post_stop_customer',
+            email='post_stop_customer@example.com',
+            password='StrongPassword123',
+            first_name='Karim',
+            is_active=True,
+        )
+        self.customer_user.groups.add(customer_group)
+        self.customer_profile = CustomerProfile.objects.create(
+            user=self.customer_user,
+            phone='1712444001',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=True,
+        )
+
+        self.admin_user = User.objects.create_user(
+            username='post_stop_admin',
+            email='post_stop_admin@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        self.admin_user.groups.add(admin_group)
+        AdminProfile.objects.create(user=self.admin_user, is_verified=True)
+
+        self.daily_meal = MealCategory.objects.create(
+            meal_name='Post Stop Lunch',
+            total_price=Decimal('65.00'),
+            meal_thumbnail=make_test_image('post_stop_lunch.jpg'),
+            meal_type=MealCategory.MealType.DAILY,
+            meal_period=MealCategory.MealPeriod.LUNCH,
+            is_active=True,
+        )
+        self.monthly_plan = MealCategory.objects.create(
+            meal_name='Post Stop Monthly',
+            total_price=Decimal('2737.00'),
+            meal_thumbnail=make_test_image('post_stop_monthly.jpg'),
+            meal_type=MealCategory.MealType.MONTHLY,
+            meal_period=MealCategory.MealPeriod.BOTH,
+            is_active=True,
+            is_subscribable=True,
+        )
+
+        settings_obj = OrderWalletSettings.load()
+        settings_obj.min_wallet_balance_to_order = Decimal('0.00')
+        settings_obj.low_balance_reminder_threshold = Decimal('300.00')
+        settings_obj.meal_stop_threshold = Decimal('100.00')
+        settings_obj.save()
+
+        self.wallet = get_or_create_wallet(self.customer_profile)
+        self.service_date = date(2026, 8, 5)
+
+    def _set_balance(self, amount: Decimal):
+        self.wallet.refresh_from_db()
+        target = Decimal(amount).quantize(Decimal('0.01'))
+        if self.wallet.balance < target:
+            credit_wallet(self.wallet, target - self.wallet.balance)
+        elif self.wallet.balance > target:
+            # Prefer recharge-path top-ups in other tests; for exact low balances
+            # rewrite buckets so meal payment can debit commission-first.
+            self.wallet.balance = target
+            self.wallet.recharge_balance = target
+            self.wallet.commission_balance = Decimal('0.00')
+            self.wallet.save(
+                update_fields=[
+                    'balance',
+                    'recharge_balance',
+                    'commission_balance',
+                    'updated_at',
+                ]
+            )
+        self.wallet.refresh_from_db()
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
+    def test_charge_below_meal_stop_blocks_immediately(self, _mock_date):
+        self._set_balance(Decimal('150.00'))
+        order = create_meal_order(self.customer_profile, self.daily_meal)
+        delivery = order.deliveries.get()
+        ensure_priced_delivery_slot(
+            self.daily_meal,
+            delivery.service_date,
+            delivery.meal_period,
+            price=Decimal('60.00'),
+        )
+
+        with patch('orders.services.order_delivery.timezone.localdate', return_value=self.service_date):
+            with self.captureOnCommitCallbacks(execute=True):
+                with patch(
+                    'notifications.services.wallet_threshold_notifications.send_to_tokens',
+                    return_value=[],
+                ):
+                    mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
+
+        self.customer_profile.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, Decimal('90.00'))
+        self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)
+        self.assertIsNotNone(self.customer_profile.meal_service_blocked_at)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
+    def test_charge_at_or_above_meal_stop_does_not_block(self, _mock_date):
+        self._set_balance(Decimal('200.00'))
+        order = create_meal_order(self.customer_profile, self.daily_meal)
+        delivery = order.deliveries.get()
+        ensure_priced_delivery_slot(
+            self.daily_meal,
+            delivery.service_date,
+            delivery.meal_period,
+            price=Decimal('50.00'),
+        )
+
+        with patch('orders.services.order_delivery.timezone.localdate', return_value=self.service_date):
+            mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
+
+        self.customer_profile.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, Decimal('150.00'))
+        self.assertFalse(self.customer_profile.meal_service_blocked_low_balance)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
+    def test_insufficient_funds_rejection_does_not_meal_stop(self, _mock_date):
+        self._set_balance(Decimal('10.00'))
+        self.assertFalse(self.customer_profile.meal_service_blocked_low_balance)
+        order = create_meal_order(self.customer_profile, self.daily_meal)
+        delivery = order.deliveries.get()
+        ensure_priced_delivery_slot(
+            self.daily_meal,
+            delivery.service_date,
+            delivery.meal_period,
+            price=Decimal('60.00'),
+        )
+
+        with patch('orders.services.order_delivery.timezone.localdate', return_value=self.service_date):
+            with self.assertRaises(DeliveryError) as ctx:
+                mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
+
+        self.assertEqual(ctx.exception.code, 'WALLET_INSUFFICIENT_FOR_MEAL')
+        delivery.refresh_from_db()
+        self.customer_profile.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+        self.assertFalse(self.customer_profile.meal_service_blocked_low_balance)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
+    def test_notify_failure_keeps_charge_and_block(self, _mock_date):
+        self._set_balance(Decimal('150.00'))
+        order = create_meal_order(self.customer_profile, self.daily_meal)
+        delivery = order.deliveries.get()
+        ensure_priced_delivery_slot(
+            self.daily_meal,
+            delivery.service_date,
+            delivery.meal_period,
+            price=Decimal('60.00'),
+        )
+
+        with patch('orders.services.order_delivery.timezone.localdate', return_value=self.service_date):
+            with self.captureOnCommitCallbacks(execute=True):
+                with patch(
+                    'notifications.services.wallet_threshold_notifications.notify_customer_meal_stop',
+                    side_effect=RuntimeError('notify boom'),
+                ):
+                    mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
+
+        delivery.refresh_from_db()
+        self.customer_profile.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.DELIVERED)
+        self.assertEqual(delivery.payment_status, OrderDelivery.PaymentStatus.CHARGED)
+        self.assertEqual(self.wallet.balance, Decimal('90.00'))
+        self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
+    def test_kitchen_dinner_count_excludes_after_lunch_charge_block(self, _mock_date):
+        from orders.services.meal_demand import get_demand
+        from orders.services.subscription_service import subscribe_customer
+
+        self._set_balance(Decimal('500.00'))
+        subscription = subscribe_customer(
+            self.customer_profile,
+            self.monthly_plan,
+            today=self.service_date,
+        )
+        lunch = subscription.deliveries.get(
+            service_date=self.service_date,
+            meal_period=OrderDelivery.MealPeriod.LUNCH,
+        )
+        dinner = subscription.deliveries.get(
+            service_date=self.service_date,
+            meal_period=OrderDelivery.MealPeriod.DINNER,
+        )
+        ensure_priced_delivery_slot(
+            self.monthly_plan,
+            lunch.service_date,
+            lunch.meal_period,
+            price=Decimal('60.00'),
+        )
+        self._set_balance(Decimal('150.00'))
+
+        before = get_demand(self.service_date, 'dinner')
+        self.assertEqual(before.final_cooking_count, 1)
+        self.assertEqual(before.low_balance_blocked_count, 0)
+
+        with patch('orders.services.order_delivery.timezone.localdate', return_value=self.service_date):
+            with self.captureOnCommitCallbacks(execute=True):
+                with patch(
+                    'notifications.services.wallet_threshold_notifications.send_to_tokens',
+                    return_value=[],
+                ):
+                    mark_delivery(lunch, 'delivered', marked_by=self.admin_user)
+
+        self.customer_profile.refresh_from_db()
+        self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)
+        dinner.refresh_from_db()
+        self.assertEqual(dinner.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+
+        after = get_demand(self.service_date, 'dinner')
+        self.assertEqual(after.final_cooking_count, 0)
+        self.assertEqual(after.low_balance_blocked_count, 1)
+
+    def test_evaluate_after_debit_does_not_resume(self):
+        from orders.services.wallet_balance_thresholds import (
+            apply_meal_service_block,
+            evaluate_meal_stop_after_debit,
+        )
+
+        apply_meal_service_block(self.customer_profile)
+        self._set_balance(Decimal('250.00'))
+        self.customer_profile.refresh_from_db()
+        self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)
+
+        evaluate_meal_stop_after_debit(self.customer_profile)
+        self.customer_profile.refresh_from_db()
+        self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)

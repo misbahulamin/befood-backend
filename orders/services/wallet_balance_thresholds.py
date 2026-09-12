@@ -178,6 +178,76 @@ def maybe_resume_after_wallet_credit(customer: CustomerProfile | None) -> bool:
     return False
 
 
+def evaluate_meal_stop_after_debit(customer: CustomerProfile | None) -> bool:
+    """
+    Stop-only evaluation after a successful meal-payment debit.
+
+    When spendable balance is strictly below ``meal_stop_threshold``, apply
+    ``meal_service_blocked_low_balance``. Does **not** resume, remind, or send
+    admin summary (those stay on the twice-daily cron / credit path).
+
+    Newly blocked customers get meal-stop notify via ``transaction.on_commit``
+    (best-effort). Never raises into the charge path.
+
+    Returns True if this call newly blocked the customer.
+    """
+    if customer is None:
+        return False
+    try:
+        customer.refresh_from_db(
+            fields=['meal_service_blocked_low_balance', 'meal_service_blocked_at']
+        )
+        try:
+            customer.wallet.refresh_from_db(
+                fields=['balance', 'recharge_balance', 'commission_balance']
+            )
+        except Wallet.DoesNotExist:
+            pass
+
+        settings_obj = get_order_wallet_settings()
+        stop_threshold = settings_obj.meal_stop_threshold
+        balance = spendable_balance(customer)
+        if balance >= stop_threshold:
+            return False
+
+        locked = CustomerProfile.objects.select_for_update().get(pk=customer.pk)
+        newly_blocked = apply_meal_service_block(locked)
+        if not newly_blocked:
+            return False
+
+        customer.meal_service_blocked_low_balance = True
+        customer.meal_service_blocked_at = locked.meal_service_blocked_at
+        customer_id = customer.pk
+
+        def _notify_newly_blocked() -> None:
+            try:
+                from notifications.services.wallet_threshold_notifications import (
+                    notify_customer_meal_stop,
+                )
+
+                refreshed = CustomerProfile.objects.select_related('user').get(pk=customer_id)
+                notify_customer_meal_stop(
+                    refreshed,
+                    balance=balance,
+                    meal_stop_threshold=stop_threshold,
+                    send_email=True,
+                )
+            except Exception:
+                logger.exception(
+                    'Post-debit meal-stop notify failed customer_id=%s',
+                    customer_id,
+                )
+
+        transaction.on_commit(_notify_newly_blocked)
+        return True
+    except Exception:
+        logger.exception(
+            'Post-debit meal-stop evaluation failed customer_id=%s',
+            getattr(customer, 'pk', None),
+        )
+        return False
+
+
 def candidate_customers_queryset():
     """Active subscribers and currently blocked customers (for resume)."""
     active_ids = CustomerSubscription.objects.filter(
