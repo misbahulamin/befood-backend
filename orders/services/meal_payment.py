@@ -160,9 +160,11 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
         return locked
 
     if locked.payment_status == OrderDelivery.PaymentStatus.CHARGED and locked.wallet_transaction_id:
+        # Already charged — no new debit; skip post-charge meal-stop evaluation.
         return locked
 
     from orders.services.subscription_parent import delivery_customer, delivery_meal
+    from orders.services.wallet_balance_thresholds import evaluate_meal_stop_after_debit
 
     customer = delivery_customer(locked)
     meal = delivery_meal(locked)
@@ -192,6 +194,7 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
                 'Meal payment idempotency conflict for this delivery.',
                 code='MEAL_PAYMENT_IDEMPOTENCY_CONFLICT',
             )
+        # Idempotent re-attach: prior debit already happened; do not re-evaluate.
         return _attach_charged_transaction(locked, existing, charged_amount=amount)
 
     metadata = _build_metadata(locked, extra=price_meta)
@@ -234,6 +237,10 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
         )
         if raced is None:
             raise
+        # Loser of the race did not debit in this call; winner evaluates.
         return _attach_charged_transaction(locked, raced, charged_amount=amount)
 
-    return _attach_charged_transaction(locked, txn, charged_amount=amount)
+    attached = _attach_charged_transaction(locked, txn, charged_amount=amount)
+    # Real debit succeeded — evaluate meal-stop against post-debit balance.
+    evaluate_meal_stop_after_debit(customer)
+    return attached

@@ -244,6 +244,7 @@ def dispatch_push_campaign(campaign_id: int) -> None:
             notification_type=campaign.notification_type or campaign_data.get('type', ''),
             screen=str(campaign_data.get('screen') or ''),
             data=campaign_data,
+            content_object=campaign,
         )
 
     try:

@@ -28,12 +28,16 @@ Admin SPA uses the shared `/orders/...` base (same as `meal-off-settings`).
 ## Mental model
 
 ```text
-Eligible   = live (non-cancelled) OrderDelivery rows for (service_date, meal_period)
-             EXCLUDING customers with meal_service_blocked_low_balance=true
-             (same skip-on-block rule as auto meal delivery — not counted as meal-off)
-Expected   = eligible deliveries
-Meal off   = eligible deliveries with status=skipped
-Final cook = Expected − Meal off
+Live rows   = live (non-cancelled) OrderDelivery for (service_date, meal_period)
+Expected    = all live rows (includes low-balance blocked for separate reporting)
+Meal off    = skipped AND not meal-stop blocked
+Low balance = meal_service_blocked_low_balance=true (any delivery status)
+Final cook  = not skipped AND not meal-stop blocked
+
+Cook exclusion uses the block **flag**, not a live `Wallet.balance < meal_stop_threshold`
+recompute. After a successful meal charge that drops balance below meal-stop, the flag is
+set immediately (post-charge evaluation), so the next Kitchen Today GET drops
+`final_cooking_count` without waiting for the 20:00 wallet-threshold cron.
 
 confirmation_status:
   estimated  → business now ≤ meal-off deadline

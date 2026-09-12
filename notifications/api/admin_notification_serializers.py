@@ -6,6 +6,8 @@ import json
 
 from rest_framework import serializers
 
+from django.core.exceptions import ObjectDoesNotExist
+
 from notifications.models import PushCampaign, PushCampaignRecipient
 
 ALLOWED_DATA_KEYS = frozenset({'type', 'screen', 'entity_type', 'entity_id'})
@@ -120,18 +122,44 @@ class PushCampaignListSerializer(serializers.ModelSerializer):
 
 class PushCampaignRecipientSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_name = serializers.SerializerMethodField()
+    user_public_id = serializers.SerializerMethodField()
+    is_read = serializers.SerializerMethodField()
     device_platform = serializers.CharField(source='device.platform', read_only=True, default='')
 
     class Meta:
         model = PushCampaignRecipient
         fields = (
             'user_email',
+            'user_name',
+            'user_public_id',
             'device_platform',
             'status',
+            'is_read',
             'firebase_message_id',
             'error_message',
             'sent_at',
         )
+
+    def get_user_name(self, obj) -> str:
+        user = obj.user
+        full = f'{user.first_name} {user.last_name}'.strip()
+        return full or (user.email or '')
+
+    def get_user_public_id(self, obj):
+        try:
+            profile = obj.user.customer_profile
+        except ObjectDoesNotExist:
+            return None
+        public_id = getattr(profile, 'public_id', None)
+        return str(public_id) if public_id else None
+
+    def get_is_read(self, obj):
+        read_by_user = self.context.get('is_read_by_user_id') or {}
+        user_id = obj.user_id
+        if user_id not in read_by_user:
+            return None
+        return read_by_user[user_id]
 
 
 class PushCampaignDetailSerializer(PushCampaignListSerializer):

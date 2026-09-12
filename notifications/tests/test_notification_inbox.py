@@ -34,6 +34,32 @@ class InboxServiceTests(TestCase):
         self.assertEqual(Notification.objects.filter(user=self.user).count(), 1)
         self.assertFalse(row.is_read)
 
+    def test_create_inbox_notification_with_content_object(self):
+        from django.contrib.contenttypes.models import ContentType
+
+        from notifications.models import PushCampaign
+
+        campaign = PushCampaign.objects.create(
+            title='Campaign',
+            body='Body',
+            notification_type='system',
+            target_type=PushCampaign.TargetType.SINGLE_USER,
+            target_config={'type': 'user', 'user_id': self.user.id},
+            created_by=self.user,
+            status=PushCampaign.Status.PROCESSING,
+        )
+        row = create_inbox_notification(
+            self.user,
+            title='Linked',
+            body='Body',
+            notification_type='system',
+            content_object=campaign,
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row.content_type_id, ContentType.objects.get_for_model(PushCampaign).id)
+        self.assertEqual(row.object_id, campaign.pk)
+        self.assertEqual(row.content_object, campaign)
+
     def test_android_channel_mapping(self):
         self.assertEqual(_android_channel_id({'type': 'wallet_low_balance'}), 'befood_wallet')
         self.assertEqual(_android_channel_id({'type': 'meal_delivered'}), 'befood_order')

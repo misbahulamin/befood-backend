@@ -35,15 +35,18 @@ Admins configure three ordered wallet thresholds. A twice-daily cron evaluates a
 2. Cron priority per customer: meal-stop → resume → reminder.
 3. Reminder at most once per Asia/Dhaka business day (`last_low_balance_reminder_on`).
 4. Meal-stop **block** when `balance < meal_stop_threshold` (unchanged).
-5. Meal-stop-band **push** (“Low Wallet Balance Alert”) on **every** non-dry-run cron evaluation while still below meal-stop — including already-blocked customers. **Not** gated by `last_low_balance_reminder_on` (with the twice-daily cron, about 2 pushes/day while under threshold).
-6. Meal-stop **email** remains primarily on transition to newly blocked (push carries the every-run warning).
-7. Auto-delivery eligibility excludes blocked customers; **admin mark-delivery still works**.
-8. Auto-resume when `balance ≥ meal_stop_threshold`:
+5. **Post-meal-charge meal-stop (immediate):** after a **successful** meal-delivery wallet debit (`charge_delivered_meal` — auto-deliver or admin mark-delivered), `evaluate_meal_stop_after_debit` compares post-debit spendable balance to `meal_stop_threshold` and applies `meal_service_blocked_low_balance` when strictly below. Idempotent re-attach / charge-disabled paths do **not** re-evaluate. Newly blocked customers get meal-stop notify on `transaction.on_commit` (notify failure must not undo charge or block). This path does **not** resume, remind, or send the admin summary.
+6. Meal-stop-band **push** (“Low Wallet Balance Alert”) on **every** non-dry-run cron evaluation while still below meal-stop — including already-blocked customers. **Not** gated by `last_low_balance_reminder_on` (with the twice-daily cron, about 2 pushes/day while under threshold).
+7. Meal-stop **email** remains primarily on transition to newly blocked (push carries the every-run warning).
+8. Auto-delivery eligibility excludes blocked customers; **admin mark-delivery still works**.
+9. Auto-resume when `balance ≥ meal_stop_threshold`:
    - threshold cron
    - successful `credit_wallet` (`transaction.on_commit`)
    - admin `approve_recharge` (sync inside the same atomic; API field `meal_service_restored`)
-9. Admin summary always runs after non-dry-run (including empty “no low-balance users” mail).
-10. **No migration** for resume-on-approve or every-run meal-stop push — existing profile fields only.
+   - **not** on the post-debit evaluate path
+10. Admin summary always runs after non-dry-run (including empty “no low-balance users” mail).
+11. **08:00 / 20:00 Asia/Dhaka cron remains required** for reminders, resume, admin summary, and customers who fall below threshold without a meal debit. Post-charge evaluation does **not** replace crontab schedules (no 15:05/23:05 cron required for this fix).
+12. **No migration** for post-charge meal-stop, resume-on-approve, or every-run meal-stop push — existing profile fields only.
 
 ## Admin API
 
@@ -116,9 +119,18 @@ Reports would-be remind/stop/resume counts without mutating state or sending mai
 - Title: `Low Wallet Balance Alert`
 - Body: `Hi {customer_full_name}, your current wallet balance is low. Please recharge your wallet soon to continue receiving your meals. If your balance remains low, your meal service will be paused.`
 
-Spendable balance for all comparisons is `Wallet.balance` via `spendable_balance()` (same for cron, `credit_wallet` resume, and `approve_recharge` resume).
+Spendable balance for all comparisons is `Wallet.balance` via `spendable_balance()` (same for cron, post-charge meal-stop, `credit_wallet` resume, and `approve_recharge` resume).
 
 Admin report recipients: same resolution as wallet funding (`resolve_funding_admin_emails`). HTML table columns: Name, Phone, Package, Current Balance, Address, Status (`Low Balance` / `Meal Stopped`).
+
+## Shared helpers
+
+| Concern | Module |
+|---------|--------|
+| Cron batch | `orders.services.wallet_balance_thresholds.run_wallet_threshold_check` |
+| Post-debit stop-only | `orders.services.wallet_balance_thresholds.evaluate_meal_stop_after_debit` |
+| Block / clear | `apply_meal_service_block` / `clear_meal_service_block` |
+| Resume on credit | `maybe_resume_after_wallet_credit` |
 
 ## Rollback notes
 
@@ -130,6 +142,7 @@ Admin report recipients: same resolution as wallet funding (`resolve_funding_adm
 
 - `orders.tests.test_order_eligibility.OrderWalletEligibilityTests` — settings ordering / defaults
 - `orders.tests.test_wallet_balance_thresholds.WalletBalanceThresholdTests` — reminder, stop, every-run meal-stop push, resume, admin mail, dry-run
+- `orders.tests.test_meal_delivery_wallet_payment.PostMealChargeMealStopTests` — immediate block after meal debit, kitchen count, notify failure isolation
 - `wallet.tests.test_meal_service_resume_on_approve` — approve resume + `meal_service_restored`
 - `bash -n scripts/cron/install_managed_cron.sh scripts/cron/_cron_env.sh scripts/cron/run_wallet_threshold_check.sh`
 - Confirm cron scripts are LF-only (`.gitattributes`: `*.sh text eol=lf`). `grep -r $'\r' scripts/cron/` should find nothing.

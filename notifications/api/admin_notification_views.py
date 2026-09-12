@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.utils.dateparse import parse_datetime
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema, extend_schema_view
@@ -21,7 +23,7 @@ from notifications.api.openapi import (
     ADMIN_NOTIFICATIONS_TAG,
     PUSH_CAMPAIGN_SEND_REQUEST,
 )
-from notifications.models import PushCampaign
+from notifications.models import Notification, PushCampaign
 from notifications.services.notification_sender import (
     BroadcastConfirmationRequiredError,
     DuplicateCampaignError,
@@ -130,7 +132,7 @@ class AdminPushCampaignViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
 
     def get_queryset(self):
         queryset = PushCampaign.objects.select_related('created_by').prefetch_related(
-            'recipients__user',
+            'recipients__user__customer_profile',
             'recipients__device',
         )
         params = self.request.query_params
@@ -157,3 +159,29 @@ class AdminPushCampaignViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
         if self.action == 'retrieve':
             return PushCampaignDetailSerializer
         return PushCampaignListSerializer
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.action != 'retrieve':
+            return context
+        campaign = getattr(self, '_campaign_for_read_map', None)
+        context['is_read_by_user_id'] = (
+            _campaign_is_read_by_user_id(campaign) if campaign is not None else {}
+        )
+        return context
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self._campaign_for_read_map = instance
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+
+def _campaign_is_read_by_user_id(campaign: PushCampaign) -> dict[int, bool]:
+    """Map user_id → is_read for inbox rows linked to this campaign via GFK."""
+    content_type = ContentType.objects.get_for_model(PushCampaign)
+    rows = Notification.objects.filter(
+        content_type=content_type,
+        object_id=campaign.pk,
+    ).values_list('user_id', 'is_read')
+    return {user_id: bool(is_read) for user_id, is_read in rows}
