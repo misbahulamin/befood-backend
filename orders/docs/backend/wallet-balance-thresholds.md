@@ -44,6 +44,9 @@ Admins configure three ordered wallet thresholds. A twice-daily cron evaluates a
    - successful `credit_wallet` (`transaction.on_commit`)
    - admin `approve_recharge` (sync inside the same atomic; API field `meal_service_restored`)
    - **not** on the post-debit evaluate path
+   - Resume clears `meal_service_blocked_low_balance` only (`True` = blocked). It does **not** permanently change meal preferences.
+   - After a successful resume, today’s lunch/dinner slots whose meal-off cutoff **already passed** (per live `MealOffSettings` timezone and times) are system-skipped on the existing `OrderDelivery` (`skip_source=system`, `note=cutoff_passed`). Cutoff-not-yet-passed slots keep their current ON/OFF state; customer manual meal-off is never forced back on.
+   - Kitchen demand may show the customer moving from `low_balance_blocked_count` to meal-off/skipped for that slot while `final_cooking_count` stays unchanged for an already-cutoff-passed period.
 10. Admin summary always runs after non-dry-run (including empty “no low-balance users” mail).
 11. **08:00 / 20:00 Asia/Dhaka cron remains required** for reminders, resume, admin summary, and customers who fall below threshold without a meal debit. Post-charge evaluation does **not** replace crontab schedules (no 15:05/23:05 cron required for this fix).
 12. **No migration** for post-charge meal-stop, resume-on-approve, or every-run meal-stop push — existing profile fields only.
@@ -130,7 +133,8 @@ Admin report recipients: same resolution as wallet funding (`resolve_funding_adm
 | Cron batch | `orders.services.wallet_balance_thresholds.run_wallet_threshold_check` |
 | Post-debit stop-only | `orders.services.wallet_balance_thresholds.evaluate_meal_stop_after_debit` |
 | Block / clear | `apply_meal_service_block` / `clear_meal_service_block` |
-| Resume on credit | `maybe_resume_after_wallet_credit` |
+| Resume on credit / cron | `resume_meal_service_after_balance_recovery` (via `maybe_resume_after_wallet_credit` on credit) |
+| Post-resume cutoff skip | `system_skip_past_cutoff_deliveries_for_customer` in `orders.services.meal_off` |
 
 ## Rollback notes
 

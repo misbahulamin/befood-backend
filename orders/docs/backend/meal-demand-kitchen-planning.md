@@ -46,6 +46,8 @@ confirmation_status:
 
 Low-balance meal-stop blocked customers may still have meal-on (`scheduled`) deliveries, but kitchen must not cook for them: they are omitted from live demand counts, ingredient kg, Order Details `customers[]`, and newly written snapshots. They are **not** treated as meal-off.
 
+When a blocked customer recharges and the meal-stop flag clears, slots for **today** whose meal-off cutoff already passed are system-skipped on the delivery row. Demand then moves that slot from the low-balance bucket into meal-off/skipped while **`final_cooking_count` must not increase** for that already-cutoff-passed period.
+
 Deadlines reuse `MealOffSettings` (default Asia/Dhaka):
 
 | Period | Deadline |
