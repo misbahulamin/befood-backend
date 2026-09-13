@@ -6,7 +6,7 @@ DEBUG = False
 ALLOWED_HOSTS = [
     "befood.com.bd",
     "api.befood.com.bd",
-    "43.204.109.243",
+    "13.235.21.215",
     "localhost",
     "127.0.0.1",
 ]

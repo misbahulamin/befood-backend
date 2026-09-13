@@ -12,7 +12,11 @@ from django.db.models import Q
 from django.utils import timezone
 
 from orders.models import CustomerSubscription, OrderWalletSettings
-from orders.services.meal_off import get_meal_off_settings, meal_off_business_now
+from orders.services.meal_off import (
+    get_meal_off_settings,
+    meal_off_business_now,
+    system_skip_past_cutoff_deliveries_for_customer,
+)
 from orders.services.order_wallet_settings import get_order_wallet_settings
 from user_management.models import CustomerAddress, CustomerProfile
 from user_management.validators import format_bd_phone_readable
@@ -153,6 +157,27 @@ def spendable_balance(customer: CustomerProfile) -> Decimal:
     return Decimal(wallet.balance).quantize(Decimal('0.01'))
 
 
+def resume_meal_service_after_balance_recovery(
+    customer: CustomerProfile,
+    *,
+    now=None,
+) -> bool:
+    """
+    Clear low-balance meal-stop when balance meets threshold, then skip today's
+    meal periods whose cutoff already passed. Returns True if a block was cleared.
+    """
+    if not customer.meal_service_blocked_low_balance:
+        return False
+    settings_obj = get_order_wallet_settings()
+    balance = spendable_balance(customer)
+    if balance < settings_obj.meal_stop_threshold:
+        return False
+    if not clear_meal_service_block(customer):
+        return False
+    system_skip_past_cutoff_deliveries_for_customer(customer, now=now)
+    return True
+
+
 def maybe_resume_after_wallet_credit(customer: CustomerProfile | None) -> bool:
     """
     Best-effort auto-resume when spendable balance recovers to meal-stop threshold.
@@ -164,12 +189,7 @@ def maybe_resume_after_wallet_credit(customer: CustomerProfile | None) -> bool:
         customer.refresh_from_db(
             fields=['meal_service_blocked_low_balance', 'meal_service_blocked_at']
         )
-        if not customer.meal_service_blocked_low_balance:
-            return False
-        settings_obj = get_order_wallet_settings()
-        balance = spendable_balance(customer)
-        if balance >= settings_obj.meal_stop_threshold:
-            return clear_meal_service_block(customer)
+        return resume_meal_service_after_balance_recovery(customer)
     except Exception:
         logger.exception(
             'Failed meal-stop resume after credit customer_id=%s',
@@ -353,7 +373,7 @@ def run_wallet_threshold_check(
                 else:
                     with transaction.atomic():
                         locked = CustomerProfile.objects.select_for_update().get(pk=customer.pk)
-                        if clear_meal_service_block(locked):
+                        if resume_meal_service_after_balance_recovery(locked):
                             result.resumed += 1
                             customer.meal_service_blocked_low_balance = False
 

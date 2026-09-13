@@ -6,9 +6,13 @@ from zoneinfo import ZoneInfo
 from django.db import transaction
 from django.utils import timezone
 
+from django.db.models import Q
+
 from orders.models import MealOffSettings, Order, OrderDelivery
 from orders.services.order_delivery import complete_order_if_done
 from orders.services.order_status import OrderStatusError, reopen_order_after_meal_on
+from orders.services.subscription_parent import live_delivery_q
+from user_management.models import CustomerProfile
 
 
 def get_meal_off_settings() -> MealOffSettings:
@@ -57,6 +61,56 @@ def meal_off_deadline(
 
 # Stable audit token for subscription slots created after the meal-off cutoff.
 CUTOFF_PASSED_NOTE = 'cutoff_passed'
+
+
+def _customer_delivery_q(customer: CustomerProfile) -> Q:
+    return Q(subscription__customer=customer) | Q(order__customer=customer)
+
+
+def system_skip_past_cutoff_deliveries_for_customer(
+    customer: CustomerProfile,
+    *,
+    now: datetime | None = None,
+    settings_obj: MealOffSettings | None = None,
+) -> int:
+    """
+    After low-balance resume, skip today's SCHEDULED slots whose cutoff passed.
+
+    Does not meal-on customer/admin skips or touch non-scheduled deliveries.
+    """
+    settings_obj = settings_obj or get_meal_off_settings()
+    now_local = _normalize_business_now(now, settings_obj)
+    service_date = now_local.date()
+    marked_at = timezone.now()
+    updated_total = 0
+
+    for meal_period in (
+        OrderDelivery.MealPeriod.LUNCH,
+        OrderDelivery.MealPeriod.DINNER,
+    ):
+        if not is_past_meal_cutoff(
+            service_date,
+            meal_period,
+            now=now_local,
+            settings_obj=settings_obj,
+        ):
+            continue
+        updated_total += (
+            OrderDelivery.objects.filter(
+                service_date=service_date,
+                meal_period=meal_period,
+                status=OrderDelivery.DeliveryStatus.SCHEDULED,
+            )
+            .filter(_customer_delivery_q(customer))
+            .filter(live_delivery_q(service_date))
+            .update(
+                status=OrderDelivery.DeliveryStatus.SKIPPED,
+                skip_source=OrderDelivery.SkipSource.SYSTEM,
+                note=CUTOFF_PASSED_NOTE,
+                marked_at=marked_at,
+            )
+        )
+    return updated_total
 
 
 def is_past_meal_cutoff(
