@@ -1,4 +1,8 @@
-"""Realized meal profit from charged deliveries × published slot snapshots."""
+"""Realized meal profit from charged deliveries × published slot snapshots.
+
+Legacy live aggregation kept for backfill validation. Prefer ledger reads
+via ``admin_wallet.services.profit_analytics`` for dashboards.
+"""
 
 from __future__ import annotations
 
@@ -6,9 +10,8 @@ from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 
-from meals.services.slot_pricing import resolve_published_slot_for_delivery
+from admin_wallet.services.profit_ledger import resolve_profit_components
 from orders.models import OrderDelivery
-from orders.services.subscription_parent import delivery_meal
 
 _MONEY = Decimal('0.01')
 _ZERO = Decimal('0.00')
@@ -40,26 +43,19 @@ def _profit_for_delivery(delivery: OrderDelivery) -> tuple[object | None, Decima
     Profit uses published slot ``profit_snapshot`` only (never live catalog recompute).
     Missing meal/slot/snapshot → profit ``0.00``.
     """
-    meal = delivery_meal(delivery)
-    revenue = _quantize(Decimal(delivery.charged_amount or 0))
-    if meal is None:
+    components = resolve_profit_components(delivery)
+    if components is None:
+        revenue = _quantize(Decimal(delivery.charged_amount or 0))
         return None, revenue, _ZERO
-
-    slot = resolve_published_slot_for_delivery(
-        meal_id=meal.id,
-        service_date=delivery.service_date,
-        meal_period=delivery.meal_period,
-    )
-    if slot is None or slot.profit_snapshot is None:
-        return meal, revenue, _ZERO
-    return meal, revenue, _quantize(Decimal(slot.profit_snapshot))
+    return components.package, components.meal_price, components.profit_amount
 
 
 def meal_profit_recognized(*, start: datetime | None = None, end: datetime | None = None) -> Decimal:
     """
     Sum published slot profit snapshots for charged meal deliveries.
 
-    Period filter uses ``OrderDelivery.updated_at`` (same axis as meal revenue recognition).
+    Period filter uses ``OrderDelivery.updated_at`` (legacy wallet-dashboard axis).
+    Prefer ledger ``service_date`` analytics for new Admin Profit APIs.
     """
     total = _ZERO
     for delivery in _charged_deliveries_qs(start=start, end=end).iterator(chunk_size=500):
@@ -70,11 +66,10 @@ def meal_profit_recognized(*, start: datetime | None = None, end: datetime | Non
 
 def meal_profit_by_package(*, start: datetime | None = None, end: datetime | None = None) -> list[dict]:
     """
-    Package-wise charged delivery aggregates for dashboard drill-down.
+    Package-wise charged delivery aggregates (legacy live scan).
 
     Each row: package_public_id, package_name, charged_deliveries, revenue, profit.
-    Ordered by profit descending, then package_name. Packages with no charged
-    deliveries in scope are omitted.
+    Ordered by profit descending, then package_name.
     """
     buckets: dict[str, dict] = {}
     counts: dict[str, int] = defaultdict(int)

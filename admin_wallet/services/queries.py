@@ -12,7 +12,6 @@ from django.utils import timezone
 
 from admin_wallet.models import AdminWallet, AdminWalletTransaction
 from admin_wallet.services.ledger import get_or_create_platform_wallet
-from admin_wallet.services.profit import meal_profit_by_package, meal_profit_recognized
 from orders.models import OrderDelivery
 
 
@@ -146,8 +145,6 @@ def dashboard_payload(*, recent_limit: int = 10) -> dict:
         )
         .order_by('-created_at', '-id')[:recent_limit]
     )
-    lifetime_profit = meal_profit_recognized()
-    month_profit = meal_profit_recognized(start=month_start, end=month_end)
     return {
         'wallet': wallet_summary(wallet),
         'today_income': today['income'],
@@ -161,13 +158,7 @@ def dashboard_payload(*, recent_limit: int = 10) -> dict:
         'total_customer_withdrawals': wallet.total_customer_withdrawals,
         'net_customer_funding': _net_customer_funding(wallet),
         'total_withdrawn': wallet.total_withdrawn,
-        # Realized meal margin (published slot profit_snapshot), not cash credits.
-        'total_profit': lifetime_profit,
-        'month_profit': month_profit,
-        'profit_by_package': {
-            'lifetime': meal_profit_by_package(),
-            'month': meal_profit_by_package(start=month_start, end=month_end),
-        },
+        # Meal profit moved to GET /api/v1/web/admin-profit/dashboard/
         'recent_transactions': recent,
     }
 

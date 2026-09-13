@@ -159,8 +159,11 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
     if locked.status != OrderDelivery.DeliveryStatus.DELIVERED:
         return locked
 
+    from admin_wallet.services.profit_ledger import recognize_meal_profit
+
     if locked.payment_status == OrderDelivery.PaymentStatus.CHARGED and locked.wallet_transaction_id:
-        # Already charged — no new debit; skip post-charge meal-stop evaluation.
+        # Already charged — no new debit; ensure profit ledger row exists.
+        recognize_meal_profit(locked)
         return locked
 
     from orders.services.subscription_parent import delivery_customer, delivery_meal
@@ -195,7 +198,9 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
                 code='MEAL_PAYMENT_IDEMPOTENCY_CONFLICT',
             )
         # Idempotent re-attach: prior debit already happened; do not re-evaluate.
-        return _attach_charged_transaction(locked, existing, charged_amount=amount)
+        attached = _attach_charged_transaction(locked, existing, charged_amount=amount)
+        recognize_meal_profit(attached)
+        return attached
 
     metadata = _build_metadata(locked, extra=price_meta)
     meal_name = (locked.subscription.meal_name_snapshot if locked.subscription_id else locked.order.meal_name_snapshot)
@@ -238,9 +243,12 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
         if raced is None:
             raise
         # Loser of the race did not debit in this call; winner evaluates.
-        return _attach_charged_transaction(locked, raced, charged_amount=amount)
+        attached = _attach_charged_transaction(locked, raced, charged_amount=amount)
+        recognize_meal_profit(attached)
+        return attached
 
     attached = _attach_charged_transaction(locked, txn, charged_amount=amount)
+    recognize_meal_profit(attached)
     # Real debit succeeded — evaluate meal-stop against post-debit balance.
     evaluate_meal_stop_after_debit(customer)
     return attached

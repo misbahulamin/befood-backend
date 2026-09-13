@@ -102,19 +102,6 @@ class AdminWalletTransactionSerializer(serializers.ModelSerializer):
         return None
 
 
-class AdminWalletProfitByPackageRowSerializer(serializers.Serializer):
-    package_public_id = serializers.UUIDField()
-    package_name = serializers.CharField()
-    charged_deliveries = serializers.IntegerField()
-    revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
-    profit = serializers.DecimalField(max_digits=14, decimal_places=2)
-
-
-class AdminWalletProfitByPackageSerializer(serializers.Serializer):
-    lifetime = AdminWalletProfitByPackageRowSerializer(many=True)
-    month = AdminWalletProfitByPackageRowSerializer(many=True)
-
-
 class AdminWalletDashboardSerializer(serializers.Serializer):
     wallet = AdminWalletSummarySerializer()
     today_income = serializers.DecimalField(
@@ -140,7 +127,7 @@ class AdminWalletDashboardSerializer(serializers.Serializer):
         decimal_places=2,
         help_text=(
             'Completed Admin Wallet cash credits this month (includes customer_funding). '
-            'Not meal profit — see month_profit.'
+            'Not meal profit — use Admin Profit APIs for margin.'
         ),
     )
     month_expense = serializers.DecimalField(
@@ -180,27 +167,6 @@ class AdminWalletDashboardSerializer(serializers.Serializer):
         ),
     )
     total_withdrawn = serializers.DecimalField(max_digits=14, decimal_places=2)
-    total_profit = serializers.DecimalField(
-        max_digits=14,
-        decimal_places=2,
-        help_text=(
-            'Lifetime realized meal profit: sum of published slot profit_snapshot '
-            'for charged deliveries. Not Admin Wallet cash credits.'
-        ),
-    )
-    month_profit = serializers.DecimalField(
-        max_digits=14,
-        decimal_places=2,
-        help_text=(
-            'This month realized meal profit (charged delivery updated_at in month). '
-            'Distinct from month_revenue cash credits.'
-        ),
-    )
-    profit_by_package = AdminWalletProfitByPackageSerializer(
-        help_text=(
-            'Package drill-down for Total Profit (lifetime) and This Month Profit (month) cards.'
-        ),
-    )
     recent_transactions = AdminWalletTransactionSerializer(many=True)
 
 

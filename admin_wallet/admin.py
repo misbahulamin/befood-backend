@@ -1,6 +1,11 @@
 from django.contrib import admin
 
-from admin_wallet.models import AdminWallet, AdminWalletAuditLog, AdminWalletTransaction
+from admin_wallet.models import (
+    AdminWallet,
+    AdminWalletAuditLog,
+    AdminWalletTransaction,
+    MealProfitTransaction,
+)
 
 
 @admin.register(AdminWallet)
@@ -91,3 +96,46 @@ class AdminWalletAuditLogAdmin(admin.ModelAdmin):
         'metadata',
         'created_at',
     )
+
+
+@admin.register(MealProfitTransaction)
+class MealProfitTransactionAdmin(admin.ModelAdmin):
+    list_display = (
+        'public_id',
+        'service_date',
+        'meal_period',
+        'package_name_snapshot',
+        'meal_price',
+        'food_cost',
+        'profit_amount',
+        'source',
+        'created_at',
+    )
+    list_filter = ('meal_period', 'source', 'service_date')
+    search_fields = ('public_id', 'package_name_snapshot')
+    readonly_fields = (
+        'public_id',
+        'order_delivery',
+        'customer',
+        'package',
+        'meal_period',
+        'service_date',
+        'meal_price',
+        'food_cost',
+        'operational_cost',
+        'profit_amount',
+        'profit_percentage',
+        'source',
+        'package_name_snapshot',
+        'created_at',
+        'updated_at',
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
