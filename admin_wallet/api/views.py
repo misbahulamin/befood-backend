@@ -95,10 +95,9 @@ class AdminWalletDashboardView(APIView):
             'cash credits (includes `customer_funding`) — not meal margin. '
             '`total_customer_payments` is meal revenue from charged deliveries. '
             '`net_customer_funding` is remaining customer custody liability. '
-            '`total_profit` / `month_profit` are realized meal margin from published '
-            'slot `profit_snapshot` values; use `profit_by_package.lifetime` / '
-            '`.month` for package drill-down on those cards. Filter history by type '
-            '`customer_funding`, `customer_withdraw`, or legacy `customer_payment`.'
+            'Meal profit cards moved to `GET /api/v1/web/admin-profit/dashboard/`. '
+            'Filter history by type `customer_funding`, `customer_withdraw`, or '
+            'legacy `customer_payment`.'
         ),
         responses={200: AdminWalletDashboardSerializer},
     )

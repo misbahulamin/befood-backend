@@ -293,3 +293,81 @@ class AdminWalletAuditLog(models.Model):
 
     def __str__(self):
         return f'{self.action} {self.amount} @ {self.created_at}'
+
+
+class MealProfitTransaction(PublicIdMixin, TimeStampedModel):
+    """Immutable realized meal margin for one successfully charged delivery."""
+
+    class Source(models.TextChoices):
+        AUTO_DELIVERY = 'auto_delivery', 'Auto delivery'
+        MANUAL_DELIVERY = 'manual_delivery', 'Manual delivery'
+        BACKFILL = 'backfill', 'Historical backfill'
+
+    order_delivery = models.OneToOneField(
+        'orders.OrderDelivery',
+        on_delete=models.PROTECT,
+        related_name='meal_profit_transaction',
+    )
+    customer = models.ForeignKey(
+        CustomerProfile,
+        on_delete=models.PROTECT,
+        related_name='meal_profit_transactions',
+    )
+    package = models.ForeignKey(
+        'meals.MealCategory',
+        on_delete=models.PROTECT,
+        related_name='meal_profit_transactions',
+    )
+    meal_period = models.CharField(max_length=20)
+    service_date = models.DateField()
+    meal_price = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Customer charged amount (revenue) frozen at recognition.',
+    )
+    food_cost = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Published slot ingredient_cost_snapshot frozen at recognition.',
+    )
+    operational_cost = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Published slot operational_cost_snapshot frozen at recognition.',
+    )
+    profit_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Published slot profit_snapshot frozen at recognition.',
+    )
+    profit_percentage = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text='profit_amount / meal_price * 100 when meal_price > 0, else 0.',
+    )
+    source = models.CharField(max_length=32, choices=Source.choices)
+    package_name_snapshot = models.CharField(max_length=255, blank=True, default='')
+
+    class Meta:
+        ordering = ['-service_date', '-created_at', '-id']
+        verbose_name = 'Meal profit transaction'
+        verbose_name_plural = 'Meal profit transactions'
+        indexes = [
+            models.Index(fields=['service_date']),
+            models.Index(fields=['package', 'service_date']),
+            models.Index(fields=['customer', 'service_date']),
+            models.Index(fields=['meal_period', 'service_date']),
+            models.Index(fields=['-service_date', '-id']),
+        ]
+
+    def __str__(self):
+        return (
+            f'MealProfit {self.profit_amount} '
+            f'{self.service_date} {self.meal_period} ({self.public_id})'
+        )

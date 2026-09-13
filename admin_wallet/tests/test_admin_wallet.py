@@ -368,20 +368,19 @@ class AdminWalletIngestionTests(APITestCase):
         self.assertEqual(month_rows[0]['profit'], Decimal('5.00'))
         self.assertEqual(month_rows[0]['charged_deliveries'], 1)
 
+        # Wallet dashboard no longer exposes profit fields (moved to Admin Profit APIs).
         payload = dashboard_payload()
-        self.assertEqual(payload['total_profit'], Decimal('8.10'))
-        self.assertEqual(payload['month_profit'], Decimal('5.00'))
-        self.assertEqual(
-            sum((r['profit'] for r in payload['profit_by_package']['lifetime']), Decimal('0.00')),
-            payload['total_profit'],
-        )
-        self.assertEqual(
-            sum((r['profit'] for r in payload['profit_by_package']['month']), Decimal('0.00')),
-            payload['month_profit'],
-        )
+        self.assertNotIn('total_profit', payload)
+        self.assertNotIn('month_profit', payload)
+        self.assertNotIn('profit_by_package', payload)
+        self.assertIn('total_customer_payments', payload)
+        self.assertIn('month_revenue', payload)
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
     def test_funding_does_not_inflate_profit_and_missing_snapshot_is_zero(self, _mock_date):
+        from admin_wallet.models import MealProfitTransaction
+        from admin_wallet.services.profit import meal_profit_recognized
+
         _approved_recharge(
             self.customer_profile,
             Decimal('100.00'),
@@ -391,29 +390,47 @@ class AdminWalletIngestionTests(APITestCase):
         payload_funding_only = dashboard_payload()
         # Funding raises month_revenue/cash but must not create meal profit.
         self.assertGreaterEqual(payload_funding_only['month_revenue'], Decimal('100.00'))
-        profit_before = payload_funding_only['total_profit']
+        self.assertNotIn('total_profit', payload_funding_only)
+        profit_before = meal_profit_recognized()
 
         order = create_meal_order(self.customer_profile, self.daily_meal)
         delivery = order.deliveries.get()
-        # Charge with snapshot, then clear profit_snapshot — profit must fall back to 0.
+        # Charge with snapshot — profit is frozen on the ledger at charge time.
         slot = self._prepare_chargeable(delivery, profit=Decimal('4.00'))
         with patch('orders.services.order_delivery.timezone.localdate', return_value=date(2026, 8, 5)):
             mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
+
+        row = MealProfitTransaction.objects.get(order_delivery=delivery)
+        self.assertEqual(row.profit_amount, Decimal('4.00'))
+
+        # Clearing snapshot after recognition must not change the ledger row.
         slot.profit_snapshot = None
         slot.save(update_fields=['profit_snapshot', 'updated_at'])
+        row.refresh_from_db()
+        self.assertEqual(row.profit_amount, Decimal('4.00'))
 
         payload = dashboard_payload()
-        self.assertEqual(payload['total_profit'], profit_before)
-        self.assertIn('profit_by_package', payload)
+        self.assertNotIn('total_profit', payload)
+        self.assertNotIn('profit_by_package', payload)
         delivery.refresh_from_db()
         self.assertEqual(delivery.payment_status, OrderDelivery.PaymentStatus.CHARGED)
         self.assertIsNotNone(delivery.charged_amount)
+        # Live calculator re-reads slot; cleared snapshot → 0 for this delivery.
+        self.assertEqual(meal_profit_recognized(), profit_before)
+        # Ledger remains frozen at recognition-time profit.
+        self.assertEqual(
+            MealProfitTransaction.objects.get(order_delivery=delivery).profit_amount,
+            Decimal('4.00'),
+        )
 
-        # Dashboard must not fail when slot cannot be resolved at all.
+        # Live calculator falls back to 0 when slot is deleted; ledger stays frozen.
         MonthlyMenuSlot.objects.filter(pk=slot.pk).delete()
         payload_ok = dashboard_payload()
-        self.assertEqual(payload_ok['total_profit'], profit_before)
-        self.assertIsInstance(payload_ok['profit_by_package']['lifetime'], list)
+        self.assertNotIn('total_profit', payload_ok)
+        self.assertEqual(
+            MealProfitTransaction.objects.get(pk=row.pk).profit_amount,
+            Decimal('4.00'),
+        )
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
     def test_recharge_then_meal_does_not_double_count_cash(self, _mock_date):
@@ -672,11 +689,11 @@ class AdminWalletAPITests(APITestCase):
 
         dash = self.client.get(reverse('web_admin_wallet:dashboard'))
         self.assertEqual(dash.status_code, status.HTTP_200_OK)
-        self.assertIn('total_profit', dash.data)
-        self.assertIn('month_profit', dash.data)
+        self.assertNotIn('total_profit', dash.data)
+        self.assertNotIn('month_profit', dash.data)
+        self.assertNotIn('profit_by_package', dash.data)
         self.assertIn('net_customer_funding', dash.data)
-        self.assertIn('lifetime', dash.data['profit_by_package'])
-        self.assertIn('month', dash.data['profit_by_package'])
+        self.assertIn('month_revenue', dash.data)
 
     def test_dashboard_deposit_filter_search(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
@@ -696,11 +713,9 @@ class AdminWalletAPITests(APITestCase):
         self.assertIn('total_customer_funding', dash.data)
         self.assertIn('total_customer_withdrawals', dash.data)
         self.assertIn('net_customer_funding', dash.data)
-        self.assertIn('total_profit', dash.data)
-        self.assertIn('month_profit', dash.data)
-        self.assertEqual(Decimal(dash.data['total_profit']), Decimal('0.00'))
-        self.assertEqual(dash.data['profit_by_package']['lifetime'], [])
-        self.assertEqual(dash.data['profit_by_package']['month'], [])
+        self.assertNotIn('total_profit', dash.data)
+        self.assertNotIn('month_profit', dash.data)
+        self.assertNotIn('profit_by_package', dash.data)
 
         listed = self.client.get(
             reverse('web_admin_wallet:transactions'),

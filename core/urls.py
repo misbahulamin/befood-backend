@@ -31,6 +31,7 @@ urlpatterns = [
     path('referrals/', include('referrals.api.urls')),
     path('api/v1/web/referrals/', include('referrals.api.web_urls')),
     path('api/v1/web/admin-wallet/', include('admin_wallet.api.web_urls')),
+    path('api/v1/web/admin-profit/', include('admin_wallet.api.profit_urls')),
     path('api/v1/web/inventory/', include('inventory.api.web_urls')),
     path('api/v1/service-areas/', include('service_area.api.urls')),
     path('api/v1/web/service-areas/', include('service_area.api.web_urls')),
