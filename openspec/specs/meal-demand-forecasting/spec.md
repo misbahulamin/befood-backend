@@ -1,9 +1,7 @@
 ## Purpose
 
 Shared meal demand calculation for a service date and meal period: expected, meal-off, and final cooking counts with package-wise breakdown and confirmation status for admin statistics.
-
 ## Requirements
-
 ### Requirement: Demand counts derive from order deliveries per date and period
 
 The system SHALL compute meal demand for a given `service_date` and `meal_period` (`lunch` or `dinner`) from non-cancelled order deliveries that match that date and period. **Expected meal count** MUST equal the number of such deliveries whose status is not cancelled-order–excluded (deliveries belonging to orders in cancellable-terminal cancelled state MUST be excluded). **Meal-off count** MUST equal the number of those deliveries with status `skipped`. **Final cooking count** MUST equal `expected_meal_count - meal_off_count`, which MUST also equal the count of deliveries that remain expected for cooking (status in `{scheduled, preparing, out_for_delivery, delivered, missed}` or the project’s equivalent non-skipped, non-cancelled-order delivery set used for kitchen planning). Counts MUST be integers and MUST never be negative.
@@ -83,3 +81,42 @@ The system MUST compute expected, meal-off, and final cooking counts through one
 
 - **WHEN** admin statistics and kitchen requirement both resolve demand for the same `(D, dinner)` at the same moment
 - **THEN** both report identical expected, meal-off, final cooking counts and the same `confirmation_status`
+
+### Requirement: Post-resume cutoff skips feed meal-off not final cooking
+
+Shared meal-demand calculation MUST treat deliveries system-skipped after low-balance resume (because the slot’s meal-off cutoff had already passed) as meal-off/skipped for that `(service_date, meal_period)`, not as final cooking. Clearing `meal_service_blocked_low_balance` alone MUST NOT move a still-`scheduled` past-cutoff delivery into the cooking set. The existing demand invariant across expected, meal-off, low-balance-blocked, and final cooking counts MUST remain consistent after such a transition.
+
+#### Scenario: Blocked then late-resumed lunch moves to meal-off bucket
+
+- **WHEN** a customer’s lunch delivery was counted under low-balance blocked (not final cooking) and resume after lunch cutoff system-skips that lunch
+- **THEN** demand for that lunch slot counts the delivery under meal-off (or equivalent skipped accounting), not under `final_cooking_count`, and not under `low_balance_blocked_count`
+
+#### Scenario: Expected identity preserved without negative counts
+
+- **WHEN** demand is recalculated immediately after late resume cutoff skip
+- **THEN** counts remain non-negative and final cooking does not exceed the pre-resume final cooking for that past-cutoff slot due to the resumed customer
+
+### Requirement: Demand excludes low-balance meal-stop blocked customers
+
+The system SHALL exclude any live order delivery from meal-demand calculation when the delivery’s customer has `CustomerProfile.meal_service_blocked_low_balance` equal to `true`. Exclusion MUST apply whether the customer is reached via the subscription parent or the one-shot order parent (same OR semantics as auto meal delivery eligibility). Excluded deliveries MUST NOT contribute to `expected_meal_count`, `meal_off_count`, `final_cooking_count`, or distinct customer totals at overall or package level. Customers with the flag `false` (or unset/default false) MUST remain included subject to existing live-delivery and cancellation rules. Meal-off (`skipped`) status alone MUST NOT be used as a substitute for this exclusion: a blocked customer whose delivery is still meal-on MUST still be omitted from demand.
+
+#### Scenario: Blocked meal-on customer omitted from all counts
+
+- **WHEN** three live dinner deliveries exist on date `D`, one customer has `meal_service_blocked_low_balance=true` with status `scheduled`, and the other two are unblocked and not skipped
+- **THEN** expected meal count is `2`, meal-off count is `0`, final cooking count is `2`, and the blocked customer is not counted in `total_customers`
+
+#### Scenario: Blocked customer with meal-off also omitted
+
+- **WHEN** a live delivery on `(D, lunch)` is `skipped` and that customer has `meal_service_blocked_low_balance=true`
+- **THEN** that delivery contributes neither to expected nor to meal-off counts for `(D, lunch)`
+
+#### Scenario: Unblocked customers unchanged
+
+- **WHEN** all customers for a slot have `meal_service_blocked_low_balance=false`
+- **THEN** demand counts match the existing live-delivery and meal-off rules with no additional omissions
+
+#### Scenario: Admin statistics and kitchen share exclusion
+
+- **WHEN** admin meal statistics and kitchen today-requirement both resolve demand for the same `(D, dinner)` at the same moment and some customers are low-balance blocked
+- **THEN** both report identical expected, meal-off, final cooking counts after applying the same block exclusion
+

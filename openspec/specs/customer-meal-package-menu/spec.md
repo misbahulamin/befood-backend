@@ -1,9 +1,7 @@
 ## Purpose
 
 Authenticated verified customers can retrieve the full published monthly lunch and dinner menu for their active meal package(s), for calendar/planning UIs separate from reveal-gated today-menu. Pre-order browsing of a published menu by meal package (without an existing order) is provided by a separate order-menu preview endpoint.
-
 ## Requirements
-
 ### Requirement: Customer can retrieve full published monthly menu for their meal package
 
 The system SHALL provide an authenticated verified-customer endpoint that returns the full published monthly lunch and dinner menu for each of the caller's active meal packages in the requested calendar month (default: current local month).
@@ -112,3 +110,28 @@ When a verified customer retrieves their published package menu for a month, eac
 
 - **WHEN** a verified customer has an active order for the month but the package schedule is not published
 - **THEN** `schedule_published` is `false`, days/slots are empty, and no fabricated `final_meal_price` values are returned
+
+### Requirement: Customer menu responses include package metadata for UI rendering
+
+The system SHALL include a `meta` object on each package entry in `GET /meals/my-package-menu/` responses and on the top-level `GET /meals/order-menu-preview/` response. The `meta` object MUST contain `cycle_days` (integer, days in the target calendar month from the linked `MealCycle`), `total_meals` (integer, expected slot count for the package in that cycle), `meal_period` (`lunch` | `dinner` | `both`), and `meal_period_display` (human-readable label). When no cycle exists for the target month, `cycle_days` and `total_meals` MAY be omitted or null while `meal_period` MUST still reflect the meal category. This metadata MUST be present regardless of `schedule_published` so clients can render duration and meal-option labels before menu slots are available.
+
+#### Scenario: Preview response includes meta for published month
+
+- **WHEN** a verified customer requests order-menu preview for a meal and month with a published schedule
+- **THEN** the response includes `meta.cycle_days`, `meta.total_meals`, `meta.meal_period`, and `meta.meal_period_display` alongside `days`
+
+#### Scenario: Preview response includes meta when unpublished
+
+- **WHEN** a verified customer requests order-menu preview for a meal and month with no published schedule
+- **THEN** the response includes `schedule_published` false, empty `days`, and `meta` with `meal_period` and `cycle_days` when the cycle exists
+
+#### Scenario: Package menu entry includes meta
+
+- **WHEN** a verified customer with an active subscription requests my-package-menu for a month
+- **THEN** each item in `packages` includes a `meta` object with the same fields as the order-menu preview endpoint
+
+#### Scenario: Meta does not weaken ownership scoping
+
+- **WHEN** a verified customer requests my-package-menu
+- **THEN** adding `meta` does not change which packages or day slots are returned; ownership rules remain unchanged
+

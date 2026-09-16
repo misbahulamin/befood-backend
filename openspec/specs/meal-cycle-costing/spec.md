@@ -1,9 +1,7 @@
 ## Purpose
 
 Excel-compatible meal cycle costing: additive line costs from `(resolved_kg + flat) × servings`, package rollups with operational other cost and profit, optional estimated kg, and finalized cost snapshots.
-
 ## Requirements
-
 ### Requirement: Line product cost from cost per customer and servings
 
 The system SHALL calculate each plan line’s product cost using decimal arithmetic (no binary floating point for money) as:
@@ -44,8 +42,9 @@ The system SHALL calculate for each cycle plan:
 - `profit` = `product_cost × profit_percent / 100`
 - `total_cost` = `product_cost + other_cost + profit`
 - `per_meal_rate` = `total_cost /` plan expected servings
+- `suggested_package_price` = `total_cost`
 
-The system MUST NOT compute `other_cost` from `other_cost_percent` or any percentage of `product_cost`. `profit_percent` MUST remain configurable per plan. All money values MUST use decimal arithmetic quantized to the project money precision.
+The system MUST NOT compute `other_cost` from `other_cost_percent` or any percentage of `product_cost`. `profit_percent` MUST remain configurable per plan. All money values MUST use decimal arithmetic quantized to the project money precision. Profit MUST be calculated on `product_cost` only (operational `other_cost` is excluded from the profit base).
 
 #### Scenario: Per meal rate for 60-meal month
 
@@ -86,6 +85,11 @@ The system MUST NOT compute `other_cost` from `other_cost_percent` or any percen
 
 - **WHEN** a plan summary is calculated for a month with a resolvable operational cost
 - **THEN** `other_cost` equals `expected_servings × per_meal_operational_cost` even if a legacy `other_cost_percent` value is still present on the plan row
+
+#### Scenario: Profit excludes operational other cost from base
+
+- **WHEN** a plan has `product_cost` `2533.29`, `other_cost` `247.80`, and `profit_percent` `15`
+- **THEN** `profit` is `379.99` (`2533.29 × 0.15`), not `15%` of `(product_cost + other_cost)`
 
 ### Requirement: Optional estimated kilograms from servings
 
@@ -154,7 +158,7 @@ The system SHALL provide a verified-admin-only cost preview for a cycle plan tha
 - selected ingredients cost (sum of each selected ingredient’s combined unit cost per customer using the additive kg + flat formula)
 - `per_meal_operational_cost` for the plan’s cycle month
 - `profit_percent` from the plan
-- final meal price for one serving computed as:
+- final meal price for one serving computed via the shared one-meal price calculation:
   - `product_cost_one` = selected ingredients unit cost sum
   - `other_cost_one` = `per_meal_operational_cost`
   - `profit_one` = `product_cost_one × profit_percent / 100`
@@ -172,6 +176,11 @@ Public and customer APIs MUST NOT expose this preview.
 - **WHEN** a customer or unauthenticated client requests the cost preview
 - **THEN** the system denies access
 
+#### Scenario: Preview matches shared helper for worked example
+
+- **WHEN** selected ingredients cost is `48.15`, per-meal operational cost is `4.13`, and plan profit percent is `14.45`
+- **THEN** profit is `6.96` and final meal price is `59.24` (quantized to project money precision)
+
 ### Requirement: Package per-meal rate is reference average only for delivery charging
 
 The system SHALL continue to compute and expose package-level `per_meal_rate` from finalized cycle plan totals (`total_cost / expected_servings`) as an estimated average meal rate for offering, eligibility estimates, and admin summaries. The system MUST NOT treat `per_meal_rate` as the authoritative amount to debit from a customer wallet when a delivered meal has a published per-slot final meal price.
@@ -185,3 +194,48 @@ The system SHALL continue to compute and expose package-level `per_meal_rate` fr
 
 - **WHEN** a package’s `per_meal_rate` is `50.00` and a published lunch slot for a delivery has final meal price `62.00`
 - **THEN** delivery charging uses `62.00` and MUST NOT substitute `50.00` from `per_meal_rate`
+
+### Requirement: Shared one-meal price calculation
+
+The system SHALL provide a shared decimal money calculation used by subscriber and Instant one-meal pricing with:
+
+```text
+profit_amount = ingredient_cost × profit_percent / 100
+final_price = ingredient_cost + operational_cost + profit_amount
+```
+
+All inputs and outputs MUST use decimal arithmetic quantized to the project money precision. The calculation MUST NOT use binary floating point. Call sites MUST supply the applicable `profit_percent` (cycle plan for subscriber; Instant meal settings for Instant) and MUST NOT hardcode Instant profit.
+
+#### Scenario: Subscriber percent yields known price
+
+- **WHEN** ingredient cost is `100.00`, operational cost is `10.00`, and profit percent is `20`
+- **THEN** profit amount is `20.00` and final price is `130.00`
+
+#### Scenario: Instant percent yields known price
+
+- **WHEN** ingredient cost is `100.00`, operational cost is `10.00`, and Instant profit percent is `70`
+- **THEN** profit amount is `70.00` and final price is `180.00`
+
+#### Scenario: Cost preview uses shared calculation
+
+- **WHEN** a verified admin requests cycle-plan cost preview for selected ingredients
+- **THEN** profit and final meal price equal the shared calculation using plan `profit_percent` and the resolved per-meal operational cost
+
+### Requirement: Suggested package price equals total cost
+
+The system SHALL set `suggested_package_price` on plan summaries equal to `total_cost` (quantized to money precision). The system MUST NOT derive `suggested_package_price` from `per_meal_rate × expected_servings` when that would introduce rounding drift from `total_cost`.
+
+#### Scenario: Suggested price matches total for 60-meal package
+
+- **WHEN** a plan summary has `total_cost` `3161.08` and `per_meal_rate` `52.68` for `60` expected servings
+- **THEN** `suggested_package_price` is `3161.08` (not `3160.80`)
+
+### Requirement: Published price consistency invariant on finalize
+
+After a successful finalize, the system MUST satisfy `MealCategory.total_price == snapshot_total_cost == summary total_cost` and `published_price_status == in_sync`.
+
+#### Scenario: Finalize publishes exact snapshot total
+
+- **WHEN** finalize computes `total_cost` `3161.08` and persists snapshots
+- **THEN** `MealCategory.total_price` is `3161.08` and the finalize response has `published_price_status` `in_sync`
+

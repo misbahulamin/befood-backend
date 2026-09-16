@@ -61,10 +61,20 @@ class WalletSerializer(serializers.ModelSerializer):
     def get_meal_stop_threshold(self, obj):
         return self._threshold_str(get_order_wallet_settings().meal_stop_threshold)
 
+class DeliveryFeeInfoSerializer(serializers.Serializer):
+    payment_month = serializers.IntegerField(allow_null=True)
+    payment_year = serializers.IntegerField(allow_null=True)
+    period_label = serializers.CharField(allow_null=True)
+    amount = serializers.CharField(allow_null=True)
+    processed_by_admin = serializers.CharField(allow_null=True)
+    reason = serializers.CharField(allow_null=True, required=False)
+
+
 class WalletTransactionSerializer(serializers.ModelSerializer):
     """Customer-facing ledger row (no reviewer identity)."""
 
     meal_payment = serializers.SerializerMethodField()
+    delivery_fee = serializers.SerializerMethodField()
     transaction_id = serializers.SerializerMethodField()
 
     class Meta:
@@ -84,6 +94,7 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
             'reviewed_at',
             'rejection_reason',
             'meal_payment',
+            'delivery_fee',
             'created_at',
             'updated_at',
         )
@@ -109,6 +120,29 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
             'delivery_public_id': metadata.get('delivery_public_id'),
             'final_meal_price': metadata.get('final_meal_price'),
             'charge_source': metadata.get('charge_source'),
+        }
+
+    def get_delivery_fee(self, obj):
+        if obj.type != WalletTransaction.Type.DELIVERY_FEE_PAYMENT:
+            return None
+        metadata = obj.metadata or {}
+        month = metadata.get('payment_month')
+        year = metadata.get('payment_year')
+        period_label = None
+        if month and year:
+            import calendar
+
+            try:
+                period_label = f'{calendar.month_name[int(month)]} {int(year)}'
+            except (TypeError, ValueError, IndexError):
+                period_label = None
+        return {
+            'payment_month': month,
+            'payment_year': year,
+            'period_label': period_label,
+            'amount': f'{obj.amount.quantize(Decimal("0.01")):.2f}',
+            'processed_by_admin': metadata.get('actor_admin_name') or 'Admin',
+            'reason': metadata.get('reason'),
         }
 
 

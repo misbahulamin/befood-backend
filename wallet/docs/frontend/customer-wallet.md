@@ -192,6 +192,28 @@ Meal-delivery charges appear as `type=payment`, `direction=debit`, with a struct
 
 Charge `amount` is the **published lunch/dinner slot final price** for that delivery (may differ lunch vs dinner). Do not assume it equals package average `per_meal_price_snapshot`. See [`orders/docs/frontend/meal-delivery-wallet-payment.md`](../../orders/docs/frontend/meal-delivery-wallet-payment.md).
 
+Delivery-fee deductions appear as `type=delivery_fee_payment` with a `delivery_fee` block (not `meal_payment`):
+
+```json
+{
+  "type": "delivery_fee_payment",
+  "direction": "debit",
+  "amount": "300.00",
+  "note": "September 2026 Delivery Fee",
+  "meal_payment": null,
+  "delivery_fee": {
+    "payment_month": 9,
+    "payment_year": 2026,
+    "period_label": "September 2026",
+    "amount": "300.00",
+    "processed_by_admin": "Admin Shohan",
+    "reason": "September Delivery Fee"
+  }
+}
+```
+
+Admin deduct docs: [`wallet/docs/frontend/delivery-fee-deduction.md`](./delivery-fee-deduction.md).
+
 ---
 
 ## Field meanings (funding request)

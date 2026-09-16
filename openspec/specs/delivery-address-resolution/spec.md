@@ -1,9 +1,7 @@
 ## Purpose
 
 Resolved delivery destinations are snapshotted onto each `OrderDelivery` at creation (and optionally resynced for future scheduled slots), so ops and customers see a stable per-slot address and legacy present-default customers are backfilled without re-onboarding.
-
 ## Requirements
-
 ### Requirement: OrderDelivery stores a resolved address snapshot
 When the system creates an `OrderDelivery` row, it MUST resolve the customer’s effective delivery place for that `service_date` and `meal_period` and MUST persist snapshot fields on the delivery (at minimum label and full address; area/city and coordinates when available). The system MAY store a nullable FK to the source delivery place with `ON DELETE SET NULL`. Snapshot text MUST remain available for ops and customers even if the place is later edited or deleted.
 
@@ -43,3 +41,23 @@ For existing customers who only have a present default delivery address, the sys
 #### Scenario: Backfill from present default
 - **WHEN** migration runs for a customer with a present `is_default_delivery` address and no delivery places yet
 - **THEN** the system creates a delivery place from that address and sets it as the effective lunch and dinner default (or documented equivalent fallback)
+
+### Requirement: Future scheduled snapshot resync is Postgres-safe with nullable parents
+
+When the system re-resolves and updates address snapshots for future `scheduled` `OrderDelivery` rows (for example after a customer changes meal delivery preferences or places), it MUST acquire any row lock in a way that PostgreSQL accepts when `order` and/or `subscription` foreign keys are nullable (no `FOR UPDATE` on the nullable side of an outer join). Concurrent resyncs that update the same delivery MUST still be serialized by locking that delivery row. Deliveries that are not future `scheduled` MUST NOT have their address snapshots rewritten.
+
+#### Scenario: Resync with subscription-owned future deliveries does not raise FOR UPDATE outer-join error
+
+- **WHEN** a customer with at least one future `scheduled` delivery that has `subscription` set and `order` null changes delivery preferences (or the system otherwise runs future scheduled snapshot resync for that customer) under PostgreSQL
+- **THEN** the operation completes without `NotSupportedError` / `FOR UPDATE cannot be applied to the nullable side of an outer join`, and those future scheduled rows receive the newly resolved snapshot
+
+#### Scenario: Resync with order-owned future deliveries still succeeds
+
+- **WHEN** a customer with future `scheduled` order-owned deliveries (subscription null) changes delivery preferences under PostgreSQL
+- **THEN** the resync completes successfully and those future scheduled snapshots update as before
+
+#### Scenario: Non-scheduled historical snapshots remain unchanged
+
+- **WHEN** a customer changes preferences and has a past or non-`scheduled` delivery (for example `delivered`)
+- **THEN** that delivery’s address snapshot remains unchanged
+

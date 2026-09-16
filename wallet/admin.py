@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from wallet.models import Wallet, WalletTransaction
+from wallet.models import DeliveryFeePayment, Wallet, WalletTransaction
 
 
 @admin.register(Wallet)
@@ -90,6 +90,54 @@ class WalletTransactionAdmin(admin.ModelAdmin):
         'updated_at',
     )
     ordering = ('-created_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(DeliveryFeePayment)
+class DeliveryFeePaymentAdmin(admin.ModelAdmin):
+    list_display = (
+        'public_id',
+        'customer',
+        'amount',
+        'payment_year',
+        'payment_month',
+        'status',
+        'source',
+        'deducted_by_admin',
+        'created_at',
+    )
+    list_filter = ('status', 'source', 'payment_year', 'payment_month')
+    search_fields = (
+        'public_id',
+        'reason',
+        'customer__user__email',
+        'customer__user__username',
+        'customer__phone',
+        'wallet_transaction__public_id',
+    )
+    readonly_fields = (
+        'public_id',
+        'customer',
+        'amount',
+        'payment_month',
+        'payment_year',
+        'status',
+        'deducted_by_admin',
+        'wallet_transaction',
+        'reason',
+        'source',
+        'fee_rule_code',
+        'service_area_public_id',
+        'metadata',
+        'created_at',
+        'updated_at',
+    )
+    ordering = ('-payment_year', '-payment_month', '-created_at')
 
     def has_add_permission(self, request):
         return False
