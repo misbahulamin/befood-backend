@@ -1,9 +1,7 @@
 ## Purpose
 
 Customers set usual lunch/dinner delivery places and optional weekday overrides; the system resolves a single effective place per service date and meal period with deterministic precedence for a simple frontend UX.
-
 ## Requirements
-
 ### Requirement: Customer sets lunch and dinner default delivery places
 The system SHALL store at most one default delivery place for lunch and at most one for dinner per customer. The same place MAY be selected for both periods. Preference updates MUST accept place identity via `public_id` and MUST verify ownership. Clearing a period’s default MUST be explicit and documented. Unauthenticated access MUST be rejected.
 
@@ -59,3 +57,18 @@ The system SHALL expose preference read/write APIs that support a simple client 
 #### Scenario: Preview week destinations
 - **WHEN** an authenticated customer requests a delivery preference preview for a date range
 - **THEN** the system returns the resolved place (or snapshot fields) per date and meal period for that customer
+
+### Requirement: Preference and override writes complete when future deliveries need resync
+
+When an authenticated customer successfully updates lunch/dinner defaults or replaces weekday delivery overrides, the system MUST persist the preference change and MUST complete the request successfully even when the customer has future `scheduled` deliveries that require address snapshot resync. The write MUST NOT fail with a server error caused by database row-locking combined with nullable `order` / `subscription` joins on those deliveries. API request and response shapes for preference and override endpoints MUST remain unchanged.
+
+#### Scenario: PUT delivery preferences succeeds with future subscription deliveries
+
+- **WHEN** a verified customer with at least one future `scheduled` subscription-owned delivery puts updated meal delivery preferences
+- **THEN** the system responds successfully (not `500`) with the persisted preferences payload
+
+#### Scenario: PUT day overrides succeeds with future scheduled deliveries
+
+- **WHEN** a verified customer with future `scheduled` deliveries replaces their weekday delivery overrides
+- **THEN** the system responds successfully (not `500`) with the persisted override list
+

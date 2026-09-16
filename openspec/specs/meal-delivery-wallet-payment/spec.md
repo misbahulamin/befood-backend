@@ -2,9 +2,7 @@
 
 ## Purpose
 Charge the customer wallet only when a meal delivery is completed, using the published menu slot’s final meal price snapshot and recording an idempotent payment history entry.
-
 ## Requirements
-
 ### Requirement: Wallet debit only when delivery becomes delivered
 
 The system SHALL debit the customer’s wallet for a meal slot if and only if that `OrderDelivery` transitions to status `delivered`. The system MUST NOT debit when the delivery remains `scheduled`, is set to `skipped` (customer meal-off or admin skip), or is set to `missed`. Order creation and meal schedule generation MUST NOT debit the wallet for future slots.
@@ -138,3 +136,33 @@ After a successful customer meal-delivery wallet charge, the system MUST NOT cre
 #### Scenario: Retry mark-delivered still does not cash-credit Admin Wallet
 - **WHEN** a delivery was already charged and mark-delivered is posted again
 - **THEN** neither the customer wallet nor the Admin Wallet cash balance changes due to the retry, and no additional Admin Wallet cash credit is created for that delivery payment
+
+### Requirement: Successful meal-delivery debit triggers meal-stop evaluation
+
+When a meal-delivery wallet charge succeeds (including via auto-delivery or operator mark-delivered), the system SHALL trigger immediate meal-stop threshold evaluation for that delivery’s customer as specified by `post-meal-charge-meal-stop`. A rejected charge for insufficient funds or frozen wallet MUST NOT mark the delivery delivered and MUST NOT be treated as a successful debit for meal-stop evaluation. Existing debit-on-delivered, amount, idempotency, and Admin Wallet non-cash-credit rules from this capability remain unchanged.
+
+#### Scenario: Successful delivered charge evaluates meal-stop
+
+- **WHEN** a `scheduled` delivery becomes `delivered` and the wallet is successfully debited for the slot price
+- **THEN** the system evaluates the customer’s post-debit spendable balance against `meal_stop_threshold` and applies meal-stop block when balance is strictly below the threshold
+
+#### Scenario: Insufficient funds rejection does not meal-stop via charge path
+
+- **WHEN** mark-delivered is rejected because wallet balance is below the meal charge amount
+- **THEN** the delivery is not charged, and this rejection alone does not constitute a successful meal-payment debit for post-charge meal-stop evaluation
+
+### Requirement: Delivered charge lock is Postgres-safe for subscription-owned slots
+
+When locking an `OrderDelivery` to debit the customer wallet after a transition to `delivered`, the system MUST acquire a row lock on the delivery in a way that PostgreSQL accepts when `order` and/or `subscription` foreign keys are nullable (no `FOR UPDATE` on the nullable side of an outer join). Charge amount, idempotency, and debit-only-on-delivered rules from this capability remain unchanged.
+
+#### Scenario: Charge after admin mark delivered on subscription does not raise FOR UPDATE outer-join error
+
+- **WHEN** an authorized admin marks a subscription-owned `scheduled` delivery as `delivered` with sufficient wallet balance under PostgreSQL
+- **THEN** the mark and wallet charge complete without `NotSupportedError` / `FOR UPDATE cannot be applied to the nullable side of an outer join`
+- **AND** exactly one completed payment debit exists for that delivery when charging is enabled
+
+#### Scenario: Admin skip still does not charge
+
+- **WHEN** an authorized admin marks a subscription-owned delivery as `skipped`
+- **THEN** the system does not debit the wallet for that slot
+

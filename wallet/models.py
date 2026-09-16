@@ -69,6 +69,7 @@ class WalletTransaction(PublicIdMixin, TimeStampedModel):
         RECHARGE = 'recharge', 'Recharge'
         WITHDRAW = 'withdraw', 'Withdraw'
         PAYMENT = 'payment', 'Payment'
+        DELIVERY_FEE_PAYMENT = 'delivery_fee_payment', 'Delivery fee payment'
         REFUND = 'refund', 'Refund'
         ADJUSTMENT = 'adjustment', 'Adjustment'
         REFERRAL_COMMISSION = 'referral_commission', 'Referral commission'
@@ -184,3 +185,83 @@ class WalletTransaction(PublicIdMixin, TimeStampedModel):
 
     def __str__(self):
         return f'{self.type} {self.direction} {self.amount} ({self.public_id})'
+
+
+class DeliveryFeePayment(PublicIdMixin, TimeStampedModel):
+    """Monthly delivery-fee collection linked to a customer wallet debit."""
+
+    class Status(models.TextChoices):
+        PAID = 'paid', 'Paid'
+        REVERSED = 'reversed', 'Reversed'
+
+    class Source(models.TextChoices):
+        MANUAL = 'manual', 'Manual'
+        AUTOMATIC = 'automatic', 'Automatic'
+
+    customer = models.ForeignKey(
+        CustomerProfile,
+        on_delete=models.CASCADE,
+        related_name='delivery_fee_payments',
+    )
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+    )
+    payment_month = models.PositiveSmallIntegerField(
+        help_text='Calendar month 1–12 for the billed period.',
+    )
+    payment_year = models.PositiveSmallIntegerField(
+        help_text='Calendar year for the billed period.',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PAID,
+    )
+    deducted_by_admin = models.ForeignKey(
+        'user_management.AdminProfile',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='delivery_fee_payments',
+    )
+    wallet_transaction = models.OneToOneField(
+        WalletTransaction,
+        on_delete=models.PROTECT,
+        related_name='delivery_fee_payment',
+    )
+    reason = models.CharField(max_length=255)
+    source = models.CharField(
+        max_length=20,
+        choices=Source.choices,
+        default=Source.MANUAL,
+    )
+    fee_rule_code = models.CharField(max_length=64, blank=True, default='')
+    service_area_public_id = models.UUIDField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-payment_year', '-payment_month', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['customer', 'payment_year', 'payment_month'],
+                condition=models.Q(status='paid'),
+                name='delivery_fee_unique_paid_per_customer_month',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(payment_month__gte=1, payment_month__lte=12),
+                name='delivery_fee_payment_month_range',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['payment_year', 'payment_month', 'status']),
+            models.Index(fields=['customer', '-payment_year', '-payment_month']),
+            models.Index(fields=['status', '-created_at']),
+        ]
+
+    def __str__(self):
+        return (
+            f'DeliveryFee {self.payment_year}-{self.payment_month:02d} '
+            f'{self.amount} ({self.public_id})'
+        )

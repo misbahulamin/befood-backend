@@ -1,12 +1,10 @@
 ## Purpose
 
 Verified-admin web APIs for listing, searching, filtering, and viewing customer profile overviews identified by stable `public_id`.
-
 ## Requirements
-
 ### Requirement: Admin can list customers with basic information
 
-The system SHALL provide a verified-admin web API collection at `/api/v1/web/customers/` that returns a paginated list of customer profiles. Each list item MUST include at least: customer `public_id`, display name, email, phone, `profile_picture_url` (nullable), account active flag, email verification status, registration timestamp (`User.date_joined`), and current meal package summary when an active order exists (package name and order `public_id` or null). Unauthenticated callers MUST receive `401`. Authenticated non-admin callers MUST receive `403`.
+The system SHALL provide a verified-admin web API collection at `/api/v1/web/customers/` that returns a paginated list of customer profiles. Each list item MUST include at least: customer `public_id`, display name, email, phone, `profile_picture_url` (nullable), account active flag, email verification status, registration timestamp (`User.date_joined`), and current meal package summary when an active order exists (package name and order `public_id` or null). Unauthenticated callers MUST receive `401`. Authenticated non-admin callers MUST receive `403`. When a customer has a stored profile picture, `profile_picture_url` MUST be the media/S3 URL for that picture. When absent, it MUST be `null`.
 
 #### Scenario: Verified admin lists customers
 
@@ -28,19 +26,34 @@ The system SHALL provide a verified-admin web API collection at `/api/v1/web/cus
 - **WHEN** a customer has no profile picture stored
 - **THEN** the list item MUST include `profile_picture_url` with value `null`
 
+#### Scenario: Profile picture present
+
+- **WHEN** a customer has a stored profile picture
+- **THEN** the list item MUST include `profile_picture_url` with the non-null media/S3 URL for that picture
+
 ### Requirement: Admin customer search
 
-The system SHALL allow verified admins to search the customer list by name, email, and phone via an allowlisted query parameter (for example `q`). Matching MUST be case-insensitive for name and email. Unsupported or malformed search parameters that fail validation MUST yield `400 Bad Request` and MUST NOT be silently ignored when validation is enabled.
+The system SHALL allow verified admins to search the customer list by name, email, username, and phone via an allowlisted query parameter (for example `q`). Matching MUST be case-insensitive for name, email, and username. Phone matching MUST use the shared admin people-search normalization (optional `+880` / `880` stripping). When `q` is a canonical 36-character UUID, the list MUST also match exact customer `public_id`. Multi-word queries MAY match first-name and last-name pairs. Unsupported or malformed search parameters that fail validation MUST yield `400 Bad Request` and MUST NOT be silently ignored when validation is enabled. Implementation MUST use the shared `build_customer_people_q` helper.
 
 #### Scenario: Search by email fragment
 
 - **WHEN** a verified admin lists customers with `q` matching part of a customer email
-- **THEN** only customers whose name, email, or phone match that query MUST be returned
+- **THEN** only customers whose name, email, username, phone, or matching `public_id` criteria match that query MUST be returned
 
 #### Scenario: Search by phone
 
-- **WHEN** a verified admin lists customers with `q` matching a stored phone number
+- **WHEN** a verified admin lists customers with `q` matching a stored phone number (including common BD prefix variants)
 - **THEN** the matching customer MUST appear in the results
+
+#### Scenario: Search by username fragment
+
+- **WHEN** a verified admin lists customers with `q` matching part of a username
+- **THEN** the matching customer MUST appear in the results
+
+#### Scenario: Search by customer public_id
+
+- **WHEN** a verified admin lists customers with `q` equal to a customer's canonical `public_id`
+- **THEN** that customer MUST appear in the results
 
 ### Requirement: Admin customer filters
 
@@ -108,3 +121,18 @@ The system SHALL identify customers in admin web customer APIs by a stable UUID 
 
 - **WHEN** a verified admin lists customers and opens one detail URL
 - **THEN** the detail path uses the same `public_id` returned in the list item
+
+### Requirement: Admin customer overview includes real profile picture URL
+
+The admin customer overview/detail payload MUST include `profile_picture_url` that reflects the stored customer profile picture media URL when present, or `null` when absent. The system MUST NOT hardcode this field to `null` when a picture exists.
+
+#### Scenario: Overview with picture
+
+- **WHEN** a verified admin requests overview for a customer who has uploaded a profile picture
+- **THEN** `profile_picture_url` is the non-null media/S3 URL
+
+#### Scenario: Overview without picture
+
+- **WHEN** a verified admin requests overview for a customer without a profile picture
+- **THEN** `profile_picture_url` is `null`
+

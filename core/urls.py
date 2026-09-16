@@ -24,6 +24,7 @@ urlpatterns = [
     path('assets/', include('assets.api.urls')),
     path('wallet/', include('wallet.api.urls')),
     path('api/v1/web/wallet-funding/', include('wallet.api.web_urls')),
+    path('api/v1/web/delivery-fees/', include('wallet.api.delivery_fee_urls')),
     path('faqs/', include('faqs.api.urls')),
     path('blogs/', include('blogs.api.urls')),
     path('onahar/', include('onahar.api.urls')),

@@ -1,9 +1,7 @@
 ## Purpose
 
 Idempotent Admin Wallet cash custody movements when customers recharge or withdraw their personal wallets.
-
 ## Requirements
-
 ### Requirement: Successful customer recharge credits Admin Wallet custody
 When a customer wallet recharge completes successfully, the system SHALL credit the Admin Wallet by the same amount as a completed `customer_funding` transaction. The credit MUST use direction `credit`, MUST link the related customer profile and customer wallet transaction when available, and MUST run in the same database transaction as the customer credit when practical.
 
@@ -43,3 +41,15 @@ The system SHALL provide a management command that can detect completed customer
 #### Scenario: Dry-run reports missing funding credits
 - **WHEN** an operator runs the funding reconcile command in dry-run mode and a completed customer recharge has no Admin Wallet `customer_funding` row
 - **THEN** the command reports the missing credit without writing ledger rows
+
+### Requirement: Customer withdraw is custody release not business expense
+When a customer wallet withdraw completes successfully and the Admin Wallet is debited, the system MUST post exactly one completed Admin Wallet transaction of type `customer_withdraw` (direction `debit`) for that customer wallet transaction. The debit MUST reduce Admin Wallet available balance and MUST increment `total_customer_withdrawals`. The system MUST NOT create an expense-typed Admin Wallet transaction for that withdraw and MUST NOT increment `total_expenses` solely because of that withdraw.
+
+#### Scenario: Withdraw approve posts customer_withdraw not expense
+- **WHEN** an admin approves a pending customer withdraw of `200.00` and Admin Wallet float covers the amount
+- **THEN** the Admin Wallet balance decreases by `200.00`, exactly one completed `customer_withdraw` debit of `200.00` exists for that customer wallet transaction, and lifetime `total_expenses` is unchanged by that debit
+
+#### Scenario: Withdraw approve does not use expense ledger types
+- **WHEN** an admin approves a customer withdraw
+- **THEN** no Admin Wallet row of type in `EXPENSE_TYPES` is created for that approval event
+

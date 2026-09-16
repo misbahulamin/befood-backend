@@ -132,6 +132,11 @@ class WalletTransactionViewSet(
     @extend_schema(
         tags=['Customer Wallet'],
         summary='List wallet transactions',
+        description=(
+            'Paginated ledger newest-first. Meal charges use type=payment with meal_payment. '
+            'Delivery-fee debits use type=delivery_fee_payment with delivery_fee '
+            '(billing month/year, amount, processed_by_admin).'
+        ),
         parameters=[
             OpenApiParameter(name='page', type=int, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='page_size', type=int, location=OpenApiParameter.QUERY),

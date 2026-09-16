@@ -127,7 +127,10 @@ def _default_debit_strategy(txn_type: str) -> str:
         return STRATEGY_RECHARGE_ONLY
     if txn_type == WalletTransaction.Type.REFERRAL_COMMISSION_REVERSAL:
         return STRATEGY_COMMISSION_ONLY
-    if txn_type == WalletTransaction.Type.PAYMENT:
+    if txn_type in (
+        WalletTransaction.Type.PAYMENT,
+        WalletTransaction.Type.DELIVERY_FEE_PAYMENT,
+    ):
         return STRATEGY_COMMISSION_FIRST
     return STRATEGY_COMMISSION_FIRST
 

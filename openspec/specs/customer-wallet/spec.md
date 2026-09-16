@@ -1,9 +1,7 @@
 ## Purpose
 
 Authenticated verified customers own one wallet with UUID public identity, balance/status summary, and paginated append-only transaction history.
-
 ## Requirements
-
 ### Requirement: Customer has exactly one wallet with public identity
 The system SHALL ensure each `CustomerProfile` has at most one wallet. The wallet MUST expose opaque `public_id` (UUID) as the client identity and MUST NOT require clients to use the integer primary key. The wallet MUST store `balance` as a non-negative decimal with two fractional digits, `currency` (default `BDT`), and `status` of `active` or `frozen`. Accessing the caller’s wallet when none exists MUST create an active wallet with balance `0`.
 
@@ -85,3 +83,15 @@ The system SHALL record every completed balance change as an append-only `Wallet
 #### Scenario: Debit rejected when insufficient funds
 - **WHEN** the ledger service attempts to debit more than the current balance
 - **THEN** the system rejects the operation without changing the balance and without creating a completed debit that would overdraw
+
+### Requirement: Wallet read access allows phone-verified identity without email
+The system SHALL allow an authenticated customer who is identity-verified via phone (without email verification) to retrieve their wallet summary and owned transaction list/detail under the same ownership and pagination rules as other verified customers. “Verified customer” for wallet read access MUST mean unified identity verification (phone or email or trusted social), not email-only.
+
+#### Scenario: Phone-only verified customer reads wallet
+- **WHEN** an authenticated customer with `is_phone_verified=True` and without email verification requests their wallet
+- **THEN** the system responds `200` with that caller’s wallet summary and MUST NOT reject for missing email verification
+
+#### Scenario: Phone-only verified customer lists transactions
+- **WHEN** an authenticated phone-verified customer without email verification requests their wallet transaction list
+- **THEN** the system responds `200` with a paginated list scoped to that caller’s wallet
+

@@ -1,9 +1,7 @@
 ## Purpose
 
 Delivery Man accounts can register, verify email, and log in only after admin approval, using `RiderProfile` and the `DELIVERY_MAN` group.
-
 ## Requirements
-
 ### Requirement: Delivery Man can register a new account
 The system SHALL allow an unauthenticated client to register a Delivery Man account with email, password, first name, last name, phone, and address. The system MUST create an inactive Django `User`, a `RiderProfile` (Delivery Man profile) with `is_email_verified=False`, `approval_status=pending`, and `is_verified=False`, assign the user to the `DELIVERY_MAN` group, and send an email verification message. Duplicate email or phone MUST be rejected. The profile MUST expose a `public_id` (UUID) for later admin and authenticated identity use.
 
@@ -20,10 +18,10 @@ The system SHALL allow an unauthenticated client to register a Delivery Man acco
 - **THEN** the system responds with a validation error and does not create a new account
 
 ### Requirement: Delivery Man must verify email before admin review
-The system SHALL provide a Delivery Man–specific email verification endpoint using a secure uid/token link. On successful verification the system MUST set `is_email_verified=True` and `email_verified_at`, and MUST NOT grant login access until admin approval (`is_active` remains false and `is_verified` remains false). Already-verified links MUST return a clear already-verified message. Invalid or expired tokens MUST be rejected.
+The system SHALL provide a Delivery Man–specific email verification **API** endpoint using a secure uid/token. Verification emails MUST deep-link to the frontend SPA path under `FRONTEND_URL` (default `/deliveryman/verify-email/{uidb64}/{token}/`); the SPA then calls the API. On successful API verification the system MUST set `is_email_verified=True` and `email_verified_at`, and MUST NOT grant login access until admin approval (`is_active` remains false and `is_verified` remains false). Already-verified links MUST return a clear already-verified message. Invalid or expired tokens MUST be rejected. Activation email hrefs MUST NOT use the API request host.
 
 #### Scenario: Successful email verification queues admin review
-- **WHEN** a registered Delivery Man opens a valid verification link before expiry
+- **WHEN** a registered Delivery Man opens a valid verification link before expiry (via frontend deep link that invokes the verify API)
 - **THEN** the system marks the profile email as verified, keeps the account unapproved and inactive for login, and the account becomes eligible for the admin pending queue
 
 #### Scenario: Invalid verification link
@@ -32,7 +30,7 @@ The system SHALL provide a Delivery Man–specific email verification endpoint u
 
 #### Scenario: Resend verification email
 - **WHEN** an unverified Delivery Man requests resend verification for their email
-- **THEN** the system sends a new verification email without revealing whether non-Delivery-Man emails exist beyond safe generic messaging consistent with customer resend behavior
+- **THEN** the system sends a new verification email whose activation link uses `FRONTEND_URL` (not the API host), without revealing whether non-Delivery-Man emails exist beyond safe generic messaging consistent with customer resend behavior
 
 ### Requirement: Login requires email verification and admin approval
 The system SHALL authenticate Delivery Man login with email and password and issue an auth token only when the user has a Delivery Man profile, the email is verified, and the admin has approved the account (`is_verified=True` and active). The system MUST NOT issue a token for pending or rejected accounts. When credentials are valid but admin approval is missing, the system MUST return a clear non-success response with the message: `Your information has not been approved by admin yet. Please wait until your account verification is completed.`
@@ -67,3 +65,4 @@ The system SHALL provide a `me` endpoint for an authenticated approved Delivery 
 #### Scenario: Unauthenticated me rejected
 - **WHEN** an unauthenticated client calls the deliveryman `me` endpoint
 - **THEN** the system responds `401 Unauthorized`
+

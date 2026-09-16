@@ -25,6 +25,7 @@ Admin Panel Customer 360 at `/admin/customers/:publicId`. **Subscription-first**
 | Meal history | `…/meals/` | Yes |
 | Meal-offs | `…/meal-offs/` | Yes |
 | Wallet overview | `…/wallet-overview/` | Yes |
+| Delivery fee | `…/delivery-fee-context/` + `…/delivery-fee-payments/` | Yes — see [delivery-fee-deduction.md](../../wallet/docs/frontend/delivery-fee-deduction.md) |
 | Wallet history | `…/wallet-transactions/` | Yes |
 | Activity | `…/activity/` | Yes |
 

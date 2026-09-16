@@ -38,6 +38,26 @@ from user_management.services.admin_customer import (
     customer_subscriptions_queryset,
     customer_wallet_transactions_queryset,
 )
+from wallet.api.delivery_fee_serializers import (
+    DeliveryFeeChargeSerializer,
+    DeliveryFeeContextSerializer,
+    DeliveryFeePaymentSerializer,
+)
+from wallet.services.delivery_fee import (
+    DeliveryFeeAlreadyPaidError,
+    DeliveryFeeError,
+    DeliveryFeePeriodError,
+    build_delivery_fee_context,
+    charge_delivery_fee,
+    list_customer_delivery_fee_payments,
+    serialize_delivery_fee_payment,
+)
+from wallet.services.ledger import (
+    IdempotencyConflictError,
+    InsufficientFundsError,
+    InvalidAmountError,
+    WalletFrozenError,
+)
 from user_management.services.delivery_place import (
     DeliveryPlaceError,
     create_delivery_place,
@@ -61,6 +81,40 @@ def _with_deprecation(response, successor_path: str):
     response['Deprecation'] = 'true'
     response['Link'] = f'<{successor_path}>; rel="successor-version"'
     return response
+
+
+def _actor_admin(request):
+    return getattr(request.user, 'admin_profile', None)
+
+
+def _idempotency_key(request, validated_data=None) -> str | None:
+    header_key = request.headers.get('Idempotency-Key') or request.headers.get(
+        'idempotency-key'
+    )
+    body_key = (validated_data or {}).get('idempotency_key')
+    key = header_key or body_key
+    if key is None:
+        return None
+    key = str(key).strip()
+    return key or None
+
+
+def _delivery_fee_error_response(exc):
+    if isinstance(exc, (DeliveryFeeAlreadyPaidError, IdempotencyConflictError)):
+        return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+    if isinstance(exc, InsufficientFundsError):
+        return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    if isinstance(
+        exc,
+        (
+            InvalidAmountError,
+            WalletFrozenError,
+            DeliveryFeePeriodError,
+            DeliveryFeeError,
+        ),
+    ):
+        return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @extend_schema_view(
@@ -172,6 +226,86 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
     def wallet_overview(self, request, public_id=None):
         customer = self.get_object()
         return Response({'wallet_overview': build_wallet_overview(customer)})
+
+    @extend_schema(
+        tags=['Admin Delivery Fees'],
+        operation_id='adminCustomerDeliveryFeeContext',
+        summary='Delivery-fee deduct context for customer',
+        description=(
+            'Verified admin only. Returns name, phone, wallet balances, active '
+            'subscription, current-month paid amount, and prior delivery-fee history.'
+        ),
+        responses={200: DeliveryFeeContextSerializer},
+    )
+    @action(detail=True, methods=['get'], url_path='delivery-fee-context')
+    def delivery_fee_context(self, request, public_id=None):
+        customer = self.get_object()
+        return Response(build_delivery_fee_context(customer))
+
+    @extend_schema(
+        tags=['Admin Delivery Fees'],
+        operation_id='adminCustomerDeliveryFeePayments',
+        summary='List or create customer delivery-fee payments',
+        description=(
+            'GET: paginated delivery-fee payment history. '
+            'POST: manually deduct delivery fee from customer wallet. '
+            'Send Idempotency-Key header (or body idempotency_key) to safely retry.'
+        ),
+        request=DeliveryFeeChargeSerializer,
+        responses={
+            200: DeliveryFeePaymentSerializer(many=True),
+            201: DeliveryFeePaymentSerializer,
+        },
+    )
+    @action(detail=True, methods=['get', 'post'], url_path='delivery-fee-payments')
+    def delivery_fee_payments(self, request, public_id=None):
+        customer = self.get_object()
+        if request.method.lower() == 'get':
+            queryset = list_customer_delivery_fee_payments(customer)
+            page = self.paginate_queryset(queryset)
+            payload = [serialize_delivery_fee_payment(p) for p in page]
+            return self.get_paginated_response(payload)
+
+        serializer = DeliveryFeeChargeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        actor = _actor_admin(request)
+        if actor is None:
+            return Response(
+                {'detail': 'Verified admin profile required.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            payment, created = charge_delivery_fee(
+                customer,
+                data['amount'],
+                payment_month=data['payment_month'],
+                payment_year=data['payment_year'],
+                reason=data['reason'],
+                actor_admin=actor,
+                idempotency_key=_idempotency_key(request, data),
+            )
+        except Exception as exc:
+            if isinstance(
+                exc,
+                (
+                    DeliveryFeeAlreadyPaidError,
+                    IdempotencyConflictError,
+                    InsufficientFundsError,
+                    InvalidAmountError,
+                    WalletFrozenError,
+                    DeliveryFeePeriodError,
+                    DeliveryFeeError,
+                ),
+            ):
+                return _delivery_fee_error_response(exc)
+            raise
+
+        payload = serialize_delivery_fee_payment(payment)
+        return Response(
+            payload,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
     @extend_schema(
         tags=['Admin Customers'],

@@ -1,9 +1,7 @@
 ## Purpose
 
 Customer wallet recharge and withdraw with validated amounts, optional idempotency, a manual funding path, and distinct meal-delivery payment debits.
-
 ## Requirements
-
 ### Requirement: Customer can recharge wallet with manual funding
 The system SHALL allow an authenticated verified customer to recharge their wallet by posting a positive monetary `amount`. For this release, successful recharge MUST credit the wallet immediately, create a completed ledger transaction with `type=recharge`, `direction=credit`, and `method=manual`, and return the updated wallet balance together with the transaction `public_id`. The system MUST reject non-positive amounts, amounts with more than two decimal places, and amounts above the configured maximum. The customer MUST NOT supply a payment gateway method in this release; the server sets `manual`.
 
@@ -95,3 +93,60 @@ When a customer manual withdraw completes successfully, the system MUST also deb
 #### Scenario: Admin Wallet float shortfall rejects withdraw
 - **WHEN** a customer requests a withdraw that exceeds Admin Wallet balance
 - **THEN** the system rejects the withdraw and the customer wallet balance is unchanged
+
+### Requirement: Customer funding permission uses unified identity verification
+The system SHALL treat a customer as permitted for manual wallet funding (recharge and withdraw submit) when `is_customer_identity_verified` (or equivalent) is true—including when trust comes only from phone verification. The system MUST NOT require email verification for phone-registered customers to submit funding requests. Unauthenticated callers MUST still receive `401`. Callers with no trusted identity factor MUST receive `403` for identity denial (distinct from funding kill-switch or frozen-wallet denials).
+
+#### Scenario: Phone-verified customer may submit manual recharge
+- **WHEN** an authenticated phone-verified customer with unverified email submits a valid manual recharge request
+- **THEN** the system does not deny the request for email verification and applies the existing manual funding create rules
+
+#### Scenario: Phone-verified customer may submit manual withdraw
+- **WHEN** an authenticated phone-verified customer with unverified email submits a valid manual withdraw request
+- **THEN** the system does not deny the request for email verification and applies the existing manual funding withdraw rules
+
+#### Scenario: No trusted identity cannot submit funding
+- **WHEN** an authenticated customer with no email, phone, or social identity verification submits recharge or withdraw
+- **THEN** the system responds `403` for identity verification failure before creating a funding transaction
+
+### Requirement: Provider recharge duplicate checks ignore failed refs
+When creating a customer provider recharge request (`bkash`/`nagad`/`bank` with non-empty `transaction_id`), the funding service MUST reject the request as a duplicate only if a matching recharge `external_ref` already exists in `pending` or `completed` status. Failed or cancelled prior requests with the same provider ref MUST be ignored for duplicate detection. Manual recharge flows without provider refs remain unchanged. Admin approve/reject endpoints, notification scheduling, and Admin Wallet custody sync on approve MUST remain behaviorally unchanged except for this uniqueness rule.
+
+#### Scenario: Reuse after reject succeeds
+- **WHEN** the only prior row for method `bkash` and `external_ref=TX12345` is `status=failed`
+- **THEN** `request_recharge` creates a new pending recharge for that ref
+
+#### Scenario: Duplicate of approved recharge still fails
+- **WHEN** a completed `bkash` recharge already exists with `external_ref=TX12345`
+- **THEN** `request_recharge` with the same method and transaction id raises the existing duplicate-provider-ref error without creating a new row
+
+### Requirement: Admin funding request list supports people search
+
+The verified-admin wallet funding request collection MUST accept an allowlisted query parameter `q` that filters requests by the related customer's people-search fields (name, email, username, phone with shared normalization, and exact customer `public_id` when `q` is a canonical UUID). Filtering MUST use `build_customer_people_q` with a queryset-relative `customer_prefix` for the funding request's customer relation. OpenAPI for the list operation MUST document `q`. Invalid unrelated filters remain subject to existing allowlist/`400` rules where enforced.
+
+#### Scenario: Admin searches funding requests by customer email fragment
+
+- **WHEN** a verified admin lists funding requests with `q` matching part of a related customer's email
+- **THEN** only funding requests for matching customers are returned
+
+#### Scenario: Admin searches funding requests by customer public_id
+
+- **WHEN** a verified admin lists funding requests with `q` equal to a related customer's canonical `public_id`
+- **THEN** funding requests for that customer are included
+
+#### Scenario: Empty q does not restrict results
+
+- **WHEN** a verified admin lists funding requests without `q` or with blank `q`
+- **THEN** people-search does not further restrict the queryset beyond other applied filters
+
+### Requirement: Approved pending recharge schedules customer confirmation
+When a verified admin successfully approves a pending customer recharge and the wallet credit is committed, the system SHALL schedule customer confirmation side effects (mobile push notification and professional invoice email) after commit without changing the existing credit amount, `completed` status semantics, review fields, or Admin Wallet custody sync rules for that approval. Failure of those side effects MUST NOT reverse the credit or custody movement.
+
+#### Scenario: Successful approve still credits once and notifies after commit
+- **WHEN** a verified admin approves a pending recharge of `500.00`
+- **THEN** the customer wallet increases by `500.00` exactly once, the transaction is `completed`, Admin Wallet custody sync rules for that recharge still apply, and after commit the system attempts customer push and invoice email side effects
+
+#### Scenario: Notification failure does not undo custody or credit
+- **WHEN** post-commit customer notification sending fails after a successful approve
+- **THEN** the customer wallet credit and Admin Wallet custody outcome for that approve remain intact
+
