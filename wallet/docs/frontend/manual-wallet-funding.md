@@ -148,14 +148,23 @@ Status mapping for UI: `completed` ≈ approved, `failed` ≈ rejected.
 
 Admin UI should **not** show a separate “send invoice” control for this release. Failures of push/email do not change the approve API success response. See `wallet/docs/backend/wallet-recharge-approval-notifications.md` and the mobile FCM section in that doc.
 
-## Meal service restore on recharge approve
+## Meal service restore on balance recovery (admin funding)
 
-Backend-owned. After a successful pending **recharge** approve, if the customer was meal-stop blocked and post-credit spendable balance (`Wallet.balance`) is `>=` the live `meal_stop_threshold`, the backend clears:
+Backend-owned. After a successful balance-increasing admin action, if the customer was meal-stop blocked and post-action spendable balance (`Wallet.balance`) is `>=` the live `meal_stop_threshold`, the backend clears:
 
 - `meal_service_blocked_low_balance` → `false`
 - `meal_service_blocked_at` → `null`
 
-Approve `200` includes additive:
+**Triggers:**
+
+| Admin action | Restores meal-stop when balance recovers? |
+|--------------|-------------------------------------------|
+| Recharge **approve** | Yes (credits wallet) |
+| Withdraw **reject** | Yes (releases reservation) |
+| Withdraw **approve** | No |
+| Recharge **reject** | No (no credit) |
+
+Approve / reject `200` includes additive:
 
 ```json
 {
@@ -165,11 +174,11 @@ Approve `200` includes additive:
 
 | Value | Meaning |
 |-------|---------|
-| `true` | This approve cleared low-balance meal-stop |
-| `false` | Not blocked, still below threshold, withdraw approve, list/detail/reject, etc. |
+| `true` | This approve (recharge) or reject (withdraw) cleared low-balance meal-stop |
+| `false` | Not blocked, still below threshold, withdraw approve, recharge reject, list/detail, etc. |
 
 **Admin UI (optional):** if `meal_service_restored === true`, show toast “Meal service restored”. Do **not** compute thresholds on the frontend.
 
-**Customer apps:** no change. There is **no** dedicated “meal service restored” push/email; only the existing recharge-approved notifications.
+**Customer apps:** no change. There is **no** dedicated “meal service restored” push/email; only the existing recharge-approved notifications (withdraw reject does not add a restore notification).
 
 **No migration** — uses existing customer profile fields.

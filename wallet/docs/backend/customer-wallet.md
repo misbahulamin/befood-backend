@@ -19,7 +19,7 @@ Withdraw never spends commission. Shared helper: `wallet.services.withdrawable.c
 
 Ops: `python manage.py verify_wallet_balance_consistency` and `python manage.py audit_wallet_accounting`
 
-Provider recharge external refs are unique among live (pending/completed) rows. Approving a recharge may set `meal_service_restored` when low-balance meal-stop clears.
+Provider recharge external refs are unique among live (pending/completed) rows. Approving a recharge **or rejecting a withdraw** may set `meal_service_restored` when low-balance meal-stop clears (post-credit / reservation-release balance `>= meal_stop_threshold`).
 
 | Endpoint | Auth | Notes |
 |----------|------|-------|
@@ -103,7 +103,7 @@ Partial unique: provider-method recharge (`bkash|nagad|bank`) + non-empty `exter
 
 1. Customer posts `amount` → must be `<= max(0, recharge_balance - meal_stop_threshold)`. Pending debit **immediately** reserves `recharge_balance` only (`method=manual`); commission untouched. Admin email on commit. **No** Admin Wallet debit yet.
 2. Admin approve → `completed` + Admin Wallet custody debit type `customer_withdraw` (platform `balance` ↓, `total_customer_withdrawals` ↑). **Does not** decrease lifetime `total_customer_funding` or rewrite `customer_funding` credit rows. Float shortfall → `409`, leave pending, review fields untouched (full atomic rollback).
-3. Admin reject → restore reserved recharge, `failed`.
+3. Admin reject → restore reserved recharge, `failed`. If the customer was meal-stop blocked and restored spendable balance is `>= meal_stop_threshold`, clears meal-stop (`meal_service_restored` on admin reject response).
 
 **Production note:** Keep `ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED=true` so approve posts `customer_withdraw`. Missing historical custody rows → ops `reconcile_admin_wallet_customer_funding` (idempotent); do not recalculate live balances.
 

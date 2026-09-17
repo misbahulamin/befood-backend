@@ -520,6 +520,14 @@ def reject_withdraw(
     reviewed_by,
     reason: str = '',
 ) -> WalletTransaction:
+    """
+    Reject pending withdraw: release reservation credit.
+
+    Attaches transient ``meal_service_restored`` (bool) from meal-stop resume
+    evaluation for the admin reject API response (same helper as approve_recharge).
+    """
+    from orders.services.wallet_balance_thresholds import maybe_resume_after_wallet_credit
+
     locked_txn = WalletTransaction.objects.select_for_update().get(pk=txn.pk)
     if locked_txn.type != WalletTransaction.Type.WITHDRAW:
         raise PendingTransactionError('Not a withdraw funding request.')
@@ -559,4 +567,6 @@ def reject_withdraw(
             'updated_at',
         ]
     )
+    # Same spendable balance / threshold math as recharge approve via shared helper.
+    locked_txn.meal_service_restored = maybe_resume_after_wallet_credit(wallet.customer)
     return locked_txn
