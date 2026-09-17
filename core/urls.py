@@ -36,6 +36,8 @@ urlpatterns = [
     path('api/v1/web/inventory/', include('inventory.api.web_urls')),
     path('api/v1/service-areas/', include('service_area.api.urls')),
     path('api/v1/web/service-areas/', include('service_area.api.web_urls')),
+    path('api/v1/web/delivery-zones/', include('delivery_zones.api.web_urls')),
+    path('api/v1/web/delivery-locations/', include('delivery_zones.api.location_urls')),
     path('api/v1/search/', include('search.api.urls')),
     path('api/v1/web/search/', include('search.api.web_urls')),
     path('api/v1/web/notifications/', include('notifications.api.web_urls')),

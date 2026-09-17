@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from user_management.api.deliveryman_serializers import (
+    AdminDeliverymanAssignZoneSerializer,
     AdminDeliverymanListSerializer,
     AdminDeliverymanRejectSerializer,
     AdminDeliverymanVerifiedStatusSerializer,
@@ -244,5 +245,56 @@ class AdminDeliverymanViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, 
             )
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        profile.refresh_from_db()
+        return Response(AdminDeliverymanListSerializer(profile).data)
+
+    @extend_schema(
+        tags=['Admin Delivery Men'],
+        request=AdminDeliverymanAssignZoneSerializer,
+        responses={200: AdminDeliverymanListSerializer},
+        description='Assign or clear the primary delivery zone for this Delivery Man.',
+    )
+    @action(detail=True, methods=['patch'], url_path='assign-zone')
+    def assign_zone(self, request, public_id=None):
+        from delivery_zones.services.errors import DeliveryZoneError
+        from delivery_zones.services.zones import (
+            assign_delivery_man,
+            clear_delivery_man,
+            get_zone_by_public_id,
+            zone_for_rider,
+        )
+
+        profile = self.get_object()
+        serializer = AdminDeliverymanAssignZoneSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        zone_public_id = serializer.validated_data.get('zone_public_id')
+        try:
+            if zone_public_id is None:
+                current = zone_for_rider(profile)
+                if current is not None:
+                    clear_delivery_man(current)
+            else:
+                zone = get_zone_by_public_id(zone_public_id)
+                # Clear previous zone binding for this rider first if different.
+                current = zone_for_rider(profile)
+                if current is not None and current.pk != zone.pk:
+                    clear_delivery_man(current)
+                assign_delivery_man(zone, delivery_man_public_id=profile.public_id)
+        except DeliveryZoneError as exc:
+            code = getattr(exc, 'code', 'DELIVERY_ZONE_ERROR')
+            http_status = status.HTTP_422_UNPROCESSABLE_ENTITY
+            if code in {'ZONE_NOT_FOUND'}:
+                http_status = status.HTTP_404_NOT_FOUND
+            elif code == 'DELIVERY_MAN_ALREADY_ASSIGNED':
+                http_status = status.HTTP_409_CONFLICT
+            return Response(
+                {
+                    'success': False,
+                    'message': str(exc),
+                    'errors': {},
+                    'error_code': code,
+                },
+                status=http_status,
+            )
         profile.refresh_from_db()
         return Response(AdminDeliverymanListSerializer(profile).data)

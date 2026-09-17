@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     'admin_wallet',
     'inventory',
     'service_area',
+    'delivery_zones',
     'search',
     'notifications',
     'promotions',

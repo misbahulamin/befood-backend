@@ -43,6 +43,38 @@ def meal_off_business_now(settings_obj: MealOffSettings | None = None) -> dateti
     return timezone.now().astimezone(tz)
 
 
+def get_current_delivery_period(
+    now: datetime | None = None,
+    *,
+    settings_obj: MealOffSettings | None = None,
+) -> tuple[date, str | None]:
+    """
+    Active deliveryman meal window from meal-off settings.
+
+    Rules (settings timezone, typically Asia/Dhaka):
+    - time <= lunch_off_time → no active period (None); overnight until lunch
+      opens is empty (not prior-day dinner).
+    - lunch_off_time < time <= dinner_off_time → lunch
+    - time > dinner_off_time → dinner
+
+    Returns (service_date, period) where period is 'lunch', 'dinner', or None.
+    """
+    settings_obj = settings_obj or get_meal_off_settings()
+    now_local = now or meal_off_business_now(settings_obj)
+    if now_local.tzinfo is None:
+        now_local = now_local.replace(tzinfo=ZoneInfo(settings_obj.timezone))
+    else:
+        now_local = now_local.astimezone(ZoneInfo(settings_obj.timezone))
+
+    service_date = now_local.date()
+    local_time = now_local.time()
+    if local_time <= settings_obj.lunch_off_time:
+        return service_date, None
+    if local_time <= settings_obj.dinner_off_time:
+        return service_date, OrderDelivery.MealPeriod.LUNCH
+    return service_date, OrderDelivery.MealPeriod.DINNER
+
+
 def meal_off_deadline(
     service_date: date,
     meal_period: str,

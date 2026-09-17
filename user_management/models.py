@@ -109,6 +109,15 @@ class CustomerProfile(PublicIdMixin, TimeStampedModel):
         blank=True,
         help_text='Asia/Dhaka business date of the last low-balance reminder (push/email).',
     )
+    # Operational neighborhood for zone-based delivery (not street address).
+    delivery_location = models.ForeignKey(
+        'delivery_zones.DeliveryLocation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='customers',
+        help_text='Manual operational location; derived zone comes from location.zone.',
+    )
 
     def __str__(self):
         return self.user.email or self.phone or str(self.user_id)

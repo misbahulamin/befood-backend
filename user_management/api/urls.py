@@ -22,6 +22,10 @@ from .deliveryman_views import (
     DeliverymanResendVerificationView,
     DeliverymanVerifyEmailView,
 )
+from delivery_zones.api.deliveryman_views import (
+    DeliverymanMarkDeliveryView,
+    DeliverymanTodayBoardView,
+)
 from .profile_views import (
     CustomerAddressViewSet,
     CustomerEmailSetView,
@@ -129,6 +133,16 @@ urlpatterns = [
         name='deliveryman-resend-verification',
     ),
     path('deliveryman/me/', DeliverymanCurrentUserView.as_view(), name='deliveryman-me'),
+    path(
+        'deliveryman/deliveries/today-board/',
+        DeliverymanTodayBoardView.as_view(),
+        name='deliveryman-today-board',
+    ),
+    path(
+        'deliveryman/deliveries/<uuid:delivery_public_id>/mark/',
+        DeliverymanMarkDeliveryView.as_view(),
+        name='deliveryman-mark-delivery',
+    ),
     path('customer/profile/', CustomerProfileView.as_view(), name='customer-profile'),
     path(
         'customer/profile/image/',

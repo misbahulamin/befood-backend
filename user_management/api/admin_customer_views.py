@@ -1,9 +1,10 @@
-from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
+from delivery_zones.api.serializers import CustomerDeliveryLocationAssignSerializer
 from user_management.api.admin_customer_serializers import (
     AdminCustomerActiveOrderSerializer,
     AdminCustomerActiveSubscriptionSerializer,
@@ -241,6 +242,57 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
     def delivery_fee_context(self, request, public_id=None):
         customer = self.get_object()
         return Response(build_delivery_fee_context(customer))
+
+    @extend_schema(
+        tags=['Admin Customers'],
+        operation_id='adminCustomerDeliveryLocationAssign',
+        summary='Assign or clear customer operational delivery location',
+        request=CustomerDeliveryLocationAssignSerializer,
+        responses={200: OpenApiResponse(description='Updated location and derived zone')},
+    )
+    @action(detail=True, methods=['patch'], url_path='delivery-location')
+    def delivery_location(self, request, public_id=None):
+        from delivery_zones.services.assignment import (
+            assign_customer_location,
+            location_summary,
+            zone_summary_from_location,
+        )
+        from delivery_zones.services.errors import DeliveryZoneError
+
+        customer = self.get_object()
+        serializer = CustomerDeliveryLocationAssignSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            customer = assign_customer_location(
+                customer,
+                location_public_id=serializer.validated_data.get(
+                    'delivery_location_public_id'
+                ),
+            )
+            customer = type(customer).objects.select_related(
+                'delivery_location',
+                'delivery_location__zone',
+            ).get(pk=customer.pk)
+        except DeliveryZoneError as exc:
+            http_status = status.HTTP_422_UNPROCESSABLE_ENTITY
+            code = getattr(exc, 'code', 'DELIVERY_ZONE_ERROR')
+            if code in {'LOCATION_NOT_FOUND'}:
+                http_status = status.HTTP_404_NOT_FOUND
+            return Response(
+                {
+                    'success': False,
+                    'message': str(exc),
+                    'errors': {},
+                    'error_code': code,
+                },
+                status=http_status,
+            )
+        return Response(
+            {
+                'delivery_location': location_summary(customer.delivery_location),
+                'delivery_zone': zone_summary_from_location(customer.delivery_location),
+            }
+        )
 
     @extend_schema(
         tags=['Admin Delivery Fees'],

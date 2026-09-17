@@ -8,6 +8,8 @@ Admin panel: pending list → detail → approve / reject / revoke.
 Base prefix: `/user_management/`  
 Auth header after login: `Authorization: Token <token>`
 
+Zone-scoped today board and zone assignment: see [zone-based-delivery.md](../../delivery_zones/docs/frontend/zone-based-delivery.md).
+
 Bangla pending copy can be rendered in the UI; the API returns English `detail`.
 
 ---
