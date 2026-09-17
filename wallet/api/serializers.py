@@ -244,8 +244,9 @@ class AdminFundingRequestSerializer(serializers.ModelSerializer):
     reviewed_by_id = serializers.IntegerField(read_only=True, allow_null=True)
     meal_service_restored = serializers.SerializerMethodField(
         help_text=(
-            'True only on approve when this recharge cleared low-balance meal-stop; '
-            'otherwise false (list/detail/reject/withdraw).'
+            'True when this admin action cleared low-balance meal-stop '
+            '(recharge approve or withdraw reject); otherwise false '
+            '(list/detail/recharge reject/withdraw approve).'
         ),
     )
 

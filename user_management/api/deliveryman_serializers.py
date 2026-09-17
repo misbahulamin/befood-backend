@@ -99,6 +99,7 @@ class AdminDeliverymanListSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(source='user.first_name', read_only=True)
     last_name = serializers.CharField(source='user.last_name', read_only=True)
     is_active = serializers.BooleanField(source='user.is_active', read_only=True)
+    assigned_zone = serializers.SerializerMethodField()
 
     class Meta:
         model = RiderProfile
@@ -121,10 +122,25 @@ class AdminDeliverymanListSerializer(serializers.ModelSerializer):
             'admin_notes',
             'is_available',
             'is_active',
+            'assigned_zone',
             'created_at',
             'updated_at',
         )
         read_only_fields = fields
+
+    def get_assigned_zone(self, obj):
+        from delivery_zones.services.zones import zone_for_rider
+
+        zone = zone_for_rider(obj)
+        if zone is None:
+            return None
+        return {
+            'public_id': str(zone.public_id),
+            'name': zone.name,
+            'code': zone.code,
+            'priority': zone.priority,
+            'status': zone.status,
+        }
 
 
 class AdminDeliverymanRejectSerializer(serializers.Serializer):
@@ -134,3 +150,7 @@ class AdminDeliverymanRejectSerializer(serializers.Serializer):
 class AdminDeliverymanVerifiedStatusSerializer(serializers.Serializer):
     is_verified = serializers.BooleanField()
     admin_notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class AdminDeliverymanAssignZoneSerializer(serializers.Serializer):
+    zone_public_id = serializers.UUIDField(required=False, allow_null=True)

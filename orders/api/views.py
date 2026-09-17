@@ -92,6 +92,10 @@ def _parse_service_date(raw_value):
 
 
 def _today_board_queryset(request):
+    from django.db.models import Q
+
+    from delivery_zones.models import DeliveryZone
+
     service_date, error = _parse_service_date(request.query_params.get('service_date'))
     if error is not None:
         return None, error
@@ -99,8 +103,12 @@ def _today_board_queryset(request):
     qs = OrderDelivery.objects.select_related(
         'order',
         'order__customer__user',
+        'order__customer__delivery_location',
+        'order__customer__delivery_location__zone',
         'subscription',
         'subscription__customer__user',
+        'subscription__customer__delivery_location',
+        'subscription__customer__delivery_location__zone',
     ).filter(live_delivery_q(service_date))
 
     week_of_month = request.query_params.get('week_of_month')
@@ -126,8 +134,12 @@ def _today_board_queryset(request):
         qs = OrderDelivery.objects.select_related(
             'order',
             'order__customer__user',
+            'order__customer__delivery_location',
+            'order__customer__delivery_location__zone',
             'subscription',
             'subscription__customer__user',
+            'subscription__customer__delivery_location',
+            'subscription__customer__delivery_location__zone',
         ).filter(pk__in=matching_ids)
     else:
         qs = qs.filter(service_date=service_date)
@@ -138,6 +150,32 @@ def _today_board_queryset(request):
     delivery_status = request.query_params.get('status')
     if delivery_status:
         qs = qs.filter(status=delivery_status)
+
+    zone_public_id = (request.query_params.get('zone_public_id') or '').strip()
+    if zone_public_id:
+        qs = qs.filter(
+            Q(subscription__customer__delivery_location__zone__public_id=zone_public_id)
+            | Q(order__customer__delivery_location__zone__public_id=zone_public_id)
+        )
+
+    location_public_id = (request.query_params.get('location_public_id') or '').strip()
+    if location_public_id:
+        qs = qs.filter(
+            Q(subscription__customer__delivery_location__public_id=location_public_id)
+            | Q(order__customer__delivery_location__public_id=location_public_id)
+        )
+
+    delivery_man_public_id = (request.query_params.get('delivery_man_public_id') or '').strip()
+    if delivery_man_public_id:
+        zone_ids = list(
+            DeliveryZone.objects.filter(
+                assigned_delivery_man__public_id=delivery_man_public_id
+            ).values_list('pk', flat=True)
+        )
+        qs = qs.filter(
+            Q(subscription__customer__delivery_location__zone_id__in=zone_ids)
+            | Q(order__customer__delivery_location__zone_id__in=zone_ids)
+        )
 
     return qs.order_by('service_date', 'meal_period', 'id'), None
 
@@ -212,6 +250,21 @@ class AdminDeliveryActionsMixin:
             OpenApiParameter(name='week_of_month', type=int, description='ISO week number to filter'),
             OpenApiParameter(name='meal_period', type=str, description='lunch|dinner'),
             OpenApiParameter(name='status', type=str, description='scheduled|delivered|skipped|missed'),
+            OpenApiParameter(
+                name='zone_public_id',
+                type=str,
+                description='Filter by operational delivery zone public_id',
+            ),
+            OpenApiParameter(
+                name='location_public_id',
+                type=str,
+                description='Filter by operational delivery location public_id',
+            ),
+            OpenApiParameter(
+                name='delivery_man_public_id',
+                type=str,
+                description='Filter by Delivery Man assigned to the zone',
+            ),
         ],
         responses={200: TodayBoardDeliverySerializer(many=True)},
     )

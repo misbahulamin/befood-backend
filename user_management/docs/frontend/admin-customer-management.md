@@ -26,6 +26,7 @@ Admin Panel Customer 360 at `/admin/customers/:publicId`. **Subscription-first**
 | Meal-offs | `…/meal-offs/` | Yes |
 | Wallet overview | `…/wallet-overview/` | Yes |
 | Delivery fee | `…/delivery-fee-context/` + `…/delivery-fee-payments/` | Yes — see [delivery-fee-deduction.md](../../wallet/docs/frontend/delivery-fee-deduction.md) |
+| Delivery location / zone | Detail fields + `PATCH …/delivery-location/` | Yes — see [zone-based-delivery.md](../../delivery_zones/docs/frontend/zone-based-delivery.md) |
 | Wallet history | `…/wallet-transactions/` | Yes |
 | Activity | `…/activity/` | Yes |
 

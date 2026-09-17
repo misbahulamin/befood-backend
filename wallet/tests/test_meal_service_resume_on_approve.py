@@ -16,6 +16,7 @@ from wallet.services.funding import (
     approve_recharge,
     approve_withdraw,
     reject_recharge,
+    reject_withdraw,
     request_recharge,
     request_withdraw,
 )
@@ -183,6 +184,48 @@ class ApproveRechargeMealResumeTests(TestCase):
         self.profile.refresh_from_db()
         self.assertTrue(self.profile.meal_service_blocked_low_balance)
 
+    def test_withdraw_reject_clears_block_when_above_threshold(self):
+        """Reservation release restores balance → meal resumes when >= threshold."""
+        _set_recharge_balance(self.wallet, Decimal('300.00'))
+        _, txn, _ = request_withdraw(self.profile, Decimal('50.00'))
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, Decimal('250.00'))
+        apply_meal_service_block(self.profile)
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.meal_service_blocked_low_balance)
+
+        result = reject_withdraw(txn, reviewed_by=self.admin, reason='docs incomplete')
+
+        self.wallet.refresh_from_db()
+        self.profile.refresh_from_db()
+        self.assertEqual(self.wallet.balance, Decimal('300.00'))
+        self.assertFalse(self.profile.meal_service_blocked_low_balance)
+        self.assertIsNone(self.profile.meal_service_blocked_at)
+        self.assertTrue(result.meal_service_restored)
+
+    def test_withdraw_reject_keeps_block_when_still_below_threshold(self):
+        """Reject restores reservation but live threshold still not met."""
+        settings_obj = OrderWalletSettings.load()
+        settings_obj.meal_stop_threshold = Decimal('50.00')
+        settings_obj.save(update_fields=['meal_stop_threshold', 'updated_at'])
+
+        _set_recharge_balance(self.wallet, Decimal('120.00'))
+        _, txn, _ = request_withdraw(self.profile, Decimal('20.00'))
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, Decimal('100.00'))
+        apply_meal_service_block(self.profile)
+
+        settings_obj.meal_stop_threshold = Decimal('150.00')
+        settings_obj.save(update_fields=['meal_stop_threshold', 'updated_at'])
+
+        result = reject_withdraw(txn, reviewed_by=self.admin, reason='hold')
+
+        self.wallet.refresh_from_db()
+        self.profile.refresh_from_db()
+        self.assertEqual(self.wallet.balance, Decimal('120.00'))
+        self.assertTrue(self.profile.meal_service_blocked_low_balance)
+        self.assertFalse(result.meal_service_restored)
+
 
 @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class ApproveRechargeMealResumeAPITests(APITestCase):
@@ -234,3 +277,43 @@ class ApproveRechargeMealResumeAPITests(APITestCase):
         response = self.client.post(approve_url)
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data['meal_service_restored'])
+        self.profile.refresh_from_db()
+        # Approve never clears meal-stop (customer may still be unblocked if never blocked).
+        self.assertFalse(response.data['meal_service_restored'])
+
+    def test_withdraw_reject_response_meal_service_restored_true(self):
+        _set_recharge_balance(self.wallet, Decimal('300.00'))
+        _, txn, _ = request_withdraw(self.profile, Decimal('50.00'))
+        apply_meal_service_block(self.profile)
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        reject_url = reverse(
+            'web_wallet_funding:funding-request-reject',
+            kwargs={'public_id': str(txn.public_id)},
+        )
+        response = self.client.post(reject_url, {'reason': 'incomplete docs'}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['meal_service_restored'])
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.meal_service_blocked_low_balance)
+
+    def test_recharge_reject_meal_service_restored_false(self):
+        _set_recharge_balance(self.wallet, Decimal('100.00'))
+        apply_meal_service_block(self.profile)
+        _, txn, _ = request_recharge(
+            self.profile,
+            Decimal('200.00'),
+            payment_method='bkash',
+            transaction_id='API-REJ-RESUME-1',
+        )
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        reject_url = reverse(
+            'web_wallet_funding:funding-request-reject',
+            kwargs={'public_id': str(txn.public_id)},
+        )
+        response = self.client.post(reject_url, {'reason': 'bad trx'}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data['meal_service_restored'])
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.meal_service_blocked_low_balance)

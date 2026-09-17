@@ -49,6 +49,8 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
     wallet_balance = serializers.SerializerMethodField()
     meal_service_blocked_low_balance = serializers.BooleanField(read_only=True)
     meal_service_blocked_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    delivery_location = serializers.SerializerMethodField()
+    delivery_zone = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomerProfile
@@ -69,6 +71,8 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
             'wallet_balance',
             'meal_service_blocked_low_balance',
             'meal_service_blocked_at',
+            'delivery_location',
+            'delivery_zone',
         )
         read_only_fields = fields
 
@@ -98,6 +102,16 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
         if wallet is None:
             return None
         return f'{wallet.balance:.2f}'
+
+    def get_delivery_location(self, obj):
+        from delivery_zones.services.assignment import location_summary
+
+        return location_summary(getattr(obj, 'delivery_location', None))
+
+    def get_delivery_zone(self, obj):
+        from delivery_zones.services.assignment import zone_summary_from_location
+
+        return zone_summary_from_location(getattr(obj, 'delivery_location', None))
 
 
 class AdminCustomerDetailSerializer(AdminCustomerListSerializer):

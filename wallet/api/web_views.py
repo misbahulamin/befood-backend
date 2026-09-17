@@ -173,6 +173,11 @@ class AdminFundingRequestViewSet(
     @extend_schema(
         tags=['Admin Wallet Funding Review'],
         summary='Reject pending funding request',
+        description=(
+            'On successful withdraw reject, response includes meal_service_restored '
+            '(true when reservation release cleared low-balance meal-stop). '
+            'Recharge reject always returns meal_service_restored=false.'
+        ),
         request=FundingRejectSerializer,
         responses={
             200: AdminFundingRequestSerializer,
@@ -186,11 +191,15 @@ class AdminFundingRequestViewSet(
         serializer = FundingRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         reason = serializer.validated_data.get('reason') or ''
+        meal_service_restored = False
         try:
             if txn.type == WalletTransaction.Type.RECHARGE:
                 txn = reject_recharge(txn, reviewed_by=request.user, reason=reason)
             elif txn.type == WalletTransaction.Type.WITHDRAW:
                 txn = reject_withdraw(txn, reviewed_by=request.user, reason=reason)
+                meal_service_restored = bool(
+                    getattr(txn, 'meal_service_restored', False)
+                )
             else:
                 return Response(
                     {'detail': 'Unsupported funding type.'},
@@ -204,4 +213,12 @@ class AdminFundingRequestViewSet(
                 'reviewed_by',
             ).get(pk=txn.pk)
         )
-        return Response(AdminFundingRequestSerializer(txn).data)
+        return Response(
+            AdminFundingRequestSerializer(
+                txn,
+                context={
+                    'request': request,
+                    'meal_service_restored': meal_service_restored,
+                },
+            ).data
+        )

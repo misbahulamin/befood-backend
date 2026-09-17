@@ -287,6 +287,41 @@ class AutoMealDeliveryTests(TestCase):
             self.slot_price,
         )
 
+    def test_manual_mark_then_cron_no_double_charge(self):
+        """Rider mark_delivery first; cron must skip and not debit again."""
+        _order, delivery = self._order_lunch(self.customer_profile)
+        balance_before = self.wallet.balance
+
+        with patch(
+            'notifications.services.meal_delivery_notifications.send_to_tokens',
+            return_value=[],
+        ):
+            mark_delivery_and_notify(
+                delivery,
+                OrderDelivery.DeliveryStatus.DELIVERED,
+                marked_by=self.admin_user,
+            )
+            self.wallet.refresh_from_db()
+            after_manual = self.wallet.balance
+            self.assertEqual(after_manual, balance_before - self.slot_price)
+
+            result = run_auto_delivery(
+                service_date=self.service_date,
+                meal_period=OrderDelivery.MealPeriod.LUNCH,
+                acquire_lock=False,
+            )
+
+        self.wallet.refresh_from_db()
+        delivery.refresh_from_db()
+        self.assertEqual(result.candidate_count, 0)
+        self.assertEqual(result.delivered, 0)
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.DELIVERED)
+        self.assertEqual(self.wallet.balance, after_manual)
+        self.assertEqual(
+            delivery.wallet_transaction.amount,
+            self.slot_price,
+        )
+
     @patch('notifications.services.meal_delivery_notifications.send_to_tokens')
     def test_notify_on_deliver_not_on_skip(self, mock_send):
         mock_send.return_value = []

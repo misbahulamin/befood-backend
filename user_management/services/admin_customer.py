@@ -38,6 +38,9 @@ LIST_QUERY_ALLOWLIST = frozenset(
         'sort',
         'page',
         'page_size',
+        'zone_public_id',
+        'location_public_id',
+        'has_delivery_location',
     }
 )
 
@@ -101,7 +104,12 @@ def customer_delivery_scope(customer: CustomerProfile) -> Q:
 
 
 def customer_base_queryset() -> QuerySet[CustomerProfile]:
-    return CustomerProfile.objects.select_related('user', 'wallet').prefetch_related(
+    return CustomerProfile.objects.select_related(
+        'user',
+        'wallet',
+        'delivery_location',
+        'delivery_location__zone',
+    ).prefetch_related(
         Prefetch(
             'addresses',
             queryset=CustomerAddress.objects.order_by('address_type', 'id'),
@@ -176,6 +184,22 @@ def apply_customer_list_filters(queryset: QuerySet[CustomerProfile], params) -> 
         queryset = queryset.filter(wallet_exists)
     elif has_wallet is False:
         queryset = queryset.filter(~wallet_exists)
+
+    has_delivery_location = parse_bool_param(
+        params.get('has_delivery_location'), field='has_delivery_location'
+    )
+    if has_delivery_location is True:
+        queryset = queryset.filter(delivery_location__isnull=False)
+    elif has_delivery_location is False:
+        queryset = queryset.filter(delivery_location__isnull=True)
+
+    zone_public_id = (params.get('zone_public_id') or '').strip()
+    if zone_public_id:
+        queryset = queryset.filter(delivery_location__zone__public_id=zone_public_id)
+
+    location_public_id = (params.get('location_public_id') or '').strip()
+    if location_public_id:
+        queryset = queryset.filter(delivery_location__public_id=location_public_id)
 
     has_pending_recharge = parse_bool_param(
         params.get('has_pending_recharge'), field='has_pending_recharge'
