@@ -6,7 +6,10 @@ from delivery_zones.models import DeliveryLocation, DeliveryZone
 from delivery_zones.services.errors import DeliveryZoneError
 from delivery_zones.services.zones import zone_for_rider
 from orders.models import OrderDelivery
-from orders.services.meal_demand import _slot_ingredient_names_for_meal
+from orders.services.meal_demand import (
+    _slot_ingredient_names_for_meal,
+    low_balance_blocked_q,
+)
 from orders.services.meal_off import get_current_delivery_period, get_meal_off_settings
 from orders.services.subscription_parent import (
     delivery_customer,
@@ -35,7 +38,15 @@ def zone_scoped_deliveries(
     service_date: date,
     meal_period: str | None = None,
     statuses: list[str] | None = None,
+    include_low_balance_blocked: bool = False,
 ) -> QuerySet[OrderDelivery]:
+    """
+    Zone-scoped live deliveries for a service date.
+
+    By default omits customers with meal_service_blocked_low_balance (same rule
+    as kitchen cooking eligibility / auto-delivery), so rider boards do not list
+    meal-on customers who will not be cooked for.
+    """
     qs = (
         OrderDelivery.objects.select_related(
             'order',
@@ -57,6 +68,8 @@ def zone_scoped_deliveries(
         qs = qs.filter(meal_period=meal_period)
     if statuses:
         qs = qs.filter(status__in=statuses)
+    if not include_low_balance_blocked:
+        qs = qs.exclude(low_balance_blocked_q())
     return qs
 
 
@@ -188,6 +201,7 @@ def build_deliveryman_board(
             service_date=service_date,
             meal_period=active_meal_period,
             statuses=statuses,
+            include_low_balance_blocked=False,
         )
     )
 
@@ -207,6 +221,7 @@ def build_deliveryman_board(
     groups: dict[str, dict] = {}
     ordered_groups = []
     menu_cache: dict[int, list[str]] = {}
+    listed_count = 0
     for delivery in deliveries:
         loc = _delivery_location(delivery)
         if loc is None:
@@ -224,6 +239,7 @@ def build_deliveryman_board(
             ordered_groups.append(group)
         customer = delivery_customer(delivery)
         groups[key]['delivery_count'] += 1
+        listed_count += 1
         meal_name = ''
         if delivery.subscription_id:
             meal_name = delivery.subscription.meal_name_snapshot or ''
@@ -256,16 +272,15 @@ def build_deliveryman_board(
             }
         )
 
-    total_count = len(deliveries)
     return {
         'service_date': service_date.isoformat(),
         'active_meal_period': active_meal_period,
         'timezone': timezone_name,
-        'total_count': total_count,
+        'total_count': listed_count,
         'zone': zone_payload,
         'periods': {
             active_meal_period: {
-                'total_count': total_count,
+                'total_count': listed_count,
                 'locations': ordered_groups,
             }
         },

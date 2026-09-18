@@ -105,6 +105,8 @@ Optional: `include_delivered=true` to include already delivered rows (default sc
 
 Foreign `zone_public_id` is ignored—board is always the rider’s assigned zone. No zone → empty periods + message.
 
+**Cooking eligibility (low-balance meal-stop):** The board lists only customers kitchen will cook for. Customers with `meal_service_blocked_low_balance=true` are **omitted** even when lunch/dinner remains on and a `scheduled` delivery row exists. Counts (`total_count`, location `delivery_count`) match that filtered list. Do not expect “every meal-on user in the zone.” Wallet balances are never included on deliveryman payloads.
+
 **Example response shape**
 
 ```json
@@ -135,7 +137,7 @@ Foreign `zone_public_id` is ignored—board is always the rider’s assigned zon
               "meal_name": "Student Package",
               "meal_quantity": 1,
               "notes": "",
-              "wallet_balance": "500.00",
+              "menu_items_label": "chicken + dhal + vat + vegetable",
               "status": "scheduled"
             }
           ]
@@ -158,6 +160,7 @@ Content-Type: application/json
 
 - Delivery must belong to the rider’s assigned zone (else 403).
 - Reuses the same `mark_delivery` / wallet charge path as admin + cron (`meal-delivery:{public_id}` idempotency).
+- **Low-balance meal-stop:** if the customer has `meal_service_blocked_low_balance=true`, mark is rejected with **422** and `error_code: MEAL_SERVICE_BLOCKED_LOW_BALANCE` (same exclusion as auto-delivery cron / kitchen). Status stays unchanged; no wallet debit. Admin mark remains the ops override.
 - Already delivered → 200 with same status (no second wallet debit).
 - Cron after manual mark skips the slot (no duplicate charge).
 
@@ -169,6 +172,15 @@ Content-Type: application/json
   "status": "delivered",
   "marked_at": "2026-09-18T12:00:00+06:00",
   "payment_status": "charged"
+}
+```
+
+**Example: meal-stop blocked**
+
+```json
+{
+  "detail": "Customer meal service is paused due to low wallet balance; delivery cannot be marked by deliveryman.",
+  "error_code": "MEAL_SERVICE_BLOCKED_LOW_BALANCE"
 }
 ```
 

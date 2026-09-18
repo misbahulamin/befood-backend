@@ -10,6 +10,7 @@ from delivery_zones.api.serializers import (
 from delivery_zones.services.board import build_deliveryman_board, delivery_in_rider_zone
 from delivery_zones.services.errors import DeliveryZoneError
 from orders.models import OrderDelivery
+from orders.services.meal_demand import delivery_customer_is_meal_service_blocked
 from orders.services.order_delivery import DeliveryError, mark_delivery_and_notify
 from user_management.api.permissions import IsVerifiedDeliveryman
 
@@ -108,6 +109,20 @@ class DeliverymanMarkDeliveryView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Same low-balance meal-stop gate as auto_deliver_meals candidates.
+        # Admin mark APIs intentionally omit this check (ops override).
+        if delivery_customer_is_meal_service_blocked(delivery):
+            return Response(
+                {
+                    'detail': (
+                        'Customer meal service is paused due to low wallet balance; '
+                        'delivery cannot be marked by deliveryman.'
+                    ),
+                    'error_code': 'MEAL_SERVICE_BLOCKED_LOW_BALANCE',
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
         to_status = serializer.validated_data['status']
         try:
             updated = mark_delivery_and_notify(
@@ -127,6 +142,7 @@ class DeliverymanMarkDeliveryView(APIView):
                 'MEAL_PAYMENT_IDEMPOTENCY_CONFLICT',
                 'MEAL_PAYMENT_FAILED',
                 'MEAL_SLOT_PRICE_MISSING',
+                'MEAL_SERVICE_BLOCKED_LOW_BALANCE',
             }:
                 return Response(payload, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
             # Already delivered (same status) is handled inside mark_delivery as idempotent.

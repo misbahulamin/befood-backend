@@ -26,9 +26,12 @@ Deploy (`.github/workflows/deploy.yml`) syncs the server with `git fetch` + `git
 | Mark + notify | `orders.services.order_delivery.mark_delivery_and_notify` |
 | Wallet debit | `orders.services.meal_payment.charge_delivered_meal` (via mark) |
 | Live parents | `orders.services.subscription_parent.live_delivery_q` |
+| Low-balance meal-stop exclude | `orders.services.meal_demand.low_balance_blocked_q` / `delivery_customer_is_meal_service_blocked` |
 | Business “today” / TZ | `orders.services.meal_off.meal_off_business_now` / `MealOffSettings` |
 | Batch runner | `orders.services.auto_meal_delivery.run_auto_delivery` |
 | Push | `notifications.services.meal_delivery_notifications.notify_meal_delivered` |
+
+Deliveryman field mark (`POST .../deliveryman/deliveries/{public_id}/mark/`) uses the **same** completion path and the **same** low-balance exclusion. Admin mark-delivered is the intentional override that may still complete a blocked customer’s slot.
 
 ## Eligibility
 
@@ -38,6 +41,7 @@ A slot is auto-delivered when **all** of:
 2. `meal_period` = `lunch` or `dinner` (job-specific)
 3. `status` = `scheduled` (customer meal-off / admin skip → `skipped` → **excluded**)
 4. Parent is live per `live_delivery_q(service_date)` (non-cancelled order, active subscription, or cancelled-but-still-serving subscription)
+5. Customer is **not** meal-stop blocked (`meal_service_blocked_low_balance=false`) via `low_balance_blocked_q`
 
 Meal-off **deadlines** (`MealOffSettings`, default lunch same-day 00:00 / dinner same-day 16:00) only gate the customer meal-off API. Cron does **not** re-check “before 03:00”; by 15:00/23:00 under defaults the off window is already closed. Ops can change deadlines via admin meal-off settings without changing cron code.
 

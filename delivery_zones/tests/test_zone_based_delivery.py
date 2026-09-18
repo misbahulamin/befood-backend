@@ -582,6 +582,75 @@ class DeliveryZoneAPITests(APITestCase):
             'chicken + dhal + vat + vegetable',
         )
 
+    def test_deliveryman_board_omits_low_balance_blocked_customers(self):
+        self._auth_admin()
+        zone1 = create_zone(name='Zone 1', code='zone-1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+
+        self._seed_delivery(self.customer, loc1, 'lunch')
+
+        blocked_user = User.objects.create_user(
+            username='dz_blocked',
+            email='dz_blocked@example.com',
+            password='StrongPassword123',
+            first_name='Blocked',
+            is_active=True,
+        )
+        blocked = CustomerProfile.objects.create(
+            user=blocked_user,
+            phone='1713000044',
+            is_email_verified=True,
+            meal_service_blocked_low_balance=True,
+        )
+        self._seed_delivery(blocked, loc1, 'lunch')
+
+        self._auth_rider()
+        with patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            board = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/'
+            )
+        self.assertEqual(board.status_code, status.HTTP_200_OK)
+        self.assertEqual(board.data['total_count'], 1)
+        self.assertEqual(board.data['periods']['lunch']['total_count'], 1)
+        locations = board.data['periods']['lunch']['locations']
+        self.assertEqual(len(locations), 1)
+        self.assertEqual(locations[0]['delivery_count'], 1)
+        phones = [row['customer_phone'] for row in locations[0]['customers']]
+        self.assertEqual(phones, ['1713000001'])
+
+    def test_deliveryman_board_all_blocked_yields_empty_period(self):
+        self._auth_admin()
+        zone1 = create_zone(name='Zone 1', code='zone-1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+
+        self.customer.meal_service_blocked_low_balance = True
+        self.customer.save(update_fields=['meal_service_blocked_low_balance'])
+        self._seed_delivery(self.customer, loc1, 'lunch')
+
+        self._auth_rider()
+        with patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            board = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/'
+            )
+        self.assertEqual(board.status_code, status.HTTP_200_OK)
+        self.assertEqual(board.data['active_meal_period'], 'lunch')
+        self.assertEqual(board.data['zone']['code'], 'zone-1')
+        self.assertEqual(board.data['total_count'], 0)
+        self.assertEqual(board.data['periods']['lunch']['total_count'], 0)
+        self.assertEqual(board.data['periods']['lunch']['locations'], [])
+
     def test_deliveryman_mark_delivery_zone_scoped_and_idempotent(self):
         self._auth_admin()
         zone1 = create_zone(name='Zone 1', code='zone-1', priority=1)
@@ -640,6 +709,96 @@ class DeliveryZoneAPITests(APITestCase):
             self.assertEqual(second.status_code, status.HTTP_200_OK)
             self.assertEqual(second.data['status'], 'delivered')
 
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.DELIVERED)
+
+    def test_deliveryman_mark_rejects_low_balance_blocked_customer(self):
+        self._auth_admin()
+        zone1 = create_zone(name='Zone 1', code='zone-1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+
+        self.customer.meal_service_blocked_low_balance = True
+        self.customer.save(update_fields=['meal_service_blocked_low_balance'])
+        delivery = self._seed_delivery(self.customer, loc1, 'lunch')
+
+        self._auth_rider()
+        with patch(
+            'orders.services.order_delivery.charge_delivered_meal',
+            return_value=None,
+        ) as charge_mock:
+            resp = self.client.post(
+                f'/user_management/deliveryman/deliveries/{delivery.public_id}/mark/',
+                {'status': 'delivered'},
+                format='json',
+            )
+        self.assertEqual(resp.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertEqual(resp.data['error_code'], 'MEAL_SERVICE_BLOCKED_LOW_BALANCE')
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+        charge_mock.assert_not_called()
+
+    def test_deliveryman_mark_then_auto_delivery_no_double_charge(self):
+        from orders.services.auto_meal_delivery import run_auto_delivery
+
+        self._auth_admin()
+        zone1 = create_zone(name='Zone 1', code='zone-1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+        delivery = self._seed_delivery(self.customer, loc1, 'lunch')
+
+        self._auth_rider()
+        with patch(
+            'orders.services.order_delivery.charge_delivered_meal',
+            return_value=None,
+        ), patch(
+            'notifications.services.meal_delivery_notifications.notify_meal_delivered',
+            return_value=None,
+        ):
+            first = self.client.post(
+                f'/user_management/deliveryman/deliveries/{delivery.public_id}/mark/',
+                {'status': 'delivered'},
+                format='json',
+            )
+            self.assertEqual(first.status_code, status.HTTP_200_OK)
+
+            result = run_auto_delivery(
+                service_date=self.service_date,
+                meal_period=OrderDelivery.MealPeriod.LUNCH,
+                acquire_lock=False,
+            )
+
+        self.assertEqual(result.candidate_count, 0)
+        self.assertEqual(result.delivered, 0)
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.DELIVERED)
+
+    def test_admin_mark_still_allows_low_balance_blocked_customer(self):
+        from orders.services.order_delivery import mark_delivery
+
+        self._auth_admin()
+        zone1 = create_zone(name='Zone 1', code='zone-1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        self.customer.meal_service_blocked_low_balance = True
+        self.customer.save(update_fields=['meal_service_blocked_low_balance'])
+        delivery = self._seed_delivery(self.customer, loc1, 'lunch')
+
+        with patch(
+            'orders.services.order_delivery.charge_delivered_meal',
+            return_value=None,
+        ):
+            updated = mark_delivery(
+                delivery,
+                OrderDelivery.DeliveryStatus.DELIVERED,
+                marked_by=self.admin_user,
+            )
+        self.assertEqual(updated.status, OrderDelivery.DeliveryStatus.DELIVERED)
         delivery.refresh_from_db()
         self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.DELIVERED)
 
