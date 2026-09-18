@@ -60,11 +60,24 @@ class DemandResult:
     packages: list[PackageDemandRow] = field(default_factory=list)
 
 
-def _low_balance_blocked_q() -> Q:
-    """Customer meal-stop blocked via subscription or one-shot order parent."""
+def low_balance_blocked_q() -> Q:
+    """Customer meal-stop blocked via subscription or one-shot order parent.
+
+    Shared by kitchen demand, auto-delivery eligibility, and deliveryman board/mark.
+    """
     return Q(subscription__customer__meal_service_blocked_low_balance=True) | Q(
         order__customer__meal_service_blocked_low_balance=True
     )
+
+
+# Backward-compatible alias for older imports.
+_low_balance_blocked_q = low_balance_blocked_q
+
+
+def delivery_customer_is_meal_service_blocked(delivery: OrderDelivery) -> bool:
+    """True when this delivery's customer has meal_service_blocked_low_balance."""
+    customer = delivery_customer(delivery)
+    return bool(customer is not None and customer.meal_service_blocked_low_balance)
 
 
 @dataclass

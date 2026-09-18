@@ -1,4 +1,14 @@
-"""Batch auto mark-delivered for scheduled lunch/dinner slots (cron)."""
+"""Batch auto mark-delivered for scheduled lunch/dinner slots (cron).
+
+Completion path (shared with deliveryman / admin mark):
+  mark_delivery_and_notify → mark_delivery → charge_delivered_meal (+ Onahar / referral / FCM)
+
+Eligibility for *candidates* (this module) additionally requires:
+  scheduled + live_delivery_q + NOT low_balance_blocked_q
+Deliveryman mark reuses the same completion path and the same low-balance gate
+(see DeliverymanMarkDeliveryView). Admin mark intentionally skips the low-balance
+pre-filter (wallet-meal-stop override).
+"""
 
 from __future__ import annotations
 
@@ -12,6 +22,7 @@ from pathlib import Path
 from django.conf import settings
 
 from orders.models import OrderDelivery
+from orders.services.meal_demand import low_balance_blocked_q
 from orders.services.meal_off import get_meal_off_settings, meal_off_business_now
 from orders.services.order_delivery import DeliveryError, mark_delivery_and_notify
 from orders.services.subscription_parent import live_delivery_q
@@ -72,7 +83,6 @@ def business_today() -> date:
 def eligible_delivery_queryset(service_date: date, meal_period: str):
     if meal_period not in VALID_MEAL_PERIODS:
         raise ValueError(f'Invalid meal_period: {meal_period}')
-    from django.db.models import Q
 
     return (
         OrderDelivery.objects.filter(
@@ -81,10 +91,7 @@ def eligible_delivery_queryset(service_date: date, meal_period: str):
             status=OrderDelivery.DeliveryStatus.SCHEDULED,
         )
         .filter(live_delivery_q(service_date))
-        .exclude(
-            Q(subscription__customer__meal_service_blocked_low_balance=True)
-            | Q(order__customer__meal_service_blocked_low_balance=True)
-        )
+        .exclude(low_balance_blocked_q())
         .select_related(
             'order',
             'order__customer',

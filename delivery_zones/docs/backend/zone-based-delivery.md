@@ -57,7 +57,19 @@ Changing `DeliveryLocation.zone_id` immediately changes derived zone for all cus
 - Before/at `lunch_off_time` → empty active window (not prior-day dinner).
 - Client `service_date` / `meal_period` query params are ignored.
 
-Mark path: `POST /user_management/deliveryman/deliveries/{public_id}/mark/` → `mark_delivery_and_notify` (same wallet idempotency as cron).
+**Low-balance meal-stop parity with kitchen:** `zone_scoped_deliveries` excludes customers with `meal_service_blocked_low_balance=true` (same Q as `orders.services.meal_demand.low_balance_blocked_q` / auto-delivery). Kitchen `today-meal-requirement` and `today-order-details` already omit those customers from cooking; the rider board must not list them either. Exclusion uses the block **flag**, not a live `Wallet.balance < meal_stop_threshold` recompute. Meal preferences may still be on; only board visibility changes. Optional kwarg `include_low_balance_blocked=True` exists for future diagnostic callers (deliveryman defaults to exclude).
+
+### Deliveryman mark ↔ auto-delivery parity
+
+Mark path: `POST /user_management/deliveryman/deliveries/{public_id}/mark/` → zone check → **same** low-balance meal-stop gate as `eligible_delivery_queryset` → `mark_delivery_and_notify` (wallet idempotency `meal-delivery:{public_id}`).
+
+| Gate | Auto cron | Deliveryman mark | Admin mark |
+|------|-----------|------------------|------------|
+| Completion (`mark_delivery` + charge + Onahar/referral/FCM) | yes | yes | yes |
+| Exclude `meal_service_blocked_low_balance` | yes (queryset) | yes (422 `MEAL_SERVICE_BLOCKED_LOW_BALANCE`) | **no** (ops override) |
+| Zone membership | N/A | yes (403) | N/A |
+
+Shared helper: `orders.services.meal_demand.low_balance_blocked_q` / `delivery_customer_is_meal_service_blocked`.
 
 ## Edge cases
 
