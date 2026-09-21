@@ -1,11 +1,11 @@
 from datetime import date, datetime
 
-from django.db.models import Q, QuerySet
+from django.db.models import Prefetch, Q, QuerySet
 
 from delivery_zones.models import DeliveryLocation, DeliveryZone
 from delivery_zones.services.errors import DeliveryZoneError
 from delivery_zones.services.zones import zone_for_rider
-from orders.models import OrderDelivery
+from orders.models import OrderDelivery, OrderItem
 from orders.services.meal_demand import (
     _slot_ingredient_names_for_meal,
     low_balance_blocked_q,
@@ -18,6 +18,40 @@ from orders.services.subscription_parent import (
 )
 from orders.services.wallet_balance_thresholds import customer_display_name
 from user_management.models import RiderProfile
+
+BOARD_STATUS_SCHEDULED = 'scheduled'
+BOARD_STATUS_DELIVERED = 'delivered'
+BOARD_STATUS_ALL = 'all'
+
+
+def resolve_board_statuses(
+    *,
+    status: str | None = None,
+    include_delivered: bool = False,
+) -> list[str]:
+    """
+    Resolve meal-stop statuses for the deliveryman board.
+
+    Precedence:
+    - explicit ``status`` query (scheduled | delivered | all)
+    - else ``include_delivered=true`` → scheduled + delivered (legacy)
+    - else scheduled only (default / To Deliver tab)
+    """
+    if status == BOARD_STATUS_DELIVERED:
+        return [OrderDelivery.DeliveryStatus.DELIVERED]
+    if status == BOARD_STATUS_ALL:
+        return [
+            OrderDelivery.DeliveryStatus.SCHEDULED,
+            OrderDelivery.DeliveryStatus.DELIVERED,
+        ]
+    if status == BOARD_STATUS_SCHEDULED:
+        return [OrderDelivery.DeliveryStatus.SCHEDULED]
+    if include_delivered:
+        return [
+            OrderDelivery.DeliveryStatus.SCHEDULED,
+            OrderDelivery.DeliveryStatus.DELIVERED,
+        ]
+    return [OrderDelivery.DeliveryStatus.SCHEDULED]
 
 
 def _zone_customer_q(zone: DeliveryZone) -> Q:
@@ -59,6 +93,14 @@ def zone_scoped_deliveries(
             'subscription__customer__delivery_location',
             'subscription__customer__delivery_location__zone',
             'subscription__meal',
+            'delivered_by_rider',
+            'delivered_by_rider__user',
+        )
+        .prefetch_related(
+            Prefetch(
+                'order__items',
+                queryset=OrderItem.objects.order_by('id'),
+            )
         )
         .filter(live_delivery_q(service_date), service_date=service_date)
         .filter(_zone_customer_q(zone))
@@ -83,9 +125,9 @@ def _delivery_location(delivery: OrderDelivery) -> DeliveryLocation | None:
 def _meal_quantity(delivery: OrderDelivery) -> int:
     """Subscription slots are 1 meal; historical order items may carry quantity."""
     if delivery.order_id:
-        first_item = delivery.order.items.order_by('id').first()
-        if first_item is not None and first_item.quantity:
-            return int(first_item.quantity)
+        items = list(delivery.order.items.all())
+        if items and items[0].quantity:
+            return int(items[0].quantity)
     return 1
 
 
@@ -117,6 +159,45 @@ def _menu_items_label(
     return ' + '.join(names) if names else ''
 
 
+def _package_fields(delivery: OrderDelivery) -> tuple[str, str | None]:
+    """Return (package_name, package_public_id) from subscription/order snapshots."""
+    meal_name = ''
+    meal = None
+    if delivery.subscription_id:
+        meal_name = delivery.subscription.meal_name_snapshot or ''
+        meal = delivery.subscription.meal
+    elif delivery.order_id:
+        meal_name = delivery.order.meal_name_snapshot or ''
+        meal = delivery.order.meal
+    package_public_id = str(meal.public_id) if meal is not None else None
+    return meal_name, package_public_id
+
+
+def _rider_display_name(rider: RiderProfile | None) -> str | None:
+    if rider is None:
+        return None
+    user = rider.user
+    name = f'{user.first_name} {user.last_name}'.strip()
+    return name or user.email or None
+
+
+def _completion_fields(delivery: OrderDelivery) -> dict:
+    """Additive delivered-at / rider attribution (null when not delivered)."""
+    if delivery.status != OrderDelivery.DeliveryStatus.DELIVERED:
+        return {
+            'delivered_at': None,
+            'delivered_by_rider_public_id': None,
+            'delivered_by_name': None,
+        }
+    completed_at = delivery.delivered_at or delivery.marked_at
+    rider = delivery.delivered_by_rider
+    return {
+        'delivered_at': completed_at.isoformat() if completed_at else None,
+        'delivered_by_rider_public_id': str(rider.public_id) if rider is not None else None,
+        'delivered_by_name': _rider_display_name(rider),
+    }
+
+
 def _empty_board(
     *,
     service_date: date,
@@ -142,6 +223,7 @@ def build_deliveryman_board(
     rider: RiderProfile,
     *,
     include_delivered: bool = False,
+    status: str | None = None,
     now: datetime | None = None,
 ) -> dict:
     """
@@ -191,9 +273,10 @@ def build_deliveryman_board(
             code='INVALID_MEAL_PERIOD',
         )
 
-    statuses = [OrderDelivery.DeliveryStatus.SCHEDULED]
-    if include_delivered:
-        statuses.append(OrderDelivery.DeliveryStatus.DELIVERED)
+    statuses = resolve_board_statuses(
+        status=status,
+        include_delivered=include_delivered,
+    )
 
     deliveries = list(
         zone_scoped_deliveries(
@@ -240,37 +323,35 @@ def build_deliveryman_board(
         customer = delivery_customer(delivery)
         groups[key]['delivery_count'] += 1
         listed_count += 1
-        meal_name = ''
-        if delivery.subscription_id:
-            meal_name = delivery.subscription.meal_name_snapshot or ''
-        elif delivery.order_id:
-            meal_name = delivery.order.meal_name_snapshot or ''
-        groups[key]['customers'].append(
-            {
-                'delivery_public_id': str(delivery.public_id),
-                'customer_public_id': str(customer.public_id) if customer else None,
-                'customer_name': customer_display_name(customer) if customer else None,
-                'customer_email': customer.user.email if customer else None,
-                'customer_phone': customer.phone if customer else None,
-                'status': delivery.status,
-                'address_label': delivery.delivery_label_snapshot,
-                'full_address': delivery.delivery_full_address_snapshot,
-                'area': delivery.delivery_area_snapshot,
-                'city': delivery.delivery_city_snapshot,
-                'location_name': loc.name,
-                'location_priority': loc.priority,
-                'meal_period': delivery.meal_period,
-                'meal_name': meal_name,
-                'meal_quantity': _meal_quantity(delivery),
-                'notes': _special_notes(delivery),
-                'menu_items_label': _menu_items_label(
-                    delivery,
-                    service_date=service_date,
-                    meal_period=active_meal_period,
-                    menu_cache=menu_cache,
-                ),
-            }
-        )
+        package_name, package_public_id = _package_fields(delivery)
+        row = {
+            'delivery_public_id': str(delivery.public_id),
+            'customer_public_id': str(customer.public_id) if customer else None,
+            'customer_name': customer_display_name(customer) if customer else None,
+            'customer_email': customer.user.email if customer else None,
+            'customer_phone': customer.phone if customer else None,
+            'status': delivery.status,
+            'address_label': delivery.delivery_label_snapshot,
+            'full_address': delivery.delivery_full_address_snapshot,
+            'area': delivery.delivery_area_snapshot,
+            'city': delivery.delivery_city_snapshot,
+            'location_name': loc.name,
+            'location_priority': loc.priority,
+            'meal_period': delivery.meal_period,
+            'meal_name': package_name,
+            'package_name': package_name,
+            'package_public_id': package_public_id,
+            'meal_quantity': _meal_quantity(delivery),
+            'notes': _special_notes(delivery),
+            'menu_items_label': _menu_items_label(
+                delivery,
+                service_date=service_date,
+                meal_period=active_meal_period,
+                menu_cache=menu_cache,
+            ),
+        }
+        row.update(_completion_fields(delivery))
+        groups[key]['customers'].append(row)
 
     return {
         'service_date': service_date.isoformat(),

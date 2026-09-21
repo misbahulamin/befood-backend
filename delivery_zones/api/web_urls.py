@@ -5,6 +5,7 @@ from delivery_zones.api.web_views import (
     DeliveryZoneDeactivateView,
     DeliveryZoneDetailView,
     DeliveryZoneListCreateView,
+    DeliveryZoneLocationReorderView,
     DeliveryZoneOpsSummaryView,
 )
 
@@ -22,6 +23,11 @@ urlpatterns = [
         '<uuid:public_id>/assign-delivery-man/',
         DeliveryZoneAssignRiderView.as_view(),
         name='zone-assign-rider',
+    ),
+    path(
+        '<uuid:public_id>/locations/reorder/',
+        DeliveryZoneLocationReorderView.as_view(),
+        name='zone-location-reorder',
     ),
     path(
         '<uuid:public_id>/deactivate/',

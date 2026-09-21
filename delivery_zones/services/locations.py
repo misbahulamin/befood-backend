@@ -59,6 +59,22 @@ def _require_active_zone(zone: DeliveryZone) -> None:
         )
 
 
+def _apply_centroid(location: DeliveryLocation, fields: dict) -> None:
+    has_lat = 'centroid_latitude' in fields
+    has_lng = 'centroid_longitude' in fields
+    if not has_lat and not has_lng:
+        return
+    latitude = fields.get('centroid_latitude') if has_lat else location.centroid_latitude
+    longitude = fields.get('centroid_longitude') if has_lng else location.centroid_longitude
+    if (latitude is None) != (longitude is None):
+        raise DeliveryZoneError(
+            'centroid_latitude and centroid_longitude must both be set or both be empty.',
+            code='INVALID_COORDINATES',
+        )
+    location.centroid_latitude = latitude
+    location.centroid_longitude = longitude
+
+
 @transaction.atomic
 def create_location(
     *,
@@ -66,6 +82,8 @@ def create_location(
     zone_public_id,
     priority: int | None = None,
     status: str = DeliveryLocation.Status.ACTIVE,
+    centroid_latitude=None,
+    centroid_longitude=None,
 ) -> DeliveryLocation:
     name = _normalize_name(name)
     try:
@@ -87,12 +105,21 @@ def create_location(
         if status_value == DeliveryLocation.Status.ACTIVE:
             ensure_active_location_priority_available(zone, priority)
 
-    return DeliveryLocation.objects.create(
+    location = DeliveryLocation(
         name=name,
         zone=zone,
         priority=priority,
         status=status_value,
     )
+    _apply_centroid(
+        location,
+        {
+            'centroid_latitude': centroid_latitude,
+            'centroid_longitude': centroid_longitude,
+        },
+    )
+    location.save()
+    return location
 
 
 @transaction.atomic
@@ -123,6 +150,8 @@ def update_location(location: DeliveryLocation, **fields) -> DeliveryLocation:
     moving_zone = target_zone.pk != location.zone_id
     if moving_zone:
         location.zone = target_zone
+
+    _apply_centroid(location, fields)
 
     if 'priority' in fields and fields['priority'] is not None:
         new_priority = int(fields['priority'])

@@ -38,8 +38,9 @@ Operational neighborhood grouping for meal delivery planning without GPS polygon
 | `services/locations.py` | CRUD, move zone, delete-if-empty |
 | `services/priority.py` | Allocate / swap priorities safely |
 | `services/assignment.py` | Customer location assign/clear |
+| `services/board.py` | Deliveryman zone-scoped board (pending/delivered status modes) |
+| `services/today_summary.py` | Rider today metrics + package breakdown |
 | `services/ops.py` | Admin summary aggregation |
-| `services/board.py` | Deliveryman zone-scoped board |
 
 ## Cascade
 
@@ -56,6 +57,16 @@ Changing `DeliveryLocation.zone_id` immediately changes derived zone for all cus
 - Returns at most one of `lunch` / `dinner` (never both).
 - Before/at `lunch_off_time` → empty active window (not prior-day dinner).
 - Client `service_date` / `meal_period` query params are ignored.
+- Status filter (`resolve_board_statuses`):
+  - default / `status=scheduled` → pending (To Deliver)
+  - `status=delivered` → completed stops only
+  - `status=all` → scheduled + delivered
+  - legacy `include_delivered=true` (when `status` omitted) → scheduled + delivered
+- Customer rows include additive `package_name` / `package_public_id` (same snapshot as `meal_name`) and, for delivered rows, `delivered_at` / `delivered_by_rider_public_id` / `delivered_by_name`.
+
+### Deliveryman today summary
+
+`build_deliveryman_today_summary` uses the same zone + meal-off period + low-balance exclusion as the board. Stop-based `total` / `delivered` / `pending` plus dynamic `packages[]` from subscription/order meal snapshots (no hardcoded names). Mounted at `GET /user_management/deliveryman/deliveries/today-summary/`.
 
 **Low-balance meal-stop parity with kitchen:** `zone_scoped_deliveries` excludes customers with `meal_service_blocked_low_balance=true` (same Q as `orders.services.meal_demand.low_balance_blocked_q` / auto-delivery). Kitchen `today-meal-requirement` and `today-order-details` already omit those customers from cooking; the rider board must not list them either. Exclusion uses the block **flag**, not a live `Wallet.balance < meal_stop_threshold` recompute. Meal preferences may still be on; only board visibility changes. Optional kwarg `include_low_balance_blocked=True` exists for future diagnostic callers (deliveryman defaults to exclude).
 

@@ -101,7 +101,15 @@ Active window (`get_current_delivery_period`):
 | after lunch_off through dinner_off | `lunch` |
 | after dinner_off | `dinner` |
 
-Optional: `include_delivered=true` to include already delivered rows (default scheduled only).
+Optional query params for list filtering:
+
+| Param | Behavior |
+|-------|----------|
+| `status=scheduled` | To Deliver only (same as default) |
+| `status=delivered` | Delivered tab only |
+| `status=all` | Scheduled + delivered |
+| `include_delivered=true` | Legacy: scheduled + delivered when `status` omitted |
+| `service_date` / `meal_period` / `zone_public_id` | Ignored |
 
 Foreign `zone_public_id` is ignored—board is always the rider’s assigned zone. No zone → empty periods + message.
 
@@ -135,16 +143,45 @@ Foreign `zone_public_id` is ignored—board is always the rider’s assigned zon
               "location_priority": 1,
               "meal_period": "lunch",
               "meal_name": "Student Package",
+              "package_name": "Student Package",
+              "package_public_id": "...",
               "meal_quantity": 1,
               "notes": "",
               "menu_items_label": "chicken + dhal + vat + vegetable",
-              "status": "scheduled"
+              "status": "scheduled",
+              "delivered_at": null,
+              "delivered_by_rider_public_id": null,
+              "delivered_by_name": null
             }
           ]
         }
       ]
     }
   }
+}
+```
+
+## Delivery Man — Today summary
+
+```http
+GET /user_management/deliveryman/deliveries/today-summary/
+Authorization: Token <deliveryman_token>
+```
+
+Stop-based KPIs for the same zone + active meal window as the board, plus dynamic package breakdown. See `docs/frontend/deliveryman-today-ops.md` for full mobile contract.
+
+```json
+{
+  "service_date": "2026-09-18",
+  "active_meal_period": "lunch",
+  "timezone": "Asia/Dhaka",
+  "zone": { "public_id": "...", "name": "Zone 1", "code": "zone-1", "priority": 1 },
+  "total": 25,
+  "delivered": 17,
+  "pending": 8,
+  "packages": [
+    { "package_public_id": "...", "package_name": "Student Package", "count": 12 }
+  ]
 }
 ```
 

@@ -98,6 +98,8 @@ class DeliveryLocationSerializer(serializers.ModelSerializer):
             'priority',
             'status',
             'zone',
+            'centroid_latitude',
+            'centroid_longitude',
             'customer_count',
             'created_at',
             'updated_at',
@@ -130,6 +132,12 @@ class DeliveryLocationWriteSerializer(serializers.Serializer):
         required=False,
         default=DeliveryLocation.Status.ACTIVE,
     )
+    centroid_latitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+    centroid_longitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
 
 
 class DeliveryLocationUpdateSerializer(serializers.Serializer):
@@ -140,6 +148,21 @@ class DeliveryLocationUpdateSerializer(serializers.Serializer):
         choices=DeliveryLocation.Status.choices,
         required=False,
     )
+    centroid_latitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+    centroid_longitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+
+
+class DeliveryLocationReorderItemSerializer(serializers.Serializer):
+    public_id = serializers.UUIDField()
+    priority = serializers.IntegerField(min_value=1)
+
+
+class DeliveryLocationReorderSerializer(serializers.Serializer):
+    locations = DeliveryLocationReorderItemSerializer(many=True, allow_empty=False)
 
 
 class CustomerDeliveryLocationAssignSerializer(serializers.Serializer):
@@ -153,6 +176,15 @@ class DeliverymanBoardQuerySerializer(serializers.Serializer):
         choices=[('lunch', 'Lunch'), ('dinner', 'Dinner')],
         required=False,
     )
+    # Exclusive tab filter; takes precedence over include_delivered when set.
+    status = serializers.ChoiceField(
+        choices=[
+            ('scheduled', 'Scheduled / To Deliver'),
+            ('delivered', 'Delivered'),
+            ('all', 'Scheduled + Delivered'),
+        ],
+        required=False,
+    )
     include_delivered = serializers.BooleanField(required=False, default=False)
     # Foreign zone filters are ignored; board is always scoped to the rider's zone.
     zone_public_id = serializers.UUIDField(required=False)
@@ -163,3 +195,29 @@ class DeliverymanMarkDeliverySerializer(serializers.Serializer):
         choices=[('delivered', 'Delivered')],
     )
     note = serializers.CharField(required=False, allow_blank=True, default='')
+    latitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+    longitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+
+
+class DeliverymanLogisticsTransitionSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=[
+            ('assigned', 'Assigned'),
+            ('accepted', 'Accepted'),
+            ('picked_up', 'Picked up'),
+            ('out_for_delivery', 'Out for delivery'),
+            ('failed', 'Failed'),
+            ('cancelled', 'Cancelled'),
+        ],
+    )
+    note = serializers.CharField(required=False, allow_blank=True, default='')
+    latitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+    longitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )

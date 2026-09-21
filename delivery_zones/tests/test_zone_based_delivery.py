@@ -711,6 +711,9 @@ class DeliveryZoneAPITests(APITestCase):
 
         delivery.refresh_from_db()
         self.assertEqual(delivery.status, OrderDelivery.DeliveryStatus.DELIVERED)
+        self.assertEqual(delivery.delivered_by_rider_id, self.rider.pk)
+        self.assertIsNotNone(delivery.marked_at)
+        self.assertIsNotNone(delivery.delivered_at)
 
     def test_deliveryman_mark_rejects_low_balance_blocked_customer(self):
         self._auth_admin()
@@ -812,3 +815,424 @@ class DeliveryZoneAPITests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['assigned_zone']['public_id'], str(zone.public_id))
+
+    def test_reorder_locations_shifts_the_full_sequence(self):
+        self._auth_admin()
+        zone = self.client.post(
+            '/api/v1/web/delivery-zones/',
+            {'name': 'Zone 2', 'code': 'zone-2', 'priority': 2},
+            format='json',
+        )
+        self.assertEqual(zone.status_code, status.HTTP_201_CREATED)
+        zone_id = zone.data['public_id']
+        names = ['Zamal Khan', 'IUC', 'Chawkbazar', 'Olikha', 'Khpashgola']
+        public_ids = []
+        for index, name in enumerate(names, start=1):
+            created = self.client.post(
+                '/api/v1/web/delivery-locations/',
+                {
+                    'name': name,
+                    'zone_public_id': zone_id,
+                    'priority': index,
+                    'centroid_latitude': f'22.35000{index}',
+                    'centroid_longitude': f'91.78000{index}',
+                },
+                format='json',
+            )
+            self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
+            public_ids.append(created.data['public_id'])
+            self.assertEqual(
+                Decimal(created.data['centroid_latitude']),
+                Decimal(f'22.35000{index}'),
+            )
+
+        moved = [public_ids[4], *public_ids[:4]]
+        partial = self.client.patch(
+            f'/api/v1/web/delivery-zones/{zone_id}/locations/reorder/',
+            {
+                'locations': [
+                    {'public_id': public_id, 'priority': index}
+                    for index, public_id in enumerate(moved[:4], start=1)
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(partial.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertEqual(
+            DeliveryLocation.objects.get(public_id=public_ids[0]).priority,
+            1,
+        )
+
+        reordered = self.client.patch(
+            f'/api/v1/web/delivery-zones/{zone_id}/locations/reorder/',
+            {
+                'locations': [
+                    {'public_id': public_id, 'priority': index}
+                    for index, public_id in enumerate(moved, start=1)
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(reordered.status_code, status.HTTP_200_OK, reordered.data)
+
+        reloaded = self.client.get(
+            '/api/v1/web/delivery-locations/',
+            {'zone_public_id': zone_id, 'page_size': 100},
+        )
+        self.assertEqual(reloaded.status_code, status.HTTP_200_OK)
+        by_id = {row['public_id']: row for row in reloaded.data['results']}
+        self.assertEqual(by_id[public_ids[4]]['name'], 'Khpashgola')
+        self.assertEqual(by_id[public_ids[4]]['priority'], 1)
+        self.assertEqual(by_id[public_ids[0]]['priority'], 2)
+        self.assertEqual(by_id[public_ids[1]]['priority'], 3)
+        self.assertEqual(by_id[public_ids[2]]['priority'], 4)
+        self.assertEqual(by_id[public_ids[3]]['priority'], 5)
+        self.assertEqual(
+            DeliveryLocation.objects.get(public_id=public_ids[4]).priority,
+            1,
+        )
+
+class DeliverymanTodayOpsTests(APITestCase):
+    """Pending/delivered tabs, today-summary, package fields (deliveryman-today-delivery-ops)."""
+
+    def setUp(self):
+        admin_group, _ = Group.objects.get_or_create(name='ADMIN')
+        self.admin_user = User.objects.create_user(
+            username='ops_admin',
+            email='ops_admin@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        self.admin_user.groups.add(admin_group)
+        AdminProfile.objects.create(user=self.admin_user, is_verified=True)
+
+        customer_group, _ = Group.objects.get_or_create(name='CUSTOMER')
+        self.customer_user = User.objects.create_user(
+            username='ops_cust',
+            email='ops_cust@example.com',
+            password='StrongPassword123',
+            first_name='Karim',
+            is_active=True,
+        )
+        self.customer_user.groups.add(customer_group)
+        self.customer = CustomerProfile.objects.create(
+            user=self.customer_user,
+            phone='1714000001',
+            is_email_verified=True,
+        )
+
+        Group.objects.get_or_create(name='DELIVERY_MAN')
+        rider_user = User.objects.create_user(
+            username='ops_rider',
+            email='ops_rider@example.com',
+            password='StrongPassword123',
+            first_name='Rahim',
+            last_name='Khan',
+            is_active=True,
+        )
+        rider_user.groups.add(Group.objects.get(name='DELIVERY_MAN'))
+        self.rider = RiderProfile.objects.create(
+            user=rider_user,
+            phone='1714000002',
+            approval_status=RiderProfile.ApprovalStatus.APPROVED,
+            is_verified=True,
+            is_email_verified=True,
+            verified_at=timezone.now(),
+        )
+        self.rider_token = Token.objects.create(user=rider_user)
+
+        other_rider_user = User.objects.create_user(
+            username='ops_rider2',
+            email='ops_rider2@example.com',
+            password='StrongPassword123',
+            first_name='Other',
+            is_active=True,
+        )
+        other_rider_user.groups.add(Group.objects.get(name='DELIVERY_MAN'))
+        self.other_rider = RiderProfile.objects.create(
+            user=other_rider_user,
+            phone='1714000003',
+            approval_status=RiderProfile.ApprovalStatus.APPROVED,
+            is_verified=True,
+            is_email_verified=True,
+            verified_at=timezone.now(),
+        )
+        self.other_rider_token = Token.objects.create(user=other_rider_user)
+
+        self.plan = MealCategory.objects.create(
+            meal_name='Student Package',
+            total_price=Decimal('2737.00'),
+            meal_thumbnail=make_test_image('ops_student.jpg'),
+            meal_type=MealCategory.MealType.MONTHLY,
+            meal_period=MealCategory.MealPeriod.BOTH,
+            is_active=True,
+            is_subscribable=True,
+        )
+        self.plan_regular = MealCategory.objects.create(
+            meal_name='Regular Package',
+            total_price=Decimal('3500.00'),
+            meal_thumbnail=make_test_image('ops_regular.jpg'),
+            meal_type=MealCategory.MealType.MONTHLY,
+            meal_period=MealCategory.MealPeriod.BOTH,
+            is_active=True,
+            is_subscribable=True,
+        )
+        self.service_date = date(2026, 9, 18)
+
+    def _auth_rider(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.rider_token.key}')
+
+    def _auth_other_rider(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.other_rider_token.key}')
+
+    def _seed(self, customer, location, meal_period='lunch', plan=None):
+        plan = plan or self.plan
+        assign_customer_location(customer, location_public_id=location.public_id)
+        subscription = CustomerSubscription.objects.create(
+            customer=customer,
+            meal=plan,
+            meal_name_snapshot=plan.meal_name,
+            meal_period_snapshot='both',
+            status=CustomerSubscription.Status.ACTIVE,
+            started_on=self.service_date,
+        )
+        return OrderDelivery.objects.create(
+            subscription=subscription,
+            service_date=self.service_date,
+            meal_period=meal_period,
+            status=OrderDelivery.DeliveryStatus.SCHEDULED,
+            delivery_label_snapshot='Home',
+            delivery_full_address_snapshot='House 1',
+            delivery_area_snapshot=location.name,
+            delivery_city_snapshot='Chattogram',
+        )
+
+    def test_pending_vs_delivered_board_and_mark_moves_stop(self):
+        zone1 = create_zone(name='Zone 1', code='ops-z1', priority=1)
+        zone2 = create_zone(name='Zone 2', code='ops-z2', priority=2)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        loc2 = create_location(
+            name='Foreign Loc', zone_public_id=zone2.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+        d1 = self._seed(self.customer, loc1, 'lunch')
+        other_user = User.objects.create_user(
+            username='ops_foreign_c',
+            email='ops_foreign_c@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        foreign_customer = CustomerProfile.objects.create(
+            user=other_user,
+            phone='1714000099',
+            is_email_verified=True,
+        )
+        foreign = self._seed(foreign_customer, loc2, 'lunch')
+
+        self._auth_rider()
+        with patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            pending = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/',
+                {'status': 'scheduled'},
+            )
+            delivered_empty = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/',
+                {'status': 'delivered'},
+            )
+
+        self.assertEqual(pending.status_code, status.HTTP_200_OK)
+        self.assertEqual(pending.data['total_count'], 1)
+        row = pending.data['periods']['lunch']['locations'][0]['customers'][0]
+        self.assertEqual(row['delivery_public_id'], str(d1.public_id))
+        self.assertEqual(row['package_name'], 'Student Package')
+        self.assertEqual(row['meal_name'], 'Student Package')
+        self.assertEqual(row['package_public_id'], str(self.plan.public_id))
+        self.assertIn('status', row)
+        self.assertIsNone(row['delivered_at'])
+        self.assertEqual(delivered_empty.data['total_count'], 0)
+
+        with patch(
+            'orders.services.order_delivery.charge_delivered_meal',
+            return_value=None,
+        ), patch(
+            'notifications.services.meal_delivery_notifications.notify_meal_delivered',
+            return_value=None,
+        ):
+            mark = self.client.post(
+                f'/user_management/deliveryman/deliveries/{d1.public_id}/mark/',
+                {'status': 'delivered'},
+                format='json',
+            )
+        self.assertEqual(mark.status_code, status.HTTP_200_OK)
+
+        # Foreign zone never on board / mark
+        denied = self.client.post(
+            f'/user_management/deliveryman/deliveries/{foreign.public_id}/mark/',
+            {'status': 'delivered'},
+            format='json',
+        )
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+
+        with patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            pending2 = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/',
+            )
+            delivered = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/',
+                {'status': 'delivered'},
+            )
+
+        self.assertEqual(pending2.data['total_count'], 0)
+        self.assertEqual(delivered.data['total_count'], 1)
+        drow = delivered.data['periods']['lunch']['locations'][0]['customers'][0]
+        self.assertEqual(drow['delivery_public_id'], str(d1.public_id))
+        self.assertIsNotNone(drow['delivered_at'])
+        self.assertEqual(drow['delivered_by_rider_public_id'], str(self.rider.public_id))
+        self.assertEqual(drow['delivered_by_name'], 'Rahim Khan')
+        public_ids = {
+            c['delivery_public_id']
+            for loc in delivered.data['periods']['lunch']['locations']
+            for c in loc['customers']
+        }
+        self.assertNotIn(str(foreign.public_id), public_ids)
+
+    def test_today_summary_metrics_and_package_breakdown(self):
+        zone1 = create_zone(name='Zone 1', code='ops-sum-z1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+
+        d1 = self._seed(self.customer, loc1, 'lunch', plan=self.plan)
+        other_user = User.objects.create_user(
+            username='ops_cust2',
+            email='ops_cust2@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        c2 = CustomerProfile.objects.create(
+            user=other_user, phone='1714000011', is_email_verified=True
+        )
+        d2 = self._seed(c2, loc1, 'lunch', plan=self.plan)
+        other_user3 = User.objects.create_user(
+            username='ops_cust3',
+            email='ops_cust3@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        c3 = CustomerProfile.objects.create(
+            user=other_user3, phone='1714000012', is_email_verified=True
+        )
+        self._seed(c3, loc1, 'lunch', plan=self.plan_regular)
+
+        with patch(
+            'orders.services.order_delivery.charge_delivered_meal',
+            return_value=None,
+        ), patch(
+            'notifications.services.meal_delivery_notifications.notify_meal_delivered',
+            return_value=None,
+        ):
+            from orders.services.order_delivery import mark_delivery
+
+            mark_delivery(
+                d1,
+                OrderDelivery.DeliveryStatus.DELIVERED,
+                marked_by=self.rider.user,
+                rider=self.rider,
+                logistics_source='deliveryman',
+            )
+            mark_delivery(
+                d2,
+                OrderDelivery.DeliveryStatus.DELIVERED,
+                marked_by=self.rider.user,
+                rider=self.rider,
+                logistics_source='deliveryman',
+            )
+
+        self._auth_rider()
+        with patch(
+            'delivery_zones.services.today_summary.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            summary = self.client.get(
+                '/user_management/deliveryman/deliveries/today-summary/',
+                {'service_date': '2020-01-01', 'meal_period': 'dinner'},
+            )
+
+        self.assertEqual(summary.status_code, status.HTTP_200_OK)
+        self.assertEqual(summary.data['total'], 3)
+        self.assertEqual(summary.data['delivered'], 2)
+        self.assertEqual(summary.data['pending'], 1)
+        self.assertEqual(summary.data['active_meal_period'], 'lunch')
+        by_name = {p['package_name']: p['count'] for p in summary.data['packages']}
+        self.assertEqual(by_name['Student Package'], 2)
+        self.assertEqual(by_name['Regular Package'], 1)
+
+        # Other rider in different zone sees empty / not this summary
+        zone2 = create_zone(name='Zone 2', code='ops-sum-z2', priority=2)
+        assign_delivery_man(zone2, delivery_man_public_id=self.other_rider.public_id)
+        self._auth_other_rider()
+        with patch(
+            'delivery_zones.services.today_summary.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            other_summary = self.client.get(
+                '/user_management/deliveryman/deliveries/today-summary/',
+            )
+        self.assertEqual(other_summary.status_code, status.HTTP_200_OK)
+        self.assertEqual(other_summary.data['total'], 0)
+        self.assertEqual(other_summary.data['packages'], [])
+
+        # Customer denied
+        cust_token = Token.objects.create(user=self.customer_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {cust_token.key}')
+        denied = self.client.get(
+            '/user_management/deliveryman/deliveries/today-summary/',
+        )
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_include_delivered_legacy_still_works(self):
+        zone1 = create_zone(name='Zone 1', code='ops-legacy-z1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+        d1 = self._seed(self.customer, loc1, 'lunch')
+        d1.status = OrderDelivery.DeliveryStatus.DELIVERED
+        d1.marked_at = timezone.now()
+        d1.delivered_at = timezone.now()
+        d1.delivered_by_rider = self.rider
+        d1.save()
+        self._seed(
+            CustomerProfile.objects.create(
+                user=User.objects.create_user(
+                    username='ops_pend',
+                    email='ops_pend@example.com',
+                    password='StrongPassword123',
+                    is_active=True,
+                ),
+                phone='1714000020',
+                is_email_verified=True,
+            ),
+            loc1,
+            'lunch',
+        )
+
+        self._auth_rider()
+        with patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            both = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/',
+                {'include_delivered': 'true'},
+            )
+        self.assertEqual(both.data['total_count'], 2)
