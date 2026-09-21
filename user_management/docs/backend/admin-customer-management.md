@@ -137,6 +137,8 @@ Allowed `event_type` values:
 - `meal_delivered`, `meal_skipped`
 - `order_created`, `order_status_changed` (legacy)
 
+For `meal_delivered`, when `OrderDelivery.delivered_by_rider` is set, the summary includes the Delivery Man display name and refs include `delivered_by_rider_public_id` / `delivered_by_name`. Attribution may be absent for older or admin-only marks.
+
 Events are **not** inferred from bare `OrderDelivery.updated_at`.
 
 ## Deprecated endpoints

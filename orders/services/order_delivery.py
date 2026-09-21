@@ -229,6 +229,11 @@ def mark_delivery(
     to_status: str,
     marked_by=None,
     note: str = '',
+    *,
+    rider=None,
+    completion_latitude=None,
+    completion_longitude=None,
+    logistics_source: str = 'system',
 ) -> OrderDelivery:
     if to_status not in MARKABLE_STATUSES:
         raise DeliveryError(f'Cannot mark delivery as {to_status}. Use delivered or skipped.')
@@ -240,7 +245,11 @@ def mark_delivery(
             'order',
             'subscription',
             'subscription__customer',
+            'subscription__customer__delivery_location',
+            'subscription__customer__delivery_location__zone',
             'order__customer',
+            'order__customer__delivery_location',
+            'order__customer__delivery_location__zone',
         )
         .get(pk=delivery.pk)
     )
@@ -312,6 +321,32 @@ def mark_delivery(
                 locked.pk,
             )
 
+        # Logistics Phase A: attribute rider + activity/summary (skips do not count).
+        attributed_rider = rider
+        if attributed_rider is None and marked_by is not None:
+            attributed_rider = getattr(marked_by, 'rider_profile', None)
+        if attributed_rider is None:
+            # Admin mark: attribute to current zone assignee when available.
+            from orders.services.subscription_parent import delivery_customer
+
+            customer = delivery_customer(locked)
+            loc = getattr(customer, 'delivery_location', None) if customer else None
+            zone = loc.zone if loc is not None else None
+            if zone is not None and zone.assigned_delivery_man_id:
+                attributed_rider = zone.assigned_delivery_man
+
+        if attributed_rider is not None or completion_latitude is not None:
+            from orders.services.delivery_logistics import record_phase_a_delivered
+
+            locked = record_phase_a_delivered(
+                locked,
+                rider=attributed_rider,
+                latitude=completion_latitude,
+                longitude=completion_longitude,
+                source=logistics_source,
+                note=note,
+            )
+
     if locked.order_id:
         locked.order.refresh_from_db()
         try:
@@ -328,6 +363,11 @@ def mark_delivery_and_notify(
     to_status: str,
     marked_by=None,
     note: str = '',
+    *,
+    rider=None,
+    completion_latitude=None,
+    completion_longitude=None,
+    logistics_source: str = 'system',
 ) -> OrderDelivery:
     """
     Mark delivery then best-effort notify on a real transition to delivered.
@@ -337,7 +377,16 @@ def mark_delivery_and_notify(
     before_status = (
         OrderDelivery.objects.filter(pk=delivery.pk).values_list('status', flat=True).first()
     )
-    updated = mark_delivery(delivery, to_status, marked_by=marked_by, note=note)
+    updated = mark_delivery(
+        delivery,
+        to_status,
+        marked_by=marked_by,
+        note=note,
+        rider=rider,
+        completion_latitude=completion_latitude,
+        completion_longitude=completion_longitude,
+        logistics_source=logistics_source,
+    )
     if (
         to_status == OrderDelivery.DeliveryStatus.DELIVERED
         and before_status != OrderDelivery.DeliveryStatus.DELIVERED

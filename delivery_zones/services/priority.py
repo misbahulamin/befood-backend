@@ -125,3 +125,68 @@ def set_location_priority(location: DeliveryLocation, new_priority: int) -> Deli
     other.priority = old_priority
     other.save(update_fields=['priority', 'updated_at'])
     return location
+
+
+@transaction.atomic
+def reorder_location_priorities(zone: DeliveryZone, items: list[dict]) -> list[DeliveryLocation]:
+    """Rewrite every location priority in one zone to a dense 1..n sequence.
+
+    Active (zone, priority) is unique, so rows are parked on temporary priorities
+    before the final numbers are written.
+    """
+    zone = DeliveryZone.objects.select_for_update().get(pk=zone.pk)
+    locations = list(
+        DeliveryLocation.objects.select_for_update().filter(zone=zone).order_by('priority', 'id')
+    )
+    by_public_id = {loc.public_id: loc for loc in locations}
+
+    if len(items) != len(locations):
+        raise DeliveryZoneError(
+            'Reorder must include every location in the zone.',
+            code='INVALID_REORDER',
+        )
+
+    seen_ids: set = set()
+    seen_priorities: set[int] = set()
+    assigned: list[tuple[DeliveryLocation, int]] = []
+    for item in items:
+        public_id = item['public_id']
+        priority = int(item['priority'])
+        if public_id in seen_ids or priority in seen_priorities:
+            raise DeliveryZoneError(
+                'Reorder priorities and locations must be unique.',
+                code='INVALID_REORDER',
+            )
+        location = by_public_id.get(public_id)
+        if location is None:
+            raise DeliveryZoneError(
+                'Reorder must include every location in the zone.',
+                code='INVALID_REORDER',
+            )
+        if priority < 1:
+            raise DeliveryZoneError('priority must be >= 1.', code='INVALID_PRIORITY')
+        seen_ids.add(public_id)
+        seen_priorities.add(priority)
+        assigned.append((location, priority))
+
+    expected = set(range(1, len(locations) + 1))
+    if seen_priorities != expected:
+        raise DeliveryZoneError(
+            'Priorities must be the dense sequence 1..n for this zone.',
+            code='INVALID_REORDER',
+        )
+
+    max_priority = max((loc.priority for loc in locations), default=0)
+    for index, location in enumerate(locations):
+        if location.status != DeliveryLocation.Status.ACTIVE:
+            continue
+        location.priority = max_priority + 1000 + index + 1
+        location.save(update_fields=['priority', 'updated_at'])
+
+    for location, priority in assigned:
+        location.priority = priority
+        location.save(update_fields=['priority', 'updated_at'])
+
+    return list(
+        DeliveryLocation.objects.filter(zone=zone).order_by('priority', 'name', 'id')
+    )

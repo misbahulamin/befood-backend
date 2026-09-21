@@ -19,6 +19,7 @@ from user_management.models import (
     AdminProfile,
     CustomerAddress,
     CustomerProfile,
+    RiderProfile,
     SocialIdentity,
 )
 from wallet.models import Wallet, WalletTransaction
@@ -555,6 +556,49 @@ class AdminCustomerManagementAPITests(APITestCase):
         event_types = {item['event_type'] for item in response.data['results']}
         self.assertIn('subscription_created', event_types)
         self.assertIn('meal_delivered', event_types)
+
+    def test_meal_delivered_activity_includes_rider_when_attributed(self):
+        from user_management.services.admin_customer import build_activity_events
+
+        Group.objects.get_or_create(name='DELIVERY_MAN')
+        rider_user = User.objects.create_user(
+            username='act_rider',
+            email='act_rider@example.com',
+            password='StrongPassword123',
+            first_name='Rahim',
+            last_name='Khan',
+            is_active=True,
+        )
+        rider = RiderProfile.objects.create(
+            user=rider_user,
+            phone='1715000001',
+            approval_status=RiderProfile.ApprovalStatus.APPROVED,
+            is_verified=True,
+            is_email_verified=True,
+            verified_at=timezone.now(),
+        )
+        self.sub_delivery.delivered_by_rider = rider
+        self.sub_delivery.save(update_fields=['delivered_by_rider'])
+
+        events = build_activity_events(self.customer_d)
+        delivered = [e for e in events if e['event_type'] == 'meal_delivered']
+        self.assertTrue(delivered)
+        event = delivered[0]
+        self.assertIn('Rahim Khan', event['summary'])
+        self.assertEqual(
+            event['refs']['delivered_by_rider_public_id'],
+            str(rider.public_id),
+        )
+        self.assertEqual(event['refs']['delivered_by_name'], 'Rahim Khan')
+
+        # Without rider attribution, event still works
+        self.sub_delivery.delivered_by_rider = None
+        self.sub_delivery.save(update_fields=['delivered_by_rider'])
+        events2 = build_activity_events(self.customer_d)
+        delivered2 = [e for e in events2 if e['event_type'] == 'meal_delivered']
+        self.assertTrue(delivered2)
+        self.assertNotIn('delivered_by_rider_public_id', delivered2[0]['refs'])
+        self.assertIn('Meal delivered', delivered2[0]['summary'])
 
     def test_invalid_meal_filter_rejected(self):
         self._auth_admin()

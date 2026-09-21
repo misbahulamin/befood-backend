@@ -189,6 +189,15 @@ class OrderDelivery(PublicIdMixin, models.Model):
         CHARGED = 'charged', 'Charged'
         FAILED = 'failed', 'Failed'
 
+    class LogisticsStatus(models.TextChoices):
+        ASSIGNED = 'assigned', 'Assigned'
+        ACCEPTED = 'accepted', 'Accepted'
+        PICKED_UP = 'picked_up', 'Picked up'
+        OUT_FOR_DELIVERY = 'out_for_delivery', 'Out for delivery'
+        DELIVERED = 'delivered', 'Delivered'
+        FAILED = 'failed', 'Failed'
+        CANCELLED = 'cancelled', 'Cancelled'
+
     order = models.ForeignKey(
         Order,
         on_delete=models.CASCADE,
@@ -268,6 +277,54 @@ class OrderDelivery(PublicIdMixin, models.Model):
         max_digits=9, decimal_places=6, null=True, blank=True
     )
 
+    # Rider logistics (separate from meal fulfillment `status`).
+    delivered_by_rider = models.ForeignKey(
+        'user_management.RiderProfile',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='attributed_deliveries',
+        help_text='Delivery Man attributed at completion (immutable after set).',
+    )
+    logistics_zone = models.ForeignKey(
+        'delivery_zones.DeliveryZone',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='attributed_deliveries',
+    )
+    logistics_location = models.ForeignKey(
+        'delivery_zones.DeliveryLocation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='attributed_deliveries',
+    )
+    logistics_status = models.CharField(
+        max_length=32,
+        choices=LogisticsStatus.choices,
+        blank=True,
+        default='',
+        help_text='Rider progress; empty until first logistics event.',
+    )
+    assigned_at = models.DateTimeField(null=True, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    picked_up_at = models.DateTimeField(null=True, blank=True)
+    out_for_delivery_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    completion_latitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    completion_longitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    delivery_duration_seconds = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Seconds from pick/start timestamp to delivered_at when both exist.',
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -297,6 +354,10 @@ class OrderDelivery(PublicIdMixin, models.Model):
             models.Index(fields=['service_date', 'status']),
             models.Index(fields=['order', 'status']),
             models.Index(fields=['subscription', 'status']),
+            models.Index(
+                fields=['delivered_by_rider', 'service_date', 'meal_period', 'status']
+            ),
+            models.Index(fields=['logistics_status', 'service_date']),
         ]
 
     def __str__(self):
@@ -306,6 +367,80 @@ class OrderDelivery(PublicIdMixin, models.Model):
             else f'order={self.order_id}'
         )
         return f'Delivery #{self.pk} {parent} {self.service_date} {self.meal_period}'
+
+
+class DeliveryActivityLog(models.Model):
+    """Append-only logistics status events for a meal delivery stop."""
+
+    delivery = models.ForeignKey(
+        OrderDelivery,
+        on_delete=models.CASCADE,
+        related_name='activity_logs',
+    )
+    rider = models.ForeignKey(
+        'user_management.RiderProfile',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='delivery_activity_logs',
+    )
+    status = models.CharField(max_length=32)
+    timestamp = models.DateTimeField(db_index=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    source = models.CharField(
+        max_length=32,
+        default='system',
+        help_text='Actor channel: deliveryman, admin, system.',
+    )
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['timestamp', 'id']
+        indexes = [
+            models.Index(fields=['rider', 'timestamp']),
+            models.Index(fields=['delivery', 'timestamp']),
+        ]
+
+    def __str__(self):
+        return f'Activity delivery={self.delivery_id} {self.status} @ {self.timestamp}'
+
+
+class DeliveryManDailySummary(models.Model):
+    """Per-rider per-calendar-date KPI rollup for admin dashboards."""
+
+    rider = models.ForeignKey(
+        'user_management.RiderProfile',
+        on_delete=models.CASCADE,
+        related_name='daily_delivery_summaries',
+    )
+    date = models.DateField()
+    lunch_count = models.PositiveIntegerField(default=0)
+    dinner_count = models.PositiveIntegerField(default=0)
+    total_delivery = models.PositiveIntegerField(default=0)
+    completed_count = models.PositiveIntegerField(default=0)
+    failed_count = models.PositiveIntegerField(default=0)
+    average_time_seconds = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Mean delivery_duration_seconds for completed stops that day.',
+    )
+
+    class Meta:
+        ordering = ['-date', 'rider_id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['rider', 'date'],
+                name='uniq_deliveryman_daily_summary_rider_date',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['date']),
+            models.Index(fields=['rider', 'date']),
+        ]
+
+    def __str__(self):
+        return f'Summary rider={self.rider_id} {self.date} total={self.total_delivery}'
 
 
 class MealOffSettings(models.Model):

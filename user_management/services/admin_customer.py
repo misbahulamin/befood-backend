@@ -855,21 +855,48 @@ def build_activity_events(customer: CustomerProfile, *, limit: int = 200) -> lis
 
     for delivery in (
         OrderDelivery.objects.filter(scope, status=OrderDelivery.DeliveryStatus.DELIVERED)
-        .select_related('order', 'subscription')
+        .select_related(
+            'order',
+            'subscription',
+            'delivered_by_rider',
+            'delivered_by_rider__user',
+        )
         .order_by('-marked_at', '-service_date')[:limit]
     ):
         occurred_at = delivery.marked_at or delivery.updated_at or delivery.created_at
         package_name = _delivery_package_name(delivery)
+        rider = delivery.delivered_by_rider
+        rider_name = None
+        rider_public_id = None
+        if rider is not None:
+            rider_public_id = str(rider.public_id)
+            user = rider.user
+            rider_name = f'{user.first_name} {user.last_name}'.strip() or user.email
+        if rider_name:
+            summary = (
+                f'{delivery.meal_period.capitalize()} delivered by {rider_name} '
+                f'on {delivery.service_date} ({package_name})'
+            )
+        else:
+            summary = (
+                f'Meal delivered {delivery.meal_period} on {delivery.service_date} '
+                f'({package_name})'
+            )
+        refs = {
+            'delivery_public_id': str(delivery.public_id),
+            'service_date': str(delivery.service_date),
+            'meal_period': delivery.meal_period,
+        }
+        if rider_public_id:
+            refs['delivered_by_rider_public_id'] = rider_public_id
+        if rider_name:
+            refs['delivered_by_name'] = rider_name
         events.append(
             {
                 'event_type': 'meal_delivered',
                 'occurred_at': occurred_at,
-                'summary': f'Meal delivered {delivery.meal_period} on {delivery.service_date} ({package_name})',
-                'refs': {
-                    'delivery_public_id': str(delivery.public_id),
-                    'service_date': str(delivery.service_date),
-                    'meal_period': delivery.meal_period,
-                },
+                'summary': summary,
+                'refs': refs,
             }
         )
 

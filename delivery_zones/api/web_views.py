@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from delivery_zones.api.serializers import (
+    DeliveryLocationReorderSerializer,
     DeliveryLocationSerializer,
     DeliveryLocationUpdateSerializer,
     DeliveryLocationWriteSerializer,
@@ -22,7 +23,7 @@ from delivery_zones.services.locations import (
     list_locations,
     update_location,
 )
-from delivery_zones.services.ops import build_ops_summary, parse_ops_query
+from delivery_zones.services.priority import reorder_location_priorities
 from delivery_zones.services.zones import (
     assign_delivery_man,
     clear_delivery_man,
@@ -182,6 +183,28 @@ class DeliveryZoneAssignRiderView(APIView):
             return _error_response(exc)
         zone.location_count = zone.locations.count()
         return Response(DeliveryZoneSerializer(zone).data)
+
+
+class DeliveryZoneLocationReorderView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=[ZONE_TAG],
+        operation_id='adminDeliveryZoneLocationReorder',
+        summary='Rewrite every location priority in a zone',
+        request=DeliveryLocationReorderSerializer,
+        responses={200: DeliveryLocationSerializer(many=True)},
+    )
+    def patch(self, request, public_id):
+        serializer = DeliveryLocationReorderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            zone = get_zone_by_public_id(public_id)
+            reorder_location_priorities(zone, serializer.validated_data['locations'])
+        except DeliveryZoneError as exc:
+            return _error_response(exc)
+        locations = list_locations(zone_public_id=public_id)
+        return Response(DeliveryLocationSerializer(locations, many=True).data)
 
 
 class DeliveryZoneDeactivateView(APIView):

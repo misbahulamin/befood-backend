@@ -100,6 +100,9 @@ class AdminDeliverymanListSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source='user.last_name', read_only=True)
     is_active = serializers.BooleanField(source='user.is_active', read_only=True)
     assigned_zone = serializers.SerializerMethodField()
+    today_delivery = serializers.SerializerMethodField()
+    monthly_delivery = serializers.SerializerMethodField()
+    lifetime_delivery = serializers.SerializerMethodField()
 
     class Meta:
         model = RiderProfile
@@ -123,6 +126,9 @@ class AdminDeliverymanListSerializer(serializers.ModelSerializer):
             'is_available',
             'is_active',
             'assigned_zone',
+            'today_delivery',
+            'monthly_delivery',
+            'lifetime_delivery',
             'created_at',
             'updated_at',
         )
@@ -141,6 +147,24 @@ class AdminDeliverymanListSerializer(serializers.ModelSerializer):
             'priority': zone.priority,
             'status': zone.status,
         }
+
+    def _metrics(self, obj):
+        cached = getattr(obj, '_admin_360_metrics', None)
+        if cached is None:
+            from user_management.services.admin_deliveryman_360 import build_period_metrics
+
+            cached = build_period_metrics(obj)
+            obj._admin_360_metrics = cached
+        return cached
+
+    def get_today_delivery(self, obj):
+        return self._metrics(obj)['today']['total']
+
+    def get_monthly_delivery(self, obj):
+        return self._metrics(obj)['month']['total']
+
+    def get_lifetime_delivery(self, obj):
+        return self._metrics(obj)['lifetime']['total']
 
 
 class AdminDeliverymanRejectSerializer(serializers.Serializer):

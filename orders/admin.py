@@ -4,6 +4,8 @@ from .models import (
     Cart,
     CartItem,
     CustomerSubscription,
+    DeliveryActivityLog,
+    DeliveryManDailySummary,
     MealDemandSnapshot,
     MealOffSettings,
     Order,
@@ -124,6 +126,8 @@ class OrderDeliveryAdmin(admin.ModelAdmin):
         'service_date',
         'meal_period',
         'status',
+        'logistics_status',
+        'delivered_by_rider',
         'payment_status',
         'charged_amount',
         'skip_source',
@@ -131,10 +135,12 @@ class OrderDeliveryAdmin(admin.ModelAdmin):
         'delivery_area_snapshot',
         'marked_by',
         'marked_at',
+        'delivered_at',
         'created_at',
     )
     list_filter = (
         'status',
+        'logistics_status',
         'payment_status',
         'skip_source',
         'meal_period',
@@ -155,6 +161,7 @@ class OrderDeliveryAdmin(admin.ModelAdmin):
         'created_at',
         'updated_at',
         'marked_at',
+        'delivered_at',
         'payment_status',
         'charged_amount',
         'wallet_transaction',
@@ -164,10 +171,46 @@ class OrderDeliveryAdmin(admin.ModelAdmin):
         'delivery_city_snapshot',
         'delivery_latitude_snapshot',
         'delivery_longitude_snapshot',
+        'completion_latitude',
+        'completion_longitude',
+        'delivery_duration_seconds',
     )
     date_hierarchy = 'service_date'
     autocomplete_fields = ('delivery_place',)
-    raw_id_fields = ('wallet_transaction', 'order', 'subscription')
+    raw_id_fields = (
+        'wallet_transaction',
+        'order',
+        'subscription',
+        'delivered_by_rider',
+        'logistics_zone',
+        'logistics_location',
+    )
+
+
+@admin.register(DeliveryActivityLog)
+class DeliveryActivityLogAdmin(admin.ModelAdmin):
+    list_display = ('id', 'delivery', 'rider', 'status', 'source', 'timestamp')
+    list_filter = ('status', 'source')
+    search_fields = ('delivery__public_id', 'note')
+    raw_id_fields = ('delivery', 'rider')
+    readonly_fields = ('timestamp',)
+
+
+@admin.register(DeliveryManDailySummary)
+class DeliveryManDailySummaryAdmin(admin.ModelAdmin):
+    list_display = (
+        'rider',
+        'date',
+        'lunch_count',
+        'dinner_count',
+        'total_delivery',
+        'completed_count',
+        'failed_count',
+        'average_time_seconds',
+    )
+    list_filter = ('date',)
+    raw_id_fields = ('rider',)
+    date_hierarchy = 'date'
 
 
 @admin.register(MealOffSettings)

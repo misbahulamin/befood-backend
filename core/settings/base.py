@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'announcements',
     'assets',
     'faqs',
+    'delivery_schedules',
     'blogs',
     'onahar',
     'referrals',
