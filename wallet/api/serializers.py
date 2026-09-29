@@ -25,6 +25,7 @@ class WalletSerializer(serializers.ModelSerializer):
     min_wallet_balance_to_order = serializers.SerializerMethodField()
     low_balance_reminder_threshold = serializers.SerializerMethodField()
     meal_stop_threshold = serializers.SerializerMethodField()
+    minimum_recharge_amount = serializers.SerializerMethodField()
     withdrawable_balance = serializers.SerializerMethodField()
 
     class Meta:
@@ -40,6 +41,7 @@ class WalletSerializer(serializers.ModelSerializer):
             'min_wallet_balance_to_order',
             'low_balance_reminder_threshold',
             'meal_stop_threshold',
+            'minimum_recharge_amount',
             'created_at',
             'updated_at',
         )
@@ -60,6 +62,9 @@ class WalletSerializer(serializers.ModelSerializer):
 
     def get_meal_stop_threshold(self, obj):
         return self._threshold_str(get_order_wallet_settings().meal_stop_threshold)
+
+    def get_minimum_recharge_amount(self, obj):
+        return self._threshold_str(get_order_wallet_settings().minimum_recharge_amount)
 
 class DeliveryFeeInfoSerializer(serializers.Serializer):
     payment_month = serializers.IntegerField(allow_null=True)

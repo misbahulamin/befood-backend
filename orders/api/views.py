@@ -835,6 +835,7 @@ class OrderWalletSettingsView(APIView):
                 'low_balance_reminder_threshold'
             ),
             meal_stop_threshold=serializer.validated_data.get('meal_stop_threshold'),
+            minimum_recharge_amount=serializer.validated_data.get('minimum_recharge_amount'),
         )
         return Response(OrderWalletSettingsSerializer(updated).data)
 

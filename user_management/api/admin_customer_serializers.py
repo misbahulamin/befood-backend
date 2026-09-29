@@ -372,3 +372,43 @@ class AdminCustomerActivitySerializer(serializers.Serializer):
     occurred_at = serializers.DateTimeField()
     summary = serializers.CharField()
     refs = serializers.DictField()
+
+
+class AdminCancelSubscriptionMealSerializer(serializers.Serializer):
+    public_id = serializers.UUIDField()
+    service_date = serializers.DateField()
+    meal_period = serializers.CharField()
+    estimated_charge = serializers.CharField()
+
+
+class AdminCancelSubscriptionActorSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    email = serializers.EmailField()
+
+
+class AdminCancelSubscriptionInfoSerializer(serializers.Serializer):
+    public_id = serializers.UUIDField()
+    status = serializers.CharField()
+    cancelled_at = serializers.DateTimeField(allow_null=True)
+    cancel_effective_on = serializers.DateField(allow_null=True)
+    cancel_source = serializers.CharField(allow_null=True)
+    cancelled_by = AdminCancelSubscriptionActorSerializer(allow_null=True)
+
+
+class AdminCancelSubscriptionWalletSerializer(serializers.Serializer):
+    balance = serializers.CharField()
+    recharge_balance = serializers.CharField()
+    meal_stop_threshold = serializers.CharField()
+    finalized_meal_liability = serializers.CharField()
+    withdrawable_balance = serializers.CharField()
+
+
+class AdminCancelSubscriptionResultSerializer(serializers.Serializer):
+    subscription = AdminCancelSubscriptionInfoSerializer()
+    cancelled_meals = AdminCancelSubscriptionMealSerializer(many=True)
+    preserved_finalized_meals = AdminCancelSubscriptionMealSerializer(many=True)
+    wallet = AdminCancelSubscriptionWalletSerializer()
+
+
+class AdminCancelSubscriptionRequestSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)

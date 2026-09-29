@@ -54,6 +54,15 @@ class FundingRequestConflictError(WalletError):
         self.code = 'FUNDING_ALREADY_PROCESSED'
 
 
+class RechargeBelowMinimumError(WalletError):
+    """Recharge amount is below the admin-configured minimum."""
+
+    def __init__(self, minimum: Decimal):
+        self.minimum = minimum.quantize(Decimal('0.01'))
+        super().__init__(f'Minimum recharge amount is {self.minimum:.2f} BDT.')
+        self.code = 'RECHARGE_BELOW_MINIMUM'
+
+
 def sanitize_transaction_id(value: str) -> str:
     return (value or '').strip()
 
@@ -202,6 +211,9 @@ def request_recharge(
         raise ManualFundingDisabledError('Manual wallet funding is currently disabled.')
 
     amount = validate_amount(amount)
+    minimum = get_order_wallet_settings().minimum_recharge_amount
+    if amount < minimum:
+        raise RechargeBelowMinimumError(minimum)
     method = _normalize_payment_method(payment_method)
     external_ref = sanitize_transaction_id(transaction_id)
     if not external_ref:
@@ -310,13 +322,32 @@ def request_withdraw(
 
     _ensure_active_for_customer(locked)
 
+    from orders.services.meal_payment import compute_finalized_meal_liability
+    from orders.services.subscription_service import get_active_subscription
+
     meal_stop = get_order_wallet_settings().meal_stop_threshold
-    max_withdrawable = compute_maximum_withdrawable(locked.recharge_balance, meal_stop)
+    has_active = get_active_subscription(customer_profile) is not None
+    liability = Decimal('0.00')
+    if not has_active:
+        liability = compute_finalized_meal_liability(customer_profile)
+    max_withdrawable = compute_maximum_withdrawable(
+        locked.recharge_balance,
+        meal_stop,
+        has_active_subscription=has_active,
+        finalized_meal_liability=liability,
+    )
     if amount > max_withdrawable:
-        raise InsufficientFundsError(
-            f'Maximum withdrawable is {max_withdrawable:.2f}. '
-            f'Please keep at least {meal_stop:.2f} recharge balance for meal service.'
-        )
+        if has_active:
+            detail = (
+                f'Maximum withdrawable is {max_withdrawable:.2f}. '
+                f'Please keep at least {meal_stop:.2f} recharge balance for meal service.'
+            )
+        else:
+            detail = (
+                f'Maximum withdrawable is {max_withdrawable:.2f}. '
+                f'Recharge must cover finalized meal liability of {liability:.2f}.'
+            )
+        raise InsufficientFundsError(detail)
 
     sid = transaction.savepoint()
     # Recharge-only: commission_balance is never withdrawn.

@@ -41,6 +41,46 @@ def _set_meal_stop_threshold(amount: Decimal) -> None:
     settings_obj.save(update_fields=['meal_stop_threshold', 'updated_at'])
 
 
+def _ensure_active_subscription(profile) -> None:
+    """Attach a minimal active subscription so meal-stop withdraw floor applies."""
+    from datetime import date
+    from io import BytesIO
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from PIL import Image
+
+    from meals.models import MealCategory
+    from orders.models import CustomerSubscription
+
+    if CustomerSubscription.objects.filter(
+        customer=profile,
+        status=CustomerSubscription.Status.ACTIVE,
+    ).exists():
+        return
+    buffer = BytesIO()
+    Image.new('RGB', (40, 40), 'red').save(buffer, format='JPEG')
+    buffer.seek(0)
+    meal = MealCategory.objects.create(
+        meal_name='Active Sub Fixture',
+        total_price=Decimal('1000.00'),
+        meal_thumbnail=SimpleUploadedFile(
+            'active-sub.jpg', buffer.read(), content_type='image/jpeg'
+        ),
+        meal_type=MealCategory.MealType.MONTHLY,
+        meal_period=MealCategory.MealPeriod.BOTH,
+        is_active=True,
+        is_subscribable=True,
+    )
+    CustomerSubscription.objects.create(
+        customer=profile,
+        meal=meal,
+        meal_name_snapshot=meal.meal_name,
+        meal_period_snapshot=meal.meal_period,
+        status=CustomerSubscription.Status.ACTIVE,
+        started_on=date(2026, 1, 1),
+    )
+
+
 def _make_customer(
     username='u1',
     phone='1711111111',
@@ -256,8 +296,27 @@ class ManualFundingServiceTests(TestCase):
             compute_maximum_withdrawable(Decimal('80.00'), Decimal('100.00')),
             Decimal('0.00'),
         )
+        self.assertEqual(
+            compute_maximum_withdrawable(
+                Decimal('300.00'),
+                Decimal('100.00'),
+                has_active_subscription=False,
+                finalized_meal_liability=Decimal('80.00'),
+            ),
+            Decimal('220.00'),
+        )
+        self.assertEqual(
+            compute_maximum_withdrawable(
+                Decimal('300.00'),
+                Decimal('100.00'),
+                has_active_subscription=False,
+                finalized_meal_liability=Decimal('0.00'),
+            ),
+            Decimal('300.00'),
+        )
 
     def test_withdraw_respects_meal_stop_threshold(self):
+        _ensure_active_subscription(self.profile)
         _set_meal_stop_threshold(Decimal('100.00'))
         credit_wallet(self.wallet, Decimal('420.00'))
         self.wallet.refresh_from_db()
@@ -274,12 +333,14 @@ class ManualFundingServiceTests(TestCase):
         self.assertEqual(txn.status, WalletTransaction.Status.PENDING)
 
     def test_withdraw_blocked_when_recharge_at_meal_stop_floor(self):
+        _ensure_active_subscription(self.profile)
         _set_meal_stop_threshold(Decimal('100.00'))
         credit_wallet(self.wallet, Decimal('100.00'))
         with self.assertRaises(InsufficientFundsError):
             request_withdraw(self.profile, Decimal('1.00'))
 
     def test_withdraw_ignores_commission_for_maximum(self):
+        _ensure_active_subscription(self.profile)
         _set_meal_stop_threshold(Decimal('100.00'))
         credit_wallet(self.wallet, Decimal('150.00'))
         self.wallet.commission_balance = Decimal('500.00')

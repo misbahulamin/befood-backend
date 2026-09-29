@@ -9,9 +9,17 @@ from orders.services.order_service import FrozenWalletOrderError, InsufficientWa
 from orders.services.subscription_service import (
     AlreadySubscribedError,
     PlanUnavailableError,
+    SubscriptionError,
     cancel_subscription,
     get_subscription_progress,
+    resolve_effective_meal_period,
+    normalize_subscription_quantity,
     subscribe_customer,
+)
+from wallet.services.subscription_delivery_fee import (
+    SubscriptionDeliveryFeeError,
+    calculate_subscription_delivery_fee,
+    format_fee_summary,
 )
 from user_management.validators import format_bd_phone_e164
 
@@ -91,6 +99,12 @@ class AdminSubscriptionPlanSerializer(serializers.ModelSerializer):
 class SubscribeSerializer(serializers.Serializer):
     plan_public_id = serializers.UUIDField()
     customer_note = serializers.CharField(required=False, allow_blank=True, default='')
+    meal_preference = serializers.ChoiceField(
+        choices=[('lunch', 'lunch'), ('dinner', 'dinner'), ('both', 'both')],
+        required=False,
+        allow_null=True,
+    )
+    quantity = serializers.IntegerField(required=False, min_value=1, default=1)
 
     def validate_plan_public_id(self, value):
         try:
@@ -118,6 +132,8 @@ class SubscribeSerializer(serializers.Serializer):
                 profile,
                 meal,
                 customer_note=validated_data.get('customer_note', ''),
+                meal_preference=validated_data.get('meal_preference'),
+                quantity=validated_data.get('quantity', 1),
             )
         except AlreadySubscribedError as exc:
             raise serializers.ValidationError(
@@ -125,6 +141,15 @@ class SubscribeSerializer(serializers.Serializer):
             )
         except PlanUnavailableError as exc:
             raise serializers.ValidationError({'plan_public_id': [str(exc)]})
+        except SubscriptionError as exc:
+            field = (
+                'meal_preference'
+                if getattr(exc, 'code', '') in {'INVALID_MEAL_PREFERENCE', 'MEAL_PREFERENCE_REQUIRED', 'MEAL_PREFERENCE_NOT_SUPPORTED'}
+                else 'quantity' if getattr(exc, 'code', '') == 'INVALID_QUANTITY' else 'non_field_errors'
+            )
+            payload = {'error_code': [exc.code]} if getattr(exc, 'code', None) else {}
+            payload[field] = [str(exc)]
+            raise serializers.ValidationError(payload)
         except (InsufficientWalletBalanceError, FrozenWalletOrderError) as exc:
             raise serializers.ValidationError({'non_field_errors': [str(exc)]})
 
@@ -188,7 +213,36 @@ class SubscriptionProgressMixin:
         return self._progress(obj)['active_days_this_month']
 
 
-class CustomerSubscriptionSerializer(SubscriptionProgressMixin, serializers.ModelSerializer):
+class SubscriptionFeeSummaryMixin(serializers.Serializer):
+    monthly_delivery_fee = serializers.SerializerMethodField()
+    fee_rule_code = serializers.SerializerMethodField()
+
+    def _fee_summary(self, obj):
+        cache = self.context.setdefault('_subscription_fee_cache', {})
+        if obj.pk not in cache:
+            try:
+                cache[obj.pk] = format_fee_summary(
+                    calculate_subscription_delivery_fee(
+                        obj.meal_period_snapshot, getattr(obj, 'quantity', 1) or 1
+                    )
+                )
+            except SubscriptionDeliveryFeeError:
+                cache[obj.pk] = {
+                    'meal_period': obj.meal_period_snapshot,
+                    'quantity': getattr(obj, 'quantity', 1) or 1,
+                    'monthly_delivery_fee': None,
+                    'fee_rule_code': None,
+                }
+        return cache[obj.pk]
+
+    def get_monthly_delivery_fee(self, obj):
+        return self._fee_summary(obj)['monthly_delivery_fee']
+
+    def get_fee_rule_code(self, obj):
+        return self._fee_summary(obj)['fee_rule_code']
+
+
+class CustomerSubscriptionSerializer(SubscriptionProgressMixin, SubscriptionFeeSummaryMixin, serializers.ModelSerializer):
     plan_public_id = serializers.UUIDField(source='meal.public_id', read_only=True)
     expected_deliveries = serializers.SerializerMethodField()
     delivered_count = serializers.SerializerMethodField()
@@ -202,6 +256,9 @@ class CustomerSubscriptionSerializer(SubscriptionProgressMixin, serializers.Mode
             'plan_public_id',
             'meal_name_snapshot',
             'meal_period_snapshot',
+            'quantity',
+            'monthly_delivery_fee',
+            'fee_rule_code',
             'status',
             'started_on',
             'cancelled_at',
@@ -214,6 +271,41 @@ class CustomerSubscriptionSerializer(SubscriptionProgressMixin, serializers.Mode
             'updated_at',
         )
         read_only_fields = fields
+
+
+class SubscriptionQuoteSerializer(serializers.Serializer):
+    plan_public_id = serializers.UUIDField()
+    meal_preference = serializers.ChoiceField(
+        choices=[('lunch', 'lunch'), ('dinner', 'dinner'), ('both', 'both')],
+        required=False,
+        allow_null=True,
+    )
+    quantity = serializers.IntegerField(required=False, min_value=1, default=1)
+
+    def validate(self, attrs):
+        try:
+            meal = MealCategory.objects.get(public_id=attrs['plan_public_id'])
+        except MealCategory.DoesNotExist:
+            raise serializers.ValidationError({'plan_public_id': ['Meal plan not found.']})
+        if not meal.is_active or not meal.is_subscribable:
+            raise serializers.ValidationError({'plan_public_id': ['This meal plan is not available to subscribe.']})
+        try:
+            effective, used_fallback = resolve_effective_meal_period(
+                meal, attrs.get('meal_preference'), allow_fallback=True
+            )
+            qty = normalize_subscription_quantity(attrs.get('quantity', 1))
+            summary = format_fee_summary(
+                calculate_subscription_delivery_fee(effective, qty)
+            )
+        except SubscriptionError as exc:
+            raise serializers.ValidationError({'meal_preference': [str(exc)]})
+        except SubscriptionDeliveryFeeError as exc:
+            raise serializers.ValidationError({'quantity': [str(exc)]})
+        attrs['meal'] = meal
+        attrs['effective_meal_period'] = effective
+        attrs['used_fallback'] = used_fallback
+        attrs['fee_summary'] = summary
+        return attrs
 
 
 class CustomerSubscriptionDetailSerializer(CustomerSubscriptionSerializer):

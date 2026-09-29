@@ -354,10 +354,29 @@ def build_active_subscription_payload(
     if subscription is None:
         return None
     counts = _subscription_delivery_counts(subscription)
+    fee_summary = None
+    try:
+        from wallet.services.subscription_delivery_fee import (
+            calculate_subscription_delivery_fee,
+            format_fee_summary,
+        )
+
+        fee_summary = format_fee_summary(
+            calculate_subscription_delivery_fee(
+                subscription.meal_period_snapshot,
+                getattr(subscription, 'quantity', 1) or 1,
+            )
+        )
+    except Exception:
+        fee_summary = None
     return {
         'subscription_public_id': str(subscription.public_id),
         'package_name': subscription.meal_name_snapshot,
         'meal_public_id': str(subscription.meal.public_id) if subscription.meal_id else None,
+        'meal_period_snapshot': subscription.meal_period_snapshot,
+        'quantity': getattr(subscription, 'quantity', 1) or 1,
+        'monthly_delivery_fee': fee_summary['monthly_delivery_fee'] if fee_summary else None,
+        'fee_rule_code': fee_summary['fee_rule_code'] if fee_summary else None,
         'status': subscription.status,
         'started_on': subscription.started_on,
         'cancel_effective_on': subscription.cancel_effective_on,
@@ -792,7 +811,9 @@ def build_activity_events(customer: CustomerProfile, *, limit: int = 200) -> lis
     scope = customer_delivery_scope(customer)
 
     for subscription in (
-        CustomerSubscription.objects.filter(customer=customer).order_by('-created_at')[:limit]
+        CustomerSubscription.objects.filter(customer=customer)
+        .select_related('cancelled_by')
+        .order_by('-created_at')[:limit]
     ):
         events.append(
             {
@@ -816,6 +837,13 @@ def build_activity_events(customer: CustomerProfile, *, limit: int = 200) -> lis
                         'cancel_effective_on': (
                             str(subscription.cancel_effective_on)
                             if subscription.cancel_effective_on
+                            else None
+                        ),
+                        'cancel_source': subscription.cancel_source,
+                        'cancelled_by_id': subscription.cancelled_by_id,
+                        'cancelled_by_email': (
+                            subscription.cancelled_by.email
+                            if subscription.cancelled_by_id
                             else None
                         ),
                     },

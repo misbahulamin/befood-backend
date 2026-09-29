@@ -23,10 +23,11 @@ Example: lunch cutoff `02:00`, subscribe at `03:00` on a `both` plan → today�
 | Client | Method | Path | Why |
 |--------|--------|------|-----|
 | Customer | `GET` | `/api/v1/subscription-plans/` | Active subscribable catalog |
-| Customer | `POST` | `/api/v1/subscriptions/` | Subscribe (`plan_public_id`) |
+| Customer | `POST` | `/api/v1/subscriptions/quote/` | Preview preference + monthly delivery fee (no create) |
+| Customer | `POST` | `/api/v1/subscriptions/` | Subscribe (`plan_public_id`, optional `meal_preference`, `quantity`) |
 | Customer | `GET` | `/api/v1/subscriptions/current/` | Active subscription or null |
 | Customer | `GET` | `/api/v1/subscriptions/{public_id}/` | Own detail + slots |
-| Customer | `POST` | `/api/v1/subscriptions/current/cancel/` | Cancel; skip future slots |
+| Customer | `POST` | `/api/v1/subscriptions/current/cancel/` | Cancel; soft-skip slots still inside meal-off window; preserve past-cutoff same-day slots |
 | Customer | `POST` | `/orders/` | **Retired** — always `409 SUBSCRIBE_REQUIRED` |
 | Customer | `GET` | `/orders/orderable-months/` | **Retired** — same `409` |
 | Customer | `GET` | `/orders/current-package/` | Active subscription payload (compat) |
@@ -39,9 +40,33 @@ Service: `subscribe_customer` in `orders/services/subscription_service.py`.
 
 1. Plan must be `is_active` and `is_subscribable`.
 2. At most one `active` `CustomerSubscription` per customer (DB unique + service check). Already-subscribed is checked **before** the wallet gate.
-3. Wallet missing → balance `0`. Frozen wallet → reject. Balance `<` minimum → reject. **No ledger write.**
-4. Snapshots: `meal_name_snapshot`, `meal_period_snapshot`. `started_on` = meal-off timezone today.
-5. Same transaction: `ensure_subscription_deliveries` (applies meal-off cutoff eligibility for **today’s** new slots — see above).
+3. Wallet missing → balance `0`. Frozen wallet → reject. Balance `<` minimum → reject. **No ledger write** (including no delivery-fee debit).
+4. Optional `meal_preference` (`lunch` | `dinner` | `both`): must be ⊆ package `meal_period`. Omitted → legacy fallback to package period (old clients).
+5. Optional `quantity` (person count, min 1, default 1). Used for both-tier monthly delivery fee display.
+6. Snapshots: `meal_name_snapshot`, `meal_period_snapshot` (= effective preference), `quantity`. `started_on` = meal-off timezone today.
+7. Same transaction: `ensure_subscription_deliveries` generates only periods from `periods_for_meal_period(meal_period_snapshot)`.
+
+### Quote (fee preview)
+
+`POST /api/v1/subscriptions/quote/` with `{ plan_public_id, meal_preference?, quantity? }` returns normalized preference, quantity, `monthly_delivery_fee`, `fee_rule_code`. Does **not** create a subscription or debit the wallet.
+
+Canonical calculator: `wallet.services.subscription_delivery_fee.calculate_subscription_delivery_fee`:
+
+| Preference | Quantity | Fee (BDT) |
+|------------|----------|-----------|
+| lunch / dinner | any | 200 |
+| both | 1–3 | 400 |
+| both | 4–5 | 350 |
+| both | 6+ | 300 |
+
+Clients must display the API fee — do not hardcode amounts.
+
+### Deploy / rollback notes
+
+1. Staging: migrate `0019_customersubscription_quantity` → smoke lunch/dinner/both + omit preference + quote + meal-off + cancel.
+2. Production order: backend (preference optional) → web → mobile store; monitor subscribe `400`s.
+3. Admin manual `charge_delivery_fee` unchanged; use calculated fee as suggested amount.
+4. Rollback: reverse quantity migration if needed; reverting code keeps existing snapshots intact (no historical delivery rewrite).
 
 ## Cancel
 

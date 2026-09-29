@@ -22,6 +22,7 @@ urlpatterns = [
     path('api/v1/web/dashboard/', include('user_management.api.web_dashboard_urls')),
     path('notices/', include('notices.api.urls')),
     path('announcements/', include('announcements.api.urls')),
+    path('sliders/', include('sliders.api.urls')),
     path('assets/', include('assets.api.urls')),
     path('wallet/', include('wallet.api.urls')),
     path('api/v1/web/wallet-funding/', include('wallet.api.web_urls')),

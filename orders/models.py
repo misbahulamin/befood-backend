@@ -114,6 +114,11 @@ class CustomerSubscription(PublicIdMixin, models.Model):
         ACTIVE = 'active', 'Active'
         CANCELLED = 'cancelled', 'Cancelled'
 
+    class CancelSource(models.TextChoices):
+        CUSTOMER = 'customer', 'Customer'
+        ADMIN = 'admin', 'Admin'
+        SYSTEM = 'system', 'System'
+
     customer = models.ForeignKey(
         'user_management.CustomerProfile',
         on_delete=models.CASCADE,
@@ -127,7 +132,15 @@ class CustomerSubscription(PublicIdMixin, models.Model):
     meal_name_snapshot = models.CharField(max_length=255)
     meal_period_snapshot = models.CharField(
         max_length=10,
-        help_text='lunch | dinner | both at subscribe time.',
+        help_text=(
+            'Effective subscription meal preference (lunch | dinner | both). '
+            'Persisted selection validated against the package coverage at '
+            'subscribe time; drives all subscription delivery generation.'
+        ),
+    )
+    quantity = models.PositiveIntegerField(
+        default=1,
+        help_text='Canonical person/serving quantity for this subscription (min 1).',
     )
     status = models.CharField(
         max_length=20,
@@ -143,6 +156,21 @@ class CustomerSubscription(PublicIdMixin, models.Model):
         null=True,
         blank=True,
         help_text='Last local date slots may still be served after cancel.',
+    )
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='cancelled_subscriptions',
+        help_text='User who cancelled (customer or admin actor when recorded).',
+    )
+    cancel_source = models.CharField(
+        max_length=20,
+        choices=CancelSource.choices,
+        null=True,
+        blank=True,
+        help_text='Who initiated cancel: customer | admin | system.',
     )
     customer_note = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -503,6 +531,13 @@ class OrderWalletSettings(models.Model):
         default=Decimal('200.00'),
         validators=[MinValueValidator(Decimal('0.00'))],
         help_text='Block automated meal delivery when spendable balance is strictly below this amount (BDT).',
+    )
+    minimum_recharge_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('500.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Minimum recharge request amount (BDT); requests below this are rejected.',
     )
     updated_at = models.DateTimeField(auto_now=True)
 

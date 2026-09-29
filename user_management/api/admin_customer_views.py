@@ -6,6 +6,8 @@ from rest_framework.response import Response
 
 from delivery_zones.api.serializers import CustomerDeliveryLocationAssignSerializer
 from user_management.api.admin_customer_serializers import (
+    AdminCancelSubscriptionRequestSerializer,
+    AdminCancelSubscriptionResultSerializer,
     AdminCustomerActiveOrderSerializer,
     AdminCustomerActiveSubscriptionSerializer,
     AdminCustomerActivitySerializer,
@@ -227,6 +229,102 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
     def wallet_overview(self, request, public_id=None):
         customer = self.get_object()
         return Response({'wallet_overview': build_wallet_overview(customer)})
+
+    @extend_schema(
+        tags=['Admin Customers'],
+        operation_id='adminCustomerCancelSubscriptionPreview',
+        summary='Preview subscription cancel impact',
+        description=(
+            'Verified admin only. Read-only classification of meals that would be '
+            'cancelled vs preserved (past meal-off cutoff) and post-cancel wallet '
+            'figures. Does not mutate subscription, deliveries, or wallet.'
+        ),
+        responses={
+            200: AdminCancelSubscriptionResultSerializer,
+            404: OpenApiResponse(description='No active subscription'),
+        },
+    )
+    @action(detail=True, methods=['get'], url_path='cancel-subscription-preview')
+    def cancel_subscription_preview(self, request, public_id=None):
+        from orders.services.subscription_service import (
+            build_subscription_cancel_response,
+            get_active_subscription,
+        )
+
+        customer = self.get_object()
+        subscription = get_active_subscription(customer)
+        if subscription is None:
+            return Response(
+                {'detail': 'No active meal subscription.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        payload = build_subscription_cancel_response(
+            subscription,
+            assume_cancelled=True,
+        )
+        # Preview must not imply the subscription is already cancelled.
+        payload['subscription'] = {
+            **payload['subscription'],
+            'status': subscription.status,
+            'cancelled_at': None,
+            'cancel_effective_on': None,
+            'cancel_source': None,
+            'cancelled_by': None,
+        }
+        return Response(payload)
+
+    @extend_schema(
+        tags=['Admin Customers'],
+        operation_id='adminCustomerCancelSubscription',
+        summary='Cancel customer active subscription',
+        description=(
+            'Verified admin only. Invokes the canonical cancel domain service '
+            '(same meal-off cutoff rules as customer self-cancel) with '
+            'cancel_source=admin. Soft-skips cancellable SCHEDULED slots; '
+            'preserves past-cutoff finalized meals.'
+        ),
+        request=AdminCancelSubscriptionRequestSerializer,
+        responses={
+            200: AdminCancelSubscriptionResultSerializer,
+            404: OpenApiResponse(description='No active subscription'),
+        },
+    )
+    @action(detail=True, methods=['post'], url_path='cancel-subscription')
+    def cancel_subscription(self, request, public_id=None):
+        from orders.models import CustomerSubscription
+        from orders.services.subscription_service import (
+            build_cancel_classification_payload,
+            build_subscription_cancel_response,
+            cancel_subscription,
+            get_active_subscription,
+        )
+
+        customer = self.get_object()
+        subscription = get_active_subscription(customer)
+        if subscription is None:
+            return Response(
+                {'detail': 'No active meal subscription.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = AdminCancelSubscriptionRequestSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        reason = serializer.validated_data.get('reason') or ''
+
+        # Classify before cancel so response meal lists match preview semantics.
+        classification = build_cancel_classification_payload(subscription)
+        updated = cancel_subscription(
+            subscription,
+            cancelled_by=request.user,
+            cancel_source=CustomerSubscription.CancelSource.ADMIN,
+            reason=reason or None,
+        )
+        payload = build_subscription_cancel_response(
+            updated,
+            cancelled_meals=classification['cancelled_meals'],
+            preserved_finalized_meals=classification['preserved_finalized_meals'],
+        )
+        return Response(payload)
 
     @extend_schema(
         tags=['Admin Delivery Fees'],

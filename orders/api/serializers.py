@@ -175,6 +175,7 @@ class OrderWalletSettingsSerializer(serializers.ModelSerializer):
             'min_wallet_balance_to_order',
             'low_balance_reminder_threshold',
             'meal_stop_threshold',
+            'minimum_recharge_amount',
             'updated_at',
         )
         read_only_fields = ('updated_at',)
@@ -198,6 +199,12 @@ class OrderWalletSettingsSerializer(serializers.ModelSerializer):
 
     def validate_meal_stop_threshold(self, value):
         return self._validate_amount(value)
+
+    def validate_minimum_recharge_amount(self, value):
+        amount = self._validate_amount(value)
+        if amount > Decimal('100000.00'):
+            raise serializers.ValidationError('Amount must not exceed 100000.00.')
+        return amount
 
     def validate(self, attrs):
         instance = getattr(self, 'instance', None)

@@ -23,12 +23,16 @@ Verified customer only. Unauthenticated → `401`. Unverified email → `403`.
 1. GET /wallet/                          → balance, status, min_wallet_balance_to_order
 2. GET /api/v1/subscription-plans/       → catalog (lean)
 3. GET /api/v1/subscriptions/current/    → already subscribed?
-4. If none and wallet OK → POST /api/v1/subscriptions/  { plan_public_id }
-5. Current / home → GET current (or GET /orders/current-package/ during migration)
-6. Calendar menu → GET /meals/my-package-menu/?year=&month=
-7. Meal-off → POST /api/v1/subscriptions/{id}/deliveries/{delivery_id}/meal-off
-8. Cancel → POST /api/v1/subscriptions/current/cancel/
+4. Config UI: pick meal_preference (lunch|dinner|both within package) + quantity
+5. POST /api/v1/subscriptions/quote/     → show monthly_delivery_fee from backend
+6. Confirm → POST /api/v1/subscriptions/  { plan_public_id, meal_preference, quantity }
+7. Current / home → GET current (or GET /orders/current-package/ during migration)
+8. Calendar menu → GET /meals/my-package-menu/?year=&month=
+9. Meal-off → POST /api/v1/subscriptions/{id}/deliveries/{delivery_id}/meal-off
+10. Cancel → POST /api/v1/subscriptions/current/cancel/
 ```
+
+Do **not** hardcode delivery fee amounts in web/mobile. Always use quote or subscription response fields.
 
 Do **not** call `POST /orders/` or `GET /orders/orderable-months/`. If a stale client still does, expect:
 
@@ -53,16 +57,47 @@ GET /api/v1/subscription-plans/
 
 Only `is_active` + `is_subscribable` plans. Fields include `public_id`, `meal_name`, `description`, `meal_thumbnail`, `meal_period`, `total_price`, `per_meal_price`, `pricing_status`.
 
+### Quote (preview fee)
+
+```http
+POST /api/v1/subscriptions/quote/
+Content-Type: application/json
+
+{
+  "plan_public_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "meal_preference": "both",
+  "quantity": 2
+}
+```
+
+```json
+{
+  "plan_public_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "meal_preference": "both",
+  "quantity": 2,
+  "monthly_delivery_fee": "400.00",
+  "fee_rule_code": "both_q_1_3",
+  "used_legacy_fallback": false
+}
+```
+
 ### Subscribe
 
 ```http
 POST /api/v1/subscriptions/
 Content-Type: application/json
 
-{ "plan_public_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "customer_note": "" }
+{
+  "plan_public_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "meal_preference": "lunch",
+  "quantity": 1,
+  "customer_note": ""
+}
 ```
 
-Success `201`. Snapshots `meal_name_snapshot` / `meal_period_snapshot`, `status: active`, `started_on` (Asia/Dhaka business date). **Does not debit the wallet** and **does not create an Order**.
+Success `201`. Snapshots `meal_name_snapshot` / `meal_period_snapshot` (effective preference) / `quantity`, plus `monthly_delivery_fee` / `fee_rule_code`, `status: active`, `started_on` (Asia/Dhaka business date). **Does not debit the wallet**, **does not create an Order**, and **does not charge delivery fee**.
+
+Omitting `meal_preference` falls back to the package period (legacy clients). Default `quantity` is `1`. Preference must stay within package `meal_period` coverage.
 
 ### Current / detail
 

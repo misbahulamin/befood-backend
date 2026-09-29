@@ -26,6 +26,44 @@ def _set_meal_stop_threshold(amount: Decimal) -> None:
     settings_obj.save(update_fields=['meal_stop_threshold', 'updated_at'])
 
 
+def _ensure_active_subscription(profile) -> None:
+    from datetime import date
+    from io import BytesIO
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from PIL import Image
+
+    from meals.models import MealCategory
+    from orders.models import CustomerSubscription
+
+    if CustomerSubscription.objects.filter(
+        customer=profile,
+        status=CustomerSubscription.Status.ACTIVE,
+    ).exists():
+        return
+    buffer = BytesIO()
+    Image.new('RGB', (40, 40), 'blue').save(buffer, format='JPEG')
+    buffer.seek(0)
+    meal = MealCategory.objects.create(
+        meal_name='Basic Active Sub',
+        total_price=Decimal('1000.00'),
+        meal_thumbnail=SimpleUploadedFile(
+            'basic-active-sub.jpg', buffer.read(), content_type='image/jpeg'
+        ),
+        meal_type=MealCategory.MealType.MONTHLY,
+        meal_period=MealCategory.MealPeriod.BOTH,
+        is_active=True,
+        is_subscribable=True,
+    )
+    CustomerSubscription.objects.create(
+        customer=profile,
+        meal=meal,
+        meal_name_snapshot=meal.meal_name,
+        meal_period_snapshot=meal.meal_period,
+        status=CustomerSubscription.Status.ACTIVE,
+        started_on=date(2026, 1, 1),
+    )
+
 def _make_customer(
     username='u1',
     phone='1711111111',
@@ -141,6 +179,7 @@ class WalletAPITests(APITestCase):
         self.assertNotIn('id', response.data)
 
     def test_withdrawable_balance_respects_meal_stop(self):
+        _ensure_active_subscription(self.profile)
         _set_meal_stop_threshold(Decimal('100.00'))
         credit_wallet(get_or_create_wallet(self.profile), Decimal('420.00'))
         response = self.client.get(self.wallet_url)
@@ -150,6 +189,7 @@ class WalletAPITests(APITestCase):
         self.assertEqual(response.data['withdrawable_balance'], '320.00')
 
     def test_withdraw_over_meal_stop_maximum_rejected(self):
+        _ensure_active_subscription(self.profile)
         _set_meal_stop_threshold(Decimal('100.00'))
         credit_wallet(get_or_create_wallet(self.profile), Decimal('420.00'))
         response = self.client.post(

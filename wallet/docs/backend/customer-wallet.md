@@ -10,13 +10,19 @@ The `wallet` app owns customer balances and an append-only ledger. Customer APIs
 |-------|---------|
 | `balance` | Total spendable = `recharge_balance` + `commission_balance` |
 | `recharge_balance` | Customer recharge/refund funds (full recharge bucket) |
-| `withdrawable_balance` | **API computed:** `max(0, recharge_balance - meal_stop_threshold)` — maximum allowed withdraw |
+| `withdrawable_balance` | **API computed** maximum withdraw — see formula below |
 | `commission_balance` | Referral commission; meal-spendable, **not** withdrawable |
 
 Meal payment debits burn `commission_balance` first, then `recharge_balance`. Completed ledger rows store `balance_after`, `recharge_balance_after`, and `commission_balance_after` (must sum consistently).
 
 Withdraw never spends commission. Shared helper: `wallet.services.withdrawable.compute_maximum_withdrawable`.
 
+**Withdrawable formula (subscription-aware):**
+
+- **Active subscription:** `max(0, recharge_balance − meal_stop_threshold)`
+- **No active subscription** (including after cancel): `max(0, recharge_balance − finalized_meal_liability)`
+
+`finalized_meal_liability` is the sum of `estimate_delivery_charge` for still-`scheduled` deliveries whose meal-off cutoff has already passed — the same per-meal amount `charge_delivered_meal` would debit (published slot `final_meal_price_snapshot`). Soft-skipped and delivered meals do not add liability. Meal-stop threshold does **not** apply after cancel.
 Ops: `python manage.py verify_wallet_balance_consistency` and `python manage.py audit_wallet_accounting`
 
 Provider recharge external refs are unique among live (pending/completed) rows. Approving a recharge **or rejecting a withdraw** may set `meal_service_restored` when low-balance meal-stop clears (post-credit / reservation-release balance `>= meal_stop_threshold`).
@@ -27,7 +33,7 @@ Provider recharge external refs are unique among live (pending/completed) rows. 
 | `GET /wallet/transactions/` | same | Newest first, paginated |
 | `GET /wallet/transactions/{public_id}/` | same | Ownership-scoped |
 | `POST /wallet/recharge/` | same | Pending recharge (`bkash`/`nagad`/`bank` + `transaction_id`) |
-| `POST /wallet/withdraw/` | same | Pending withdraw; reserves recharge only; meal-stop capped |
+| `POST /wallet/withdraw/` | same | Pending withdraw; reserves recharge only; capped by subscription-aware withdrawable |
 
 Admin review (not gated by `WALLET_MANUAL_FUNDING_ENABLED`):
 
@@ -68,7 +74,7 @@ Phone OTP registration sets `is_phone_verified=True`; email verification is **no
 - `OneToOne` → `CustomerProfile`
 - `balance` `Decimal(12,2)` ≥ 0 — **spendable** (pending withdraw reservations already deducted)
 - `recharge_balance` / `commission_balance` — dual buckets; `balance == recharge + commission`
-- `withdrawable_balance` (computed property / API) — `max(0, recharge_balance - meal_stop_threshold)`
+- `withdrawable_balance` (computed property / API) — subscription-aware (threshold if active; finalized meal liability otherwise)
 - `currency` default `BDT`
 - `status` `active` \| `frozen`
 
@@ -145,11 +151,20 @@ Must exit 0 (no live pending/completed provider-ref duplicates) before applying 
 
 | Function | Role |
 |----------|------|
-| `request_recharge` / `request_withdraw` | Customer pending creates (withdraw meal-stop capped) |
+| `request_recharge` / `request_withdraw` | Customer pending creates (withdraw uses same withdrawable helper) |
 | `approve_recharge` / `reject_recharge` | Admin recharge resolution |
 | `approve_withdraw` / `reject_withdraw` | Admin withdraw resolution + `customer_withdraw` custody |
-| `compute_maximum_withdrawable` | Shared `recharge − meal_stop` formula |
+| `compute_maximum_withdrawable` | Shared subscription-aware withdrawable formula |
+| `compute_finalized_meal_liability` / `estimate_delivery_charge` | Post-cancel liability (same charge pricing) |
 | `credit_wallet` / `debit_wallet` | Core ledger helpers (meal payment, etc.) |
 | `complete_pending_credit` / `fail_pending` | Low-level gateway seams (not funding approve API) |
 
 Legacy `recharge_wallet` / `withdraw_wallet` remain in `ledger.py` for transitional callers but **must not** be used by customer APIs.
+
+## Minimum recharge amount
+
+- OrderWalletSettings.minimum_recharge_amount (default 500.00 BDT).
+- request_recharge rejects amount < minimum with code RECHARGE_BELOW_MINIMUM (HTTP 400) including minimum_recharge_amount.
+- Exact minimum valid; Decimal comparison; existing pending rows untouched.
+- Exposed in wallet summary and admin order-wallet-settings GET/PATCH.
+

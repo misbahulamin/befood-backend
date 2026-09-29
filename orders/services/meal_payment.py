@@ -33,6 +33,74 @@ def meal_delivery_idempotency_key(delivery: OrderDelivery) -> str:
     return f'{IDEMPOTENCY_KEY_PREFIX}{delivery.public_id}'
 
 
+def estimate_delivery_charge(delivery: OrderDelivery) -> Decimal:
+    """
+    Read-only amount that ``charge_delivered_meal`` would debit for this delivery.
+
+    Uses the exact same pricing path as delivery charging (published slot
+    ``final_meal_price_snapshot``, or emergency order-average flag). Does not
+    debit the wallet. Raises ``MealPaymentError`` when charge would fail
+    (e.g. missing published slot price) — no cancellation-specific fallback.
+    """
+    from orders.services.subscription_parent import delivery_meal
+
+    meal = delivery_meal(delivery)
+    if meal is None:
+        raise MealPaymentError(
+            'Delivery is missing a meal package; cannot estimate charge.',
+            code='MEAL_PAYMENT_FAILED',
+        )
+    average_price = Decimal('0.00')
+    if delivery.order_id:
+        average_price = delivery.order.per_meal_price_snapshot
+    amount, _price_meta = _resolve_charge_amount(delivery, meal.id, average_price)
+    return amount
+
+
+def compute_finalized_meal_liability(customer, *, now=None) -> Decimal:
+    """
+    Sum of charge amounts for the customer's still-SCHEDULED past-cutoff meals.
+
+    Each row contributes exactly what ``charge_delivered_meal`` would debit
+    for that delivery (via ``estimate_delivery_charge``). Soft-skipped and
+    delivered meals are excluded.
+    """
+    from django.db.models import Q
+
+    from orders.services.meal_off import (
+        get_meal_off_settings,
+        is_past_meal_cutoff,
+        meal_off_business_now,
+    )
+
+    settings_obj = get_meal_off_settings()
+    now_local = now or meal_off_business_now(settings_obj)
+    deliveries = (
+        OrderDelivery.objects.filter(
+            Q(subscription__customer=customer) | Q(order__customer=customer),
+            status=OrderDelivery.DeliveryStatus.SCHEDULED,
+        )
+        .select_related(
+            'subscription',
+            'subscription__meal',
+            'order',
+            'order__meal',
+        )
+        .order_by('service_date', 'meal_period', 'id')
+    )
+    total = Decimal('0.00')
+    for delivery in deliveries:
+        if not is_past_meal_cutoff(
+            delivery.service_date,
+            delivery.meal_period,
+            now=now_local,
+            settings_obj=settings_obj,
+        ):
+            continue
+        total += estimate_delivery_charge(delivery)
+    return total.quantize(Decimal('0.01'))
+
+
 def _charge_enabled() -> bool:
     return bool(getattr(settings, 'MEAL_DELIVERY_WALLET_CHARGE_ENABLED', True))
 

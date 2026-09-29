@@ -373,6 +373,7 @@ class CustomerSubscriptionAPITestCase(APITestCase):
         self.assertEqual(package.data['current_subscription']['public_id'], public_id)
 
     def test_cancel_skips_future_not_today_and_foreign_cancel_hidden(self):
+        """After both same-day cutoffs, today stays scheduled; future dates skip."""
         self._auth()
         created = self.client.post(self.subscriptions_url, self._subscribe_payload(), format='json')
         public_id = created.data['public_id']
@@ -391,11 +392,22 @@ class CustomerSubscriptionAPITestCase(APITestCase):
         subscription.refresh_from_db()
         self.assertEqual(subscription.status, CustomerSubscription.Status.ACTIVE)
         self._auth()
-        cancel = self.client.post(self.cancel_url, {}, format='json')
+        # After dinner cutoff: same-day slots are finalized/preserved.
+        after_dinner = datetime(2026, 7, 10, 20, 0, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+        with patch(
+            'orders.services.subscription_service.meal_off_business_now',
+            return_value=after_dinner,
+        ):
+            cancel = self.client.post(self.cancel_url, {}, format='json')
         self.assertEqual(cancel.status_code, status.HTTP_200_OK)
         subscription.refresh_from_db()
         self.assertEqual(subscription.status, CustomerSubscription.Status.CANCELLED)
         self.assertEqual(subscription.cancel_effective_on, date(2026, 7, 10))
+        self.assertEqual(
+            subscription.cancel_source,
+            CustomerSubscription.CancelSource.CUSTOMER,
+        )
+        self.assertEqual(subscription.cancelled_by_id, self.customer_user.pk)
         for slot in today_slots:
             slot.refresh_from_db()
             self.assertEqual(slot.status, OrderDelivery.DeliveryStatus.SCHEDULED)

@@ -171,3 +171,7 @@ test -f .env && echo ".env present"
 ```
 
 - Remaining risks: host crontab permissions; a wrong/empty sibling `../venv` (override with `BEFOOD_VENV=/path/to/venv` if needed).
+
+## Minimum recharge amount
+
+- Independent floor for new recharge requests (not part of subscribe > reminder > stop ordering). Default 500.00 BDT, admin-editable.

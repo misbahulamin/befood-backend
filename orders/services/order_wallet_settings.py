@@ -46,6 +46,7 @@ def update_order_wallet_settings(
     min_wallet_balance_to_order: Decimal | None = None,
     low_balance_reminder_threshold: Decimal | None = None,
     meal_stop_threshold: Decimal | None = None,
+    minimum_recharge_amount: Decimal | None = None,
 ) -> OrderWalletSettings:
     settings_obj = OrderWalletSettings.load()
     next_min = (
@@ -69,6 +70,20 @@ def update_order_wallet_settings(
         next_reminder, field='low_balance_reminder_threshold'
     )
     next_stop = _quantize_non_negative(next_stop, field='meal_stop_threshold')
+    next_minimum_recharge = (
+        minimum_recharge_amount
+        if minimum_recharge_amount is not None
+        else settings_obj.minimum_recharge_amount
+    )
+    next_minimum_recharge = _quantize_non_negative(
+        next_minimum_recharge, field='minimum_recharge_amount'
+    )
+    from wallet.services.ledger import MAX_FUNDING_AMOUNT
+
+    if next_minimum_recharge > MAX_FUNDING_AMOUNT:
+        raise ValidationError(
+            {'minimum_recharge_amount': f'Amount must not exceed {MAX_FUNDING_AMOUNT}.'}
+        )
     validate_threshold_ordering(
         min_wallet_balance_to_order=next_min,
         low_balance_reminder_threshold=next_reminder,
@@ -78,6 +93,7 @@ def update_order_wallet_settings(
     settings_obj.min_wallet_balance_to_order = next_min
     settings_obj.low_balance_reminder_threshold = next_reminder
     settings_obj.meal_stop_threshold = next_stop
+    settings_obj.minimum_recharge_amount = next_minimum_recharge
     settings_obj.save()
     return settings_obj
 

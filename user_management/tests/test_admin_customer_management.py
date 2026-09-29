@@ -657,3 +657,148 @@ class AdminCustomerManagementAPITests(APITestCase):
         )
         self.assertEqual(subs.data['count'], 1)
         self.assertEqual(subs.data['results'][0]['status'], 'cancelled')
+
+    def test_admin_cancel_subscription_success_and_preview_match(self):
+        from unittest.mock import patch
+        from zoneinfo import ZoneInfo
+        from datetime import datetime, time
+
+        from orders.models import MealOffSettings
+        from orders.tests.test_meal_delivery_wallet_payment import ensure_priced_delivery_slot
+
+        settings_obj = MealOffSettings.load()
+        settings_obj.timezone = 'Asia/Dhaka'
+        settings_obj.lunch_off_time = time(2, 0, 0)
+        settings_obj.dinner_off_time = time(16, 0, 0)
+        settings_obj.save()
+
+        service_day = date(2026, 9, 28)
+        lunch = OrderDelivery.objects.create(
+            subscription=self.subscription_d,
+            service_date=service_day,
+            meal_period=OrderDelivery.MealPeriod.LUNCH,
+            status=OrderDelivery.DeliveryStatus.SCHEDULED,
+        )
+        dinner = OrderDelivery.objects.create(
+            subscription=self.subscription_d,
+            service_date=service_day,
+            meal_period=OrderDelivery.MealPeriod.DINNER,
+            status=OrderDelivery.DeliveryStatus.SCHEDULED,
+        )
+        ensure_priced_delivery_slot(
+            self.meal, service_day, OrderDelivery.MealPeriod.LUNCH, Decimal('80.00')
+        )
+        ensure_priced_delivery_slot(
+            self.meal, service_day, OrderDelivery.MealPeriod.DINNER, Decimal('80.00')
+        )
+
+        preview_url = reverse(
+            'web_customers:admin-customer-cancel-subscription-preview',
+            kwargs={'public_id': self.customer_d.public_id},
+        )
+        cancel_url = reverse(
+            'web_customers:admin-customer-cancel-subscription',
+            kwargs={'public_id': self.customer_d.public_id},
+        )
+        now = datetime(2026, 9, 28, 12, 0, 0, tzinfo=ZoneInfo('Asia/Dhaka'))
+
+        self._auth_admin()
+        with patch(
+            'orders.services.subscription_service.meal_off_business_now',
+            return_value=now,
+        ), patch(
+            'orders.services.subscription_service.business_today',
+            return_value=service_day,
+        ), patch(
+            'orders.services.meal_off.meal_off_business_now',
+            return_value=now,
+        ):
+            preview = self.client.get(preview_url)
+            self.assertEqual(preview.status_code, status.HTTP_200_OK)
+            self.assertEqual(preview.data['subscription']['status'], 'active')
+            preview_cancelled = {
+                (m['service_date'], m['meal_period'])
+                for m in preview.data['cancelled_meals']
+            }
+            preview_preserved = {
+                (m['service_date'], m['meal_period'])
+                for m in preview.data['preserved_finalized_meals']
+            }
+            self.assertIn((service_day.isoformat(), 'dinner'), preview_cancelled)
+            self.assertIn((service_day.isoformat(), 'lunch'), preview_preserved)
+
+            lunch.refresh_from_db()
+            dinner.refresh_from_db()
+            self.assertEqual(lunch.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+            self.assertEqual(dinner.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+
+            cancel = self.client.post(cancel_url, {'reason': 'admin support'}, format='json')
+            self.assertEqual(cancel.status_code, status.HTTP_200_OK)
+            self.assertEqual(cancel.data['subscription']['status'], 'cancelled')
+            self.assertEqual(cancel.data['subscription']['cancel_source'], 'admin')
+            self.assertEqual(cancel.data['subscription']['cancelled_by']['id'], self.admin.pk)
+            cancel_cancelled = {
+                (m['service_date'], m['meal_period'])
+                for m in cancel.data['cancelled_meals']
+            }
+            cancel_preserved = {
+                (m['service_date'], m['meal_period'])
+                for m in cancel.data['preserved_finalized_meals']
+            }
+            self.assertEqual(preview_cancelled, cancel_cancelled)
+            self.assertEqual(preview_preserved, cancel_preserved)
+
+        self.subscription_d.refresh_from_db()
+        self.assertEqual(self.subscription_d.status, CustomerSubscription.Status.CANCELLED)
+        dinner.refresh_from_db()
+        lunch.refresh_from_db()
+        self.assertEqual(dinner.status, OrderDelivery.DeliveryStatus.SKIPPED)
+        self.assertEqual(lunch.status, OrderDelivery.DeliveryStatus.SCHEDULED)
+
+        activity = self.client.get(
+            reverse(
+                'web_customers:admin-customer-activity',
+                kwargs={'public_id': self.customer_d.public_id},
+            )
+        )
+        cancelled_events = [
+            e for e in activity.data['results'] if e['event_type'] == 'subscription_cancelled'
+        ]
+        self.assertTrue(cancelled_events)
+        self.assertEqual(cancelled_events[0]['refs'].get('cancel_source'), 'admin')
+
+    def test_admin_cancel_denied_for_customer_and_unverified(self):
+        customer_user = self.customer_d.user
+        customer_user.groups.add(self.customer_group)
+        customer_token = Token.objects.create(user=customer_user)
+        cancel_url = reverse(
+            'web_customers:admin-customer-cancel-subscription',
+            kwargs={'public_id': self.customer_d.public_id},
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {customer_token.key}')
+        denied = self.client.post(cancel_url, {}, format='json')
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+
+        unverified = User.objects.create_user(
+            username='unverified-admin-cancel',
+            email='unverified-admin-cancel@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        unverified.groups.add(self.admin_group)
+        AdminProfile.objects.create(user=unverified, is_verified=False)
+        unverified_token = Token.objects.create(user=unverified)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {unverified_token.key}')
+        denied2 = self.client.post(cancel_url, {}, format='json')
+        self.assertEqual(denied2.status_code, status.HTTP_403_FORBIDDEN)
+        self.subscription_d.refresh_from_db()
+        self.assertEqual(self.subscription_d.status, CustomerSubscription.Status.ACTIVE)
+
+    def test_admin_cancel_no_active_subscription(self):
+        self._auth_admin()
+        url = reverse(
+            'web_customers:admin-customer-cancel-subscription',
+            kwargs={'public_id': self.customer_c.public_id},
+        )
+        response = self.client.post(url, {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

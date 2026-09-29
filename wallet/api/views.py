@@ -9,6 +9,7 @@ from wallet.models import WalletTransaction
 from wallet.services.funding import (
     DuplicateProviderRefError,
     FundingRequestConflictError,
+    RechargeBelowMinimumError,
     approve_recharge,
     approve_withdraw,
     reject_recharge,
@@ -48,6 +49,15 @@ def _customer_profile(request):
 
 
 def _funding_error_response(exc):
+    if isinstance(exc, RechargeBelowMinimumError):
+        return Response(
+            {
+                'detail': str(exc),
+                'code': 'RECHARGE_BELOW_MINIMUM',
+                'minimum_recharge_amount': f'{exc.minimum:.2f}',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     if isinstance(
         exc,
         (
@@ -86,6 +96,9 @@ class WalletDetailView(APIView):
             'Includes admin-configured thresholds: min_wallet_balance_to_order '
             '(subscribe floor), low_balance_reminder_threshold, and meal_stop_threshold. '
             'withdrawable_balance is max(0, recharge_balance - meal_stop_threshold) '
+            'while subscribed; after cancel it is max(0, recharge_balance - '
+            'finalized_meal_liability) using the same per-meal charge amounts as '
+            'delivery charging. '
             '(commission is never withdrawable). '
             'Clients must use public_id, never the integer primary key.'
         ),
@@ -228,6 +241,7 @@ class WalletRechargeView(APIView):
         except (
             IdempotencyConflictError,
             DuplicateProviderRefError,
+            RechargeBelowMinimumError,
             InvalidAmountError,
             InsufficientFundsError,
             WalletFrozenError,
