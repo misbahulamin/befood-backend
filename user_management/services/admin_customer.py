@@ -76,6 +76,7 @@ CONFIRMED_ACTIVITY_EVENT_TYPES = frozenset(
         'meal_skipped',
         'order_created',
         'order_status_changed',
+        'guest_meal_ordered',
     }
 )
 
@@ -974,6 +975,31 @@ def build_activity_events(customer: CustomerProfile, *, limit: int = 200) -> lis
                     },
                 }
             )
+
+    from orders.models import GuestMealOrder
+
+    for guest in (
+        GuestMealOrder.objects.filter(customer=customer)
+        .order_by('-created_at')[:limit]
+    ):
+        events.append(
+            {
+                'event_type': 'guest_meal_ordered',
+                'occurred_at': guest.created_at,
+                'summary': (
+                    f'Guest meal ordered {guest.meal_period} on {guest.service_date} '
+                    f'x{guest.quantity} ({guest.total_amount})'
+                ),
+                'refs': {
+                    'guest_meal_public_id': str(guest.public_id),
+                    'service_date': str(guest.service_date),
+                    'meal_period': guest.meal_period,
+                    'quantity': guest.quantity,
+                    'total_amount': f'{guest.total_amount:.2f}',
+                    'status': guest.status,
+                },
+            }
+        )
 
     events = [e for e in events if e['event_type'] in CONFIRMED_ACTIVITY_EVENT_TYPES]
     events.sort(key=lambda item: item['occurred_at'], reverse=True)

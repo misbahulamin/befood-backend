@@ -305,6 +305,9 @@ def build_deliveryman_board(
     ordered_groups = []
     menu_cache: dict[int, list[str]] = {}
     listed_count = 0
+    from orders.services.guest_meal import guest_quantities_by_delivery_ids
+
+    guest_by_delivery = guest_quantities_by_delivery_ids([d.pk for d in deliveries])
     for delivery in deliveries:
         loc = _delivery_location(delivery)
         if loc is None:
@@ -342,6 +345,7 @@ def build_deliveryman_board(
             'package_name': package_name,
             'package_public_id': package_public_id,
             'meal_quantity': _meal_quantity(delivery),
+            'guest_quantity': int(guest_by_delivery.get(delivery.pk, 0)),
             'notes': _special_notes(delivery),
             'menu_items_label': _menu_items_label(
                 delivery,

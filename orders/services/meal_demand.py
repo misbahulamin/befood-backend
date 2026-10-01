@@ -228,6 +228,32 @@ def get_demand(
     final = int(overall['cooking'] or 0)
     total_customers = int(overall['customers'] or 0)
 
+    from orders.services.guest_meal import guest_cooking_quantities_by_package
+
+    guest_by_package = guest_cooking_quantities_by_package(
+        service_date=service_date,
+        meal_period=meal_period,
+    )
+    if package_id is not None:
+        guest_by_package = {
+            pid: qty for pid, qty in guest_by_package.items() if pid == package_id
+        }
+    elif package_public_id is not None:
+        # Filter already applied on delivery qs; keep only packages present in rows
+        # plus any guest-only packages for the filtered public id via qs packages.
+        allowed_ids = {
+            row['demand_meal_id']
+            for row in qs.values('demand_meal_id').distinct()
+            if row['demand_meal_id'] is not None
+        }
+        guest_by_package = {
+            pid: qty for pid, qty in guest_by_package.items() if pid in allowed_ids
+        }
+
+    guest_total = sum(guest_by_package.values())
+    expected += guest_total
+    final += guest_total
+
     package_rows: list[PackageDemandRow] = []
     package_agg = (
         qs.values(
@@ -244,19 +270,51 @@ def get_demand(
         )
         .order_by('demand_meal_name', 'demand_meal_id')
     )
+    seen_package_ids: set[int] = set()
     for row in package_agg:
+        pkg_id = row['demand_meal_id']
+        guest_qty = int(guest_by_package.get(pkg_id, 0)) if pkg_id is not None else 0
+        if pkg_id is not None:
+            seen_package_ids.add(pkg_id)
         package_rows.append(
             PackageDemandRow(
-                package_id=row['demand_meal_id'],
+                package_id=pkg_id,
                 package_public_id=str(row['demand_meal_public_id']),
                 package_name=row['demand_meal_name'],
                 total_customers=int(row['customers'] or 0),
-                expected_meal_count=int(row['expected'] or 0),
+                expected_meal_count=int(row['expected'] or 0) + guest_qty,
                 meal_off_count=int(row['meal_off'] or 0),
                 low_balance_blocked_count=int(row['low_balance'] or 0),
-                final_cooking_count=int(row['cooking'] or 0),
+                final_cooking_count=int(row['cooking'] or 0) + guest_qty,
             )
         )
+
+    # Guest-only packages (linked deliveries may be excluded from live qs filters)
+    # are already counted in guest_total when their delivery is live; if a package
+    # has guest units but no live delivery row in this qs, add a package row.
+    orphan_guest_ids = set(guest_by_package.keys()) - seen_package_ids
+    if orphan_guest_ids:
+        from meals.models import MealCategory
+
+        for meal in MealCategory.objects.filter(pk__in=orphan_guest_ids).order_by(
+            'meal_name', 'id'
+        ):
+            guest_qty = int(guest_by_package.get(meal.pk, 0))
+            if guest_qty <= 0:
+                continue
+            package_rows.append(
+                PackageDemandRow(
+                    package_id=meal.pk,
+                    package_public_id=str(meal.public_id),
+                    package_name=meal.meal_name,
+                    total_customers=0,
+                    expected_meal_count=guest_qty,
+                    meal_off_count=0,
+                    low_balance_blocked_count=0,
+                    final_cooking_count=guest_qty,
+                )
+            )
+        package_rows.sort(key=lambda r: (r.package_name or '', r.package_id or 0))
 
     deadline = meal_off_deadline(service_date, meal_period, settings_obj)
     return DemandResult(

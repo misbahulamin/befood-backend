@@ -176,6 +176,8 @@ class OrderWalletSettingsSerializer(serializers.ModelSerializer):
             'low_balance_reminder_threshold',
             'meal_stop_threshold',
             'minimum_recharge_amount',
+            'guest_meal_box_price',
+            'guest_meal_monthly_limit',
             'updated_at',
         )
         read_only_fields = ('updated_at',)
@@ -205,6 +207,18 @@ class OrderWalletSettingsSerializer(serializers.ModelSerializer):
         if amount > Decimal('100000.00'):
             raise serializers.ValidationError('Amount must not exceed 100000.00.')
         return amount
+
+    def validate_guest_meal_box_price(self, value):
+        return self._validate_amount(value)
+
+    def validate_guest_meal_monthly_limit(self, value):
+        try:
+            limit = int(value)
+        except (TypeError, ValueError) as exc:
+            raise serializers.ValidationError('Must be a positive integer.') from exc
+        if limit < 1:
+            raise serializers.ValidationError('Must be a positive integer.')
+        return limit
 
     def validate(self, attrs):
         instance = getattr(self, 'instance', None)
@@ -356,6 +370,7 @@ class TodayBoardDeliverySerializer(serializers.ModelSerializer):
     meal_name_snapshot = serializers.SerializerMethodField()
     meal_type_snapshot = serializers.SerializerMethodField()
     order_status = serializers.SerializerMethodField()
+    guest_quantity = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderDelivery
@@ -377,6 +392,7 @@ class TodayBoardDeliverySerializer(serializers.ModelSerializer):
             'delivery_full_address_snapshot',
             'delivery_area_snapshot',
             'delivery_city_snapshot',
+            'guest_quantity',
         )
         read_only_fields = fields
 
@@ -410,6 +426,11 @@ class TodayBoardDeliverySerializer(serializers.ModelSerializer):
         if obj.subscription_id:
             return obj.subscription.status
         return None
+
+    def get_guest_quantity(self, obj):
+        from orders.services.guest_meal import guest_quantity_for_delivery
+
+        return guest_quantity_for_delivery(obj)
 
 
 class MealDemandPackageSerializer(serializers.Serializer):

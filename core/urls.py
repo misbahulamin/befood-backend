@@ -14,6 +14,7 @@ urlpatterns = [
     path('orders/', include('orders.api.urls')),
     path('api/v1/subscription-plans/', include('orders.api.subscription_plan_urls')),
     path('api/v1/subscriptions/', include('orders.api.subscription_urls')),
+    path('api/v1/guest-meals/', include('orders.api.guest_meal_urls')),
     path('api/v1/web/orders/', include('orders.api.web_urls')),
     path('api/v1/web/subscription-plans/', include('orders.api.web_subscription_plan_urls')),
     path('api/v1/web/subscriptions/', include('orders.api.web_subscription_urls')),

@@ -539,6 +539,18 @@ class OrderWalletSettings(models.Model):
         validators=[MinValueValidator(Decimal('0.00'))],
         help_text='Minimum recharge request amount (BDT); requests below this are rejected.',
     )
+    guest_meal_box_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('10.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='One-time guest meal box price (BDT) added to published slot meal price.',
+    )
+    guest_meal_monthly_limit = models.PositiveIntegerField(
+        default=10,
+        validators=[MinValueValidator(1)],
+        help_text='Maximum guest meal quantity per Asia/Dhaka calendar month.',
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -562,6 +574,101 @@ class OrderWalletSettings(models.Model):
     def load(cls) -> 'OrderWalletSettings':
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+
+class GuestMealOrder(PublicIdMixin, models.Model):
+    """Prepaid guest meal purchase for an active subscriber on a date + period."""
+
+    class MealPeriod(models.TextChoices):
+        LUNCH = 'lunch', 'Lunch'
+        DINNER = 'dinner', 'Dinner'
+
+    class Status(models.TextChoices):
+        SCHEDULED = 'scheduled', 'Scheduled'
+        DELIVERED = 'delivered', 'Delivered'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    customer = models.ForeignKey(
+        'user_management.CustomerProfile',
+        on_delete=models.CASCADE,
+        related_name='guest_meal_orders',
+    )
+    subscription = models.ForeignKey(
+        CustomerSubscription,
+        on_delete=models.PROTECT,
+        related_name='guest_meal_orders',
+    )
+    delivery = models.ForeignKey(
+        OrderDelivery,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='guest_meal_orders',
+        help_text='Linked subscription slot stop when available.',
+    )
+    service_date = models.DateField()
+    meal_period = models.CharField(max_length=20, choices=MealPeriod.choices)
+    quantity = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)],
+        help_text='Guest meal unit count for this purchase.',
+    )
+    base_meal_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text='Published slot final meal price snapshot at purchase.',
+    )
+    box_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text='Guest box price snapshot at purchase.',
+    )
+    unit_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text='base_meal_price + box_price at purchase.',
+    )
+    total_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text='unit_price × quantity at purchase.',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.SCHEDULED,
+        db_index=True,
+    )
+    wallet_transaction = models.ForeignKey(
+        'wallet.WalletTransaction',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='guest_meal_orders',
+    )
+    idempotency_key = models.CharField(max_length=64, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['customer', 'idempotency_key'],
+                condition=Q(idempotency_key__isnull=False),
+                name='guest_meal_unique_idempotency_per_customer',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['customer', 'created_at']),
+            models.Index(fields=['service_date', 'meal_period', 'status']),
+            models.Index(fields=['subscription', 'service_date', 'meal_period']),
+        ]
+
+    def __str__(self):
+        return (
+            f'GuestMeal #{self.pk} {self.service_date} {self.meal_period} '
+            f'qty={self.quantity} ({self.status})'
+        )
 
 
 class MealDemandSnapshot(models.Model):

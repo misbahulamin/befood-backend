@@ -13,8 +13,12 @@ Admin Settings (`AdminSettingsPage`) manages three ordered BDT thresholds throug
 | `min_wallet_balance_to_order` | Subscribe eligibility (inclusive) |
 | `low_balance_reminder_threshold` | Reminder when balance is strictly below |
 | `meal_stop_threshold` | Auto meal delivery pause when balance is strictly below |
+| `guest_meal_box_price` | One-time box fee added to published meal price on guest meal create |
+| `guest_meal_monthly_limit` | Max guest meal quantity per Asia/Dhaka calendar month |
 
 UI blocks submit when ordering is invalid; API returns `400` for the same rule.
+
+Guest meal client flow: [guest-meal-order.md](./guest-meal-order.md).
 
 ## Ops behavior (no admin Settings UI change)
 

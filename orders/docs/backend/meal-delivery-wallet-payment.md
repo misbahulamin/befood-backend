@@ -51,6 +51,7 @@ Feature flags:
 5. Insufficient or frozen wallet → mark **rejected** (`422`), delivery stays `scheduled`, no completed payment.
 6. Missing published slot or null `final_meal_price_snapshot` → mark **rejected** (`MEAL_SLOT_PRICE_MISSING`); no silent average fallback.
 7. After a **successful real debit**, `evaluate_meal_stop_after_debit` runs immediately: if post-debit spendable balance is strictly below `OrderWalletSettings.meal_stop_threshold`, set `meal_service_blocked_low_balance` (same stop rule as the wallet-threshold cron). Idempotent already-charged re-attach does not re-evaluate. Auto-delivery and admin mark-delivered both inherit this via `charge_delivered_meal`.
+8. **Guest meals are separate:** prepaid at guest-meal create (`purpose=guest_meal`). Marking a delivery delivered charges **only** the regular slot meal amount and MUST NOT re-debit prepaid guest totals. See [guest-meal-order.md](./guest-meal-order.md).
 
 ## Request / response
 
