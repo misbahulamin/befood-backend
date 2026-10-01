@@ -63,9 +63,9 @@ Returns dual-bucket balances and thresholds. Important fields:
 | `recharge_balance` | Full recharge bucket |
 | `commission_balance` | Non-withdrawable commission |
 | `meal_stop_threshold` | From order wallet settings |
-| `withdrawable_balance` | **Maximum withdrawable** = `max(0, recharge_balance − meal_stop_threshold)` |
+| `withdrawable_balance` | **Maximum withdrawable** — active: `max(0, recharge − meal_stop_threshold)`; no active sub: `max(0, recharge − finalized_meal_liability)` |
 
-Do **not** treat `withdrawable_balance` as equal to `recharge_balance` when threshold > 0.
+Do **not** hardcode `wallet_balance − meal_stop_threshold` on the client. After cancel, threshold no longer applies; reserved liability uses the same meal charge prices as delivery charging.
 
 ### `POST /wallet/withdraw/`
 
@@ -78,7 +78,8 @@ Creates a **pending** withdraw and **immediately reduces** `recharge_balance` / 
 **Validation (backend authoritative):**
 
 - `amount <= withdrawable_balance` from current wallet GET
-- Example: recharge `420`, meal_stop `100` → max `320`. Amount `400` → `400` with detail mentioning maximum and meal-stop reserve.
+- Example (active subscriber): recharge `420`, meal_stop `100` → max `320`. Amount `400` → `400` with detail mentioning maximum and meal-stop reserve.
+- Example (cancelled with preserved dinner liability `80`): recharge `300` → max `220`.
 
 **Mobile / customer web UX:**
 

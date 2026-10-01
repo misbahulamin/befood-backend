@@ -76,6 +76,7 @@ CONFIRMED_ACTIVITY_EVENT_TYPES = frozenset(
         'meal_skipped',
         'order_created',
         'order_status_changed',
+        'guest_meal_ordered',
     }
 )
 
@@ -354,10 +355,29 @@ def build_active_subscription_payload(
     if subscription is None:
         return None
     counts = _subscription_delivery_counts(subscription)
+    fee_summary = None
+    try:
+        from wallet.services.subscription_delivery_fee import (
+            calculate_subscription_delivery_fee,
+            format_fee_summary,
+        )
+
+        fee_summary = format_fee_summary(
+            calculate_subscription_delivery_fee(
+                subscription.meal_period_snapshot,
+                getattr(subscription, 'quantity', 1) or 1,
+            )
+        )
+    except Exception:
+        fee_summary = None
     return {
         'subscription_public_id': str(subscription.public_id),
         'package_name': subscription.meal_name_snapshot,
         'meal_public_id': str(subscription.meal.public_id) if subscription.meal_id else None,
+        'meal_period_snapshot': subscription.meal_period_snapshot,
+        'quantity': getattr(subscription, 'quantity', 1) or 1,
+        'monthly_delivery_fee': fee_summary['monthly_delivery_fee'] if fee_summary else None,
+        'fee_rule_code': fee_summary['fee_rule_code'] if fee_summary else None,
         'status': subscription.status,
         'started_on': subscription.started_on,
         'cancel_effective_on': subscription.cancel_effective_on,
@@ -792,7 +812,9 @@ def build_activity_events(customer: CustomerProfile, *, limit: int = 200) -> lis
     scope = customer_delivery_scope(customer)
 
     for subscription in (
-        CustomerSubscription.objects.filter(customer=customer).order_by('-created_at')[:limit]
+        CustomerSubscription.objects.filter(customer=customer)
+        .select_related('cancelled_by')
+        .order_by('-created_at')[:limit]
     ):
         events.append(
             {
@@ -816,6 +838,13 @@ def build_activity_events(customer: CustomerProfile, *, limit: int = 200) -> lis
                         'cancel_effective_on': (
                             str(subscription.cancel_effective_on)
                             if subscription.cancel_effective_on
+                            else None
+                        ),
+                        'cancel_source': subscription.cancel_source,
+                        'cancelled_by_id': subscription.cancelled_by_id,
+                        'cancelled_by_email': (
+                            subscription.cancelled_by.email
+                            if subscription.cancelled_by_id
                             else None
                         ),
                     },
@@ -946,6 +975,31 @@ def build_activity_events(customer: CustomerProfile, *, limit: int = 200) -> lis
                     },
                 }
             )
+
+    from orders.models import GuestMealOrder
+
+    for guest in (
+        GuestMealOrder.objects.filter(customer=customer)
+        .order_by('-created_at')[:limit]
+    ):
+        events.append(
+            {
+                'event_type': 'guest_meal_ordered',
+                'occurred_at': guest.created_at,
+                'summary': (
+                    f'Guest meal ordered {guest.meal_period} on {guest.service_date} '
+                    f'x{guest.quantity} ({guest.total_amount})'
+                ),
+                'refs': {
+                    'guest_meal_public_id': str(guest.public_id),
+                    'service_date': str(guest.service_date),
+                    'meal_period': guest.meal_period,
+                    'quantity': guest.quantity,
+                    'total_amount': f'{guest.total_amount:.2f}',
+                    'status': guest.status,
+                },
+            }
+        )
 
     events = [e for e in events if e['event_type'] in CONFIRMED_ACTIVITY_EVENT_TYPES]
     events.sort(key=lambda item: item['occurred_at'], reverse=True)

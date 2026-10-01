@@ -6,6 +6,7 @@ from .models import (
     CustomerSubscription,
     DeliveryActivityLog,
     DeliveryManDailySummary,
+    GuestMealOrder,
     MealDemandSnapshot,
     MealOffSettings,
     Order,
@@ -225,9 +226,59 @@ class OrderWalletSettingsAdmin(admin.ModelAdmin):
         'min_wallet_balance_to_order',
         'low_balance_reminder_threshold',
         'meal_stop_threshold',
+        'minimum_recharge_amount',
+        'guest_meal_box_price',
+        'guest_meal_monthly_limit',
         'updated_at',
     )
     readonly_fields = ('updated_at',)
+
+
+@admin.register(GuestMealOrder)
+class GuestMealOrderAdmin(admin.ModelAdmin):
+    list_display = (
+        'public_id',
+        'customer',
+        'service_date',
+        'meal_period',
+        'quantity',
+        'total_amount',
+        'status',
+        'created_at',
+    )
+    list_filter = ('status', 'meal_period', 'service_date')
+    search_fields = (
+        'public_id',
+        'customer__user__email',
+        'customer__phone',
+        'idempotency_key',
+    )
+    raw_id_fields = ('customer', 'subscription', 'delivery', 'wallet_transaction')
+    readonly_fields = (
+        'public_id',
+        'customer',
+        'subscription',
+        'delivery',
+        'service_date',
+        'meal_period',
+        'quantity',
+        'base_meal_price',
+        'box_price',
+        'unit_price',
+        'total_amount',
+        'status',
+        'wallet_transaction',
+        'idempotency_key',
+        'created_at',
+        'updated_at',
+    )
+    date_hierarchy = 'service_date'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(MealDemandSnapshot)

@@ -54,13 +54,27 @@ class Wallet(PublicIdMixin, TimeStampedModel):
 
     @property
     def withdrawable_balance(self) -> Decimal:
-        """Maximum withdrawable: recharge_balance minus meal_stop_threshold."""
+        """
+        Maximum withdrawable from recharge.
+
+        Active subscribers: recharge minus meal-stop threshold.
+        Otherwise: recharge minus finalized past-cutoff SCHEDULED meal liability
+        (same per-meal amounts the delivery-charge flow would debit).
+        """
+        from orders.services.meal_payment import compute_finalized_meal_liability
         from orders.services.order_wallet_settings import get_order_wallet_settings
+        from orders.services.subscription_service import get_active_subscription
         from wallet.services.withdrawable import compute_maximum_withdrawable
 
+        has_active = get_active_subscription(self.customer) is not None
+        liability = Decimal('0.00')
+        if not has_active:
+            liability = compute_finalized_meal_liability(self.customer)
         return compute_maximum_withdrawable(
             self.recharge_balance,
             get_order_wallet_settings().meal_stop_threshold,
+            has_active_subscription=has_active,
+            finalized_meal_liability=liability,
         )
 
 

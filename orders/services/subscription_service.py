@@ -264,6 +264,62 @@ def get_subscription_progress(
     }
 
 
+SUPPORTED_MEAL_PREFERENCES = frozenset({'lunch', 'dinner', 'both'})
+
+
+def normalize_meal_preference(value: str | None) -> str:
+    period = (value or '').strip().lower()
+    if period not in SUPPORTED_MEAL_PREFERENCES:
+        raise SubscriptionError(
+            'meal_preference must be lunch, dinner, or both.',
+            code='INVALID_MEAL_PREFERENCE',
+        )
+    return period
+
+
+def resolve_effective_meal_period(
+    meal: MealCategory,
+    meal_preference: str | None,
+    *,
+    allow_fallback: bool = True,
+) -> tuple[str, bool]:
+    """Return (effective_period, used_fallback) for a subscribe/quote request.
+
+    Package coverage is the upper bound: a both package may be narrowed to
+    lunch or dinner; a single-period package cannot be broadened or switched.
+    When meal_preference is omitted, the legacy package period is used so old
+    clients keep their previous behavior during the compatibility window.
+    """
+    if meal_preference is None or str(meal_preference).strip() == '':
+        if not allow_fallback:
+            raise SubscriptionError(
+                'meal_preference is required.',
+                code='MEAL_PREFERENCE_REQUIRED',
+            )
+        return meal.meal_period, True
+    preference = normalize_meal_preference(meal_preference)
+    package_periods = set(periods_for_meal_period(meal.meal_period))
+    selected_periods = set(periods_for_meal_period(preference))
+    if not selected_periods.issubset(package_periods):
+        raise SubscriptionError(
+            f'{preference} is not available for this meal plan.',
+            code='MEAL_PREFERENCE_NOT_SUPPORTED',
+        )
+    return preference, False
+
+
+def normalize_subscription_quantity(value) -> int:
+    from wallet.services.subscription_delivery_fee import normalize_quantity
+    from wallet.services.subscription_delivery_fee import (
+        SubscriptionDeliveryFeeError,
+    )
+
+    try:
+        return normalize_quantity(value if value is not None else 1)
+    except SubscriptionDeliveryFeeError as exc:
+        raise SubscriptionError(str(exc), code='INVALID_QUANTITY') from exc
+
+
 @transaction.atomic
 def subscribe_customer(
     customer,
@@ -271,6 +327,8 @@ def subscribe_customer(
     customer_note: str = '',
     *,
     today: date | None = None,
+    meal_preference: str | None = None,
+    quantity=None,
 ) -> CustomerSubscription:
     if not meal.is_active or not meal.is_subscribable:
         raise PlanUnavailableError(PLAN_UNAVAILABLE_ERROR)
@@ -278,12 +336,20 @@ def subscribe_customer(
     check_no_active_subscription(customer)
     check_subscribe_wallet(customer)
 
+    effective_period, _used_fallback = resolve_effective_meal_period(
+        meal, meal_preference, allow_fallback=True
+    )
+    canonical_quantity = normalize_subscription_quantity(
+        quantity if quantity is not None else 1
+    )
+
     started_on = today or business_today()
     subscription = CustomerSubscription.objects.create(
         customer=customer,
         meal=meal,
         meal_name_snapshot=meal.meal_name,
-        meal_period_snapshot=meal.meal_period,
+        meal_period_snapshot=effective_period,
+        quantity=canonical_quantity,
         status=CustomerSubscription.Status.ACTIVE,
         started_on=started_on,
         customer_note=customer_note or '',
@@ -292,12 +358,95 @@ def subscribe_customer(
     return subscription
 
 
+CANCEL_SKIP_NOTE = 'Skipped after subscription cancel.'
+
+
+def classify_scheduled_for_cancel(
+    deliveries,
+    *,
+    now: datetime | None = None,
+    settings_obj=None,
+) -> tuple[list[OrderDelivery], list[OrderDelivery]]:
+    """
+    Split SCHEDULED deliveries into (cancellable, preserved_finalized).
+
+    Past meal-off cutoff (``is_past_meal_cutoff`` True) → preserve.
+    At-or-before deadline → cancellable (soft-skip).
+    Non-scheduled rows are ignored.
+    """
+    settings_obj = settings_obj or get_meal_off_settings()
+    now_local = now or meal_off_business_now(settings_obj)
+    cancellable: list[OrderDelivery] = []
+    preserved: list[OrderDelivery] = []
+    for delivery in deliveries:
+        if delivery.status != OrderDelivery.DeliveryStatus.SCHEDULED:
+            continue
+        if is_past_meal_cutoff(
+            delivery.service_date,
+            delivery.meal_period,
+            now=now_local,
+            settings_obj=settings_obj,
+        ):
+            preserved.append(delivery)
+        else:
+            cancellable.append(delivery)
+    return cancellable, preserved
+
+
+def meal_summary_for_cancel(delivery: OrderDelivery) -> dict:
+    """Serialize one meal row for cancel preview/response (includes charge estimate)."""
+    from orders.services.meal_payment import estimate_delivery_charge
+
+    return {
+        'public_id': str(delivery.public_id),
+        'service_date': delivery.service_date.isoformat(),
+        'meal_period': delivery.meal_period,
+        'estimated_charge': str(estimate_delivery_charge(delivery)),
+    }
+
+
+def build_cancel_classification_payload(
+    subscription: CustomerSubscription,
+    *,
+    now: datetime | None = None,
+) -> dict:
+    """
+    Read-only classification of SCHEDULED slots for cancel preview.
+
+    Does not mutate subscription or delivery rows.
+    """
+    settings_obj = get_meal_off_settings()
+    now_local = now or meal_off_business_now(settings_obj)
+    scheduled = list(
+        subscription.deliveries.filter(
+            status=OrderDelivery.DeliveryStatus.SCHEDULED,
+        ).order_by('service_date', 'meal_period', 'id')
+    )
+    cancellable, preserved = classify_scheduled_for_cancel(
+        scheduled,
+        now=now_local,
+        settings_obj=settings_obj,
+    )
+    return {
+        'cancelled_meals': [meal_summary_for_cancel(d) for d in cancellable],
+        'preserved_finalized_meals': [meal_summary_for_cancel(d) for d in preserved],
+    }
+
+
 @transaction.atomic
 def cancel_subscription(
     subscription: CustomerSubscription,
     *,
     today: date | None = None,
+    cancelled_by=None,
+    cancel_source: str | None = None,
+    reason: str | None = None,
+    now: datetime | None = None,
 ) -> CustomerSubscription:
+    """
+    Canonical cancel: lock subscription, soft-skip cancellable SCHEDULED slots
+    via meal-off cutoff classification, set cancelled status. Idempotent.
+    """
     locked = (
         CustomerSubscription.objects.select_for_update()
         .select_related('customer', 'meal')
@@ -306,25 +455,138 @@ def cancel_subscription(
     if locked.status == CustomerSubscription.Status.CANCELLED:
         return locked
 
+    settings_obj = get_meal_off_settings()
+    now_local = now or meal_off_business_now(settings_obj)
     effective = today or business_today()
+
+    scheduled = list(
+        locked.deliveries.select_for_update(of=('self',)).filter(
+            status=OrderDelivery.DeliveryStatus.SCHEDULED,
+        )
+    )
+    cancellable, _preserved = classify_scheduled_for_cancel(
+        scheduled,
+        now=now_local,
+        settings_obj=settings_obj,
+    )
+    if cancellable:
+        marked_at = timezone.now()
+        OrderDelivery.objects.filter(pk__in=[d.pk for d in cancellable]).update(
+            status=OrderDelivery.DeliveryStatus.SKIPPED,
+            skip_source=OrderDelivery.SkipSource.SYSTEM,
+            marked_at=marked_at,
+            note=CANCEL_SKIP_NOTE,
+        )
+
     locked.status = CustomerSubscription.Status.CANCELLED
     locked.cancelled_at = timezone.now()
     locked.cancel_effective_on = effective
-    locked.save(
-        update_fields=['status', 'cancelled_at', 'cancel_effective_on', 'updated_at']
-    )
-
-    locked.deliveries.filter(
-        status=OrderDelivery.DeliveryStatus.SCHEDULED,
-        service_date__gt=effective,
-    ).update(
-        status=OrderDelivery.DeliveryStatus.SKIPPED,
-        skip_source=OrderDelivery.SkipSource.SYSTEM,
-        marked_at=timezone.now(),
-        note='Skipped after subscription cancel.',
-    )
+    update_fields = [
+        'status',
+        'cancelled_at',
+        'cancel_effective_on',
+        'updated_at',
+    ]
+    if cancelled_by is not None:
+        locked.cancelled_by = cancelled_by
+        update_fields.append('cancelled_by')
+    if cancel_source:
+        locked.cancel_source = cancel_source
+        update_fields.append('cancel_source')
+    # Optional reason is accepted for API symmetry; no dedicated field — leave customer_note.
+    _ = reason
+    locked.save(update_fields=update_fields)
     locked.refresh_from_db()
     return locked
+
+
+def build_cancel_wallet_snapshot(customer, *, assume_cancelled: bool = False) -> dict:
+    """
+    Wallet figures for cancel preview/response.
+
+    When ``assume_cancelled`` is True (preview before cancel, or after cancel),
+    uses finalized-meal liability instead of the meal-stop threshold.
+    """
+    from orders.services.meal_payment import compute_finalized_meal_liability
+    from orders.services.order_wallet_settings import get_order_wallet_settings
+    from wallet.services.ledger import get_or_create_wallet
+    from wallet.services.withdrawable import compute_maximum_withdrawable
+
+    wallet = get_or_create_wallet(customer)
+    settings_obj = get_order_wallet_settings()
+    meal_stop = Decimal(settings_obj.meal_stop_threshold).quantize(Decimal('0.01'))
+    has_active = get_active_subscription(customer) is not None
+    if assume_cancelled:
+        has_active = False
+    liability = Decimal('0.00')
+    if not has_active:
+        liability = compute_finalized_meal_liability(customer)
+    withdrawable = compute_maximum_withdrawable(
+        wallet.recharge_balance,
+        meal_stop,
+        has_active_subscription=has_active,
+        finalized_meal_liability=liability,
+    )
+    return {
+        'balance': str(wallet.balance.quantize(Decimal('0.01'))),
+        'recharge_balance': str(wallet.recharge_balance.quantize(Decimal('0.01'))),
+        'meal_stop_threshold': str(meal_stop),
+        'finalized_meal_liability': str(liability),
+        'withdrawable_balance': str(withdrawable),
+    }
+
+
+def build_subscription_cancel_response(
+    subscription: CustomerSubscription,
+    *,
+    cancelled_meals: list[dict] | None = None,
+    preserved_finalized_meals: list[dict] | None = None,
+    now: datetime | None = None,
+    assume_cancelled: bool = False,
+) -> dict:
+    """Full admin cancel / preview response body."""
+    if cancelled_meals is None or preserved_finalized_meals is None:
+        classification = build_cancel_classification_payload(subscription, now=now)
+        cancelled_meals = classification['cancelled_meals']
+        preserved_finalized_meals = classification['preserved_finalized_meals']
+
+    cancelled_by_payload = None
+    if subscription.cancelled_by_id:
+        actor = subscription.cancelled_by
+        cancelled_by_payload = {
+            'id': actor.pk,
+            'email': actor.email,
+        }
+
+    # After cancel (or preview of cancel) wallet uses liability formula.
+    post_cancel = assume_cancelled or (
+        subscription.status == CustomerSubscription.Status.CANCELLED
+    )
+
+    return {
+        'subscription': {
+            'public_id': str(subscription.public_id),
+            'status': subscription.status,
+            'cancelled_at': (
+                subscription.cancelled_at.isoformat()
+                if subscription.cancelled_at
+                else None
+            ),
+            'cancel_effective_on': (
+                subscription.cancel_effective_on.isoformat()
+                if subscription.cancel_effective_on
+                else None
+            ),
+            'cancel_source': subscription.cancel_source,
+            'cancelled_by': cancelled_by_payload,
+        },
+        'cancelled_meals': cancelled_meals,
+        'preserved_finalized_meals': preserved_finalized_meals,
+        'wallet': build_cancel_wallet_snapshot(
+            subscription.customer,
+            assume_cancelled=post_cancel,
+        ),
+    }
 
 
 def ensure_all_active_subscription_deliveries(*, today: date | None = None) -> int:

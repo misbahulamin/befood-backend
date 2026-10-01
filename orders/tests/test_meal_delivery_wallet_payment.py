@@ -393,7 +393,7 @@ class MealDeliveryWalletPaymentTests(APITestCase):
         recharge = self.client.post(
             reverse('wallet:wallet-recharge'),
             {
-                'amount': '10.00',
+                'amount': '500.00',
                 'payment_method': 'bkash',
                 'transaction_id': 'TX-MEAL-PAY-HIST-001',
             },

@@ -9,9 +9,13 @@ Admins configure three ordered wallet thresholds. A twice-daily cron evaluates a
 | Subscription minimum | `min_wallet_balance_to_order` | `500.00` | Subscribe requires `balance >=` this |
 | Low-balance reminder | `low_balance_reminder_threshold` | `300.00` | Reminder when `balance <` this |
 | Meal stop | `meal_stop_threshold` | `200.00` | Auto meal delivery blocked when `balance <` this |
+| Guest meal box | `guest_meal_box_price` | `10.00` | Added to published slot price on guest meal create (snapshotted) |
+| Guest meal monthly limit | `guest_meal_monthly_limit` | `10` | Max guest meal quantity per Asia/Dhaka calendar month |
 
 **Ordering rule (strict):**  
 `subscription minimum > low-balance reminder > meal stop ≥ 0`
+
+Guest meal purchase additionally requires `recharge_balance - guest_total >= meal_stop_threshold` at create time. See [guest-meal-order.md](./guest-meal-order.md).
 
 ## Permissions
 
@@ -64,6 +68,9 @@ Auth: verified admin (`IsVerifiedAdmin`).
   "min_wallet_balance_to_order": "500.00",
   "low_balance_reminder_threshold": "300.00",
   "meal_stop_threshold": "200.00",
+  "minimum_recharge_amount": "500.00",
+  "guest_meal_box_price": "10.00",
+  "guest_meal_monthly_limit": 10,
   "updated_at": "2026-09-03T08:00:00Z"
 }
 ```
@@ -74,7 +81,9 @@ Auth: verified admin (`IsVerifiedAdmin`).
 {
   "min_wallet_balance_to_order": "500.00",
   "low_balance_reminder_threshold": "300.00",
-  "meal_stop_threshold": "200.00"
+  "meal_stop_threshold": "200.00",
+  "guest_meal_box_price": "10.00",
+  "guest_meal_monthly_limit": 10
 }
 ```
 
@@ -171,3 +180,7 @@ test -f .env && echo ".env present"
 ```
 
 - Remaining risks: host crontab permissions; a wrong/empty sibling `../venv` (override with `BEFOOD_VENV=/path/to/venv` if needed).
+
+## Minimum recharge amount
+
+- Independent floor for new recharge requests (not part of subscribe > reminder > stop ordering). Default 500.00 BDT, admin-editable.

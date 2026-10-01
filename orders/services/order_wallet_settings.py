@@ -46,6 +46,9 @@ def update_order_wallet_settings(
     min_wallet_balance_to_order: Decimal | None = None,
     low_balance_reminder_threshold: Decimal | None = None,
     meal_stop_threshold: Decimal | None = None,
+    minimum_recharge_amount: Decimal | None = None,
+    guest_meal_box_price: Decimal | None = None,
+    guest_meal_monthly_limit: int | None = None,
 ) -> OrderWalletSettings:
     settings_obj = OrderWalletSettings.load()
     next_min = (
@@ -69,6 +72,41 @@ def update_order_wallet_settings(
         next_reminder, field='low_balance_reminder_threshold'
     )
     next_stop = _quantize_non_negative(next_stop, field='meal_stop_threshold')
+    next_minimum_recharge = (
+        minimum_recharge_amount
+        if minimum_recharge_amount is not None
+        else settings_obj.minimum_recharge_amount
+    )
+    next_minimum_recharge = _quantize_non_negative(
+        next_minimum_recharge, field='minimum_recharge_amount'
+    )
+    next_box = (
+        guest_meal_box_price
+        if guest_meal_box_price is not None
+        else settings_obj.guest_meal_box_price
+    )
+    next_box = _quantize_non_negative(next_box, field='guest_meal_box_price')
+    next_guest_limit = (
+        guest_meal_monthly_limit
+        if guest_meal_monthly_limit is not None
+        else settings_obj.guest_meal_monthly_limit
+    )
+    try:
+        next_guest_limit = int(next_guest_limit)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            {'guest_meal_monthly_limit': 'Must be a positive integer.'}
+        ) from exc
+    if next_guest_limit < 1:
+        raise ValidationError(
+            {'guest_meal_monthly_limit': 'Must be a positive integer.'}
+        )
+    from wallet.services.ledger import MAX_FUNDING_AMOUNT
+
+    if next_minimum_recharge > MAX_FUNDING_AMOUNT:
+        raise ValidationError(
+            {'minimum_recharge_amount': f'Amount must not exceed {MAX_FUNDING_AMOUNT}.'}
+        )
     validate_threshold_ordering(
         min_wallet_balance_to_order=next_min,
         low_balance_reminder_threshold=next_reminder,
@@ -78,6 +116,9 @@ def update_order_wallet_settings(
     settings_obj.min_wallet_balance_to_order = next_min
     settings_obj.low_balance_reminder_threshold = next_reminder
     settings_obj.meal_stop_threshold = next_stop
+    settings_obj.minimum_recharge_amount = next_minimum_recharge
+    settings_obj.guest_meal_box_price = next_box
+    settings_obj.guest_meal_monthly_limit = next_guest_limit
     settings_obj.save()
     return settings_obj
 

@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'promotions',
     'notices',
     'announcements',
+    'sliders',
     'assets',
     'faqs',
     'delivery_schedules',

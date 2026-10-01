@@ -30,6 +30,7 @@ from .subscription_serializers import (
     CustomerSubscriptionPlanSerializer,
     CustomerSubscriptionSerializer,
     SubscribeSerializer,
+    SubscriptionQuoteSerializer,
 )
 
 
@@ -69,7 +70,7 @@ class CustomerSubscriptionPlanViewSet(mixins.ListModelMixin, viewsets.GenericVie
         examples=[
             OpenApiExample(
                 'Subscribe',
-                value={'plan_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'},
+                value={'plan_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'meal_preference': 'both', 'quantity': 1},
                 request_only=True,
             ),
         ],
@@ -124,6 +125,35 @@ class CustomerSubscriptionViewSet(
 
     @extend_schema(
         tags=['Meal Subscriptions'],
+        summary='Preview subscription meal preference and delivery fee',
+        request=SubscriptionQuoteSerializer,
+        responses={200: OpenApiResponse(description='Normalized preference, quantity, and monthly fee')},
+        examples=[
+            OpenApiExample(
+                'Quote both for two persons',
+                value={'plan_public_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'meal_preference': 'both', 'quantity': 2},
+                request_only=True,
+            ),
+        ],
+    )
+    @action(detail=False, methods=['post'], url_path='quote')
+    def quote(self, request):
+        serializer = SubscriptionQuoteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        summary = serializer.validated_data['fee_summary']
+        return Response(
+            {
+                'plan_public_id': str(serializer.validated_data['plan_public_id']),
+                'meal_preference': summary['meal_period'],
+                'quantity': summary['quantity'],
+                'monthly_delivery_fee': summary['monthly_delivery_fee'],
+                'fee_rule_code': summary['fee_rule_code'],
+                'used_legacy_fallback': serializer.validated_data['used_fallback'],
+            }
+        )
+
+    @extend_schema(
+        tags=['Meal Subscriptions'],
         summary='Get current active subscription',
         responses={200: OpenApiResponse(description='Current subscription or null')},
     )
@@ -175,7 +205,11 @@ class CustomerSubscriptionViewSet(
                 {'detail': 'No active meal subscription.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        updated = cancel_subscription(subscription)
+        updated = cancel_subscription(
+            subscription,
+            cancelled_by=request.user,
+            cancel_source=CustomerSubscription.CancelSource.CUSTOMER,
+        )
         return Response(CustomerSubscriptionSerializer(updated, context={'request': request}).data)
 
     @extend_schema(
