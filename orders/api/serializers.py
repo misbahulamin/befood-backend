@@ -489,6 +489,12 @@ class KitchenTodayRequirementSerializer(serializers.Serializer):
     meal_off_count = serializers.IntegerField()
     customer_meal_off_count = serializers.IntegerField(required=False)
     low_balance_blocked_count = serializers.IntegerField(required=False)
+    excluded_other_period_count = serializers.IntegerField(
+        help_text=(
+            'Active subscriptions whose meal_period_snapshot does not include '
+            'this slot (diagnostic; does not alter expected/cook counts).'
+        ),
+    )
     final_cooking_count = serializers.IntegerField()
     total_customers = serializers.IntegerField()
     packages = MealDemandPackageSerializer(many=True)

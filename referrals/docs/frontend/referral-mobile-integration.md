@@ -45,6 +45,38 @@ Inactive referrer error detail includes:
 Success: `{ "valid": true, "referral_code": "...", "referrer_public_id": "..." }`  
 Rate limit: HTTP `429` when IP exceeds `REFERRAL_VALIDATE_RATE`.
 
+**Validate is not attribution.** A successful validate only checks that the code is usable and records an analytics event. It does **not** create a `ReferralRelationship`.
+
+### Persist-until-create checklist
+
+1. Read `referral_code` from deep link / invite URL / validate response.
+2. Persist it in secure local storage until the **first successful brand-new customer create**.
+3. Send `referral_code` again on register / phone verify / oauth with header `X-Client-Type: mobile`.
+4. Do not clear the stored code after validate alone.
+5. Clear the stored code only after create succeeds (or after an existing-login path where referral is ignored).
+
+### Auth success envelope (additive)
+
+When a non-empty `referral_code` was present on a brand-new create path, success bodies may include:
+
+```json
+{
+  "referral_attributed": true,
+  "referral_status_reason": null
+}
+```
+
+Email finalize can still create the account when attribution fails closed:
+
+```json
+{
+  "referral_attributed": false,
+  "referral_status_reason": "REFERRER_INACTIVE"
+}
+```
+
+Phone/OAuth hard-fail on referral errors (HTTP 400) instead of silent skip.
+
 ## After login
 
 1. `GET /referrals/me/` — code, link, `is_usable`, stats  

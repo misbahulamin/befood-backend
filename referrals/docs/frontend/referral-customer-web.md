@@ -15,6 +15,15 @@ X-Client-Type: web
 
 Do **not** send `referral_code` on web registration (`422`).
 
+## Invite landing → mobile handoff
+
+Public invite links (for example `https://befood.com.bd/invite?code=BEF...`) may land on **web**. Web can call `POST /referrals/validate/` for UX feedback, but:
+
+1. Web registration must **not** send `referral_code` (rejected).
+2. Credited referral signup requires opening/installing the **mobile app** with the same code.
+3. The app must carry that code into phone/email/oauth create APIs with `X-Client-Type: mobile`.
+4. Do not expect a `ReferralRelationship` from web-only signup after validate.
+
 ## Endpoints
 
 | Action | Method / path |

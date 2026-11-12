@@ -328,6 +328,14 @@ REFERRAL_LINK_BASE_URL = config(
     default='https://befood.com.bd/invite',
 )
 
+# Bridge: accept legacy delivery_location_public_id assign by mapping to default sub-location.
+# Set False after Admin Panel is dual-aware (Contract phase).
+DELIVERY_SUB_LOCATION_LEGACY_LOCATION_ASSIGN = config(
+    'DELIVERY_SUB_LOCATION_LEGACY_LOCATION_ASSIGN',
+    default=True,
+    cast=bool,
+)
+
 # Reject meal package order create when delivery coords are outside active hubs.
 SERVICE_AREA_ORDER_GATE_ENABLED = config(
     'SERVICE_AREA_ORDER_GATE_ENABLED',

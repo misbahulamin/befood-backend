@@ -116,7 +116,17 @@ class CustomerProfile(PublicIdMixin, TimeStampedModel):
         null=True,
         blank=True,
         related_name='customers',
-        help_text='Manual operational location; derived zone comes from location.zone.',
+        help_text=(
+            'Mirrored parent location during Bridge; derived from delivery_sub_location.'
+        ),
+    )
+    delivery_sub_location = models.ForeignKey(
+        'delivery_zones.DeliverySubLocation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='customers',
+        help_text='Operational stop; location and zone are derived via sub → location → zone.',
     )
 
     def __str__(self):

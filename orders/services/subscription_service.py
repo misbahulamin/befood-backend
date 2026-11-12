@@ -440,13 +440,18 @@ def cancel_subscription(
     today: date | None = None,
     cancelled_by=None,
     cancel_source: str | None = None,
+    reason_code: str | None = None,
+    reason_text: str | None = None,
     reason: str | None = None,
     now: datetime | None = None,
 ) -> CustomerSubscription:
     """
     Canonical cancel: lock subscription, soft-skip cancellable SCHEDULED slots
-    via meal-off cutoff classification, set cancelled status. Idempotent.
+    via meal-off cutoff classification, set cancelled status, persist
+    SubscriptionCancellation. Idempotent for already-cancelled rows.
     """
+    from orders.models import SubscriptionCancellation
+
     locked = (
         CustomerSubscription.objects.select_for_update()
         .select_related('customer', 'meal')
@@ -454,6 +459,21 @@ def cancel_subscription(
     )
     if locked.status == CustomerSubscription.Status.CANCELLED:
         return locked
+
+    text = (reason_text if reason_text is not None else reason) or ''
+    source = cancel_source or CustomerSubscription.CancelSource.SYSTEM
+    code = reason_code
+    if code is None:
+        # Non-interactive / legacy callers: documented defaults.
+        if source == CustomerSubscription.CancelSource.SYSTEM:
+            code = SubscriptionCancellation.ReasonCode.TEMPORARY_PAUSE
+        else:
+            code = SubscriptionCancellation.ReasonCode.OTHER
+    if code == SubscriptionCancellation.ReasonCode.UNKNOWN:
+        raise ValueError('reason_code=unknown is migration-only and cannot be set on cancel.')
+    valid_codes = {c.value for c in SubscriptionCancellation.ReasonCode}
+    if code not in valid_codes:
+        raise ValueError(f'Unsupported reason_code: {code}')
 
     settings_obj = get_meal_off_settings()
     now_local = now or meal_off_business_now(settings_obj)
@@ -490,12 +510,25 @@ def cancel_subscription(
     if cancelled_by is not None:
         locked.cancelled_by = cancelled_by
         update_fields.append('cancelled_by')
-    if cancel_source:
-        locked.cancel_source = cancel_source
-        update_fields.append('cancel_source')
-    # Optional reason is accepted for API symmetry; no dedicated field — leave customer_note.
-    _ = reason
+    locked.cancel_source = source
+    update_fields.append('cancel_source')
     locked.save(update_fields=update_fields)
+
+    cancelled_by_enum = source
+    if cancelled_by_enum not in {
+        SubscriptionCancellation.CancelledBy.CUSTOMER,
+        SubscriptionCancellation.CancelledBy.ADMIN,
+        SubscriptionCancellation.CancelledBy.SYSTEM,
+    }:
+        cancelled_by_enum = SubscriptionCancellation.CancelledBy.SYSTEM
+
+    SubscriptionCancellation.objects.create(
+        subscription=locked,
+        customer_id=locked.customer_id,
+        reason_code=code,
+        reason_text=text,
+        cancelled_by=cancelled_by_enum,
+    )
     locked.refresh_from_db()
     return locked
 

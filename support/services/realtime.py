@@ -22,6 +22,8 @@ def serialize_message(message) -> dict:
 
 
 def serialize_conversation_summary(conversation) -> dict:
+    from user_management.services.profile_picture import get_profile_picture_url
+
     customer = conversation.customer
     user = customer.user
     return {
@@ -31,6 +33,7 @@ def serialize_conversation_summary(conversation) -> dict:
         'last_message_at': (
             conversation.last_message_at.isoformat() if conversation.last_message_at else None
         ),
+        'last_message_sender': conversation.last_message_sender,
         'customer_unread_count': conversation.customer_unread_count,
         'admin_unread_count': conversation.admin_unread_count,
         'customer': {
@@ -38,6 +41,7 @@ def serialize_conversation_summary(conversation) -> dict:
             'name': (user.get_full_name() or user.username or '').strip(),
             'phone': customer.phone or '',
             'email': user.email or '',
+            'profile_picture_url': get_profile_picture_url(customer, request=None),
         },
     }
 

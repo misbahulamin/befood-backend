@@ -67,7 +67,19 @@ Customer self-cancel (unchanged path, shared semantics):
 
 Preview is read-only: subscription stays `active`; wallet block still shows **post-cancel** figures (`assume_cancelled`).
 
-`POST` body (optional): `{ "reason": "..." }`.
+`POST` body (**required** `reason_code`):
+
+```json
+{
+  "reason_code": "other",
+  "reason_text": "optional free text"
+}
+```
+
+- `reason_code` is required (422 if missing/invalid).
+- Allowed codes: `price_too_high`, `food_taste`, `food_quantity`, `delivery_late`, `delivery_area_not_covered`, `moving_away`, `exam_or_vacation`, `cooking_myself`, `switched_competitor`, `wallet_topup_hassle`, `app_problem`, `temporary_pause`, `other`.
+- `unknown` is migration-only and rejected from clients.
+- Persists a `SubscriptionCancellation` row (`cancelled_by=admin`).
 
 ## Liability pricing
 

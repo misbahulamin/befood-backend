@@ -295,7 +295,11 @@ class CustomerSubscriptionAPITestCase(APITestCase):
         second = self.client.post(self.subscriptions_url, self._subscribe_payload(), format='json')
         self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('already have an active meal subscription', str(second.data).lower())
-        cancel = self.client.post(self.cancel_url, {}, format='json')
+        cancel = self.client.post(
+            self.cancel_url,
+            {'reason_code': 'temporary_pause'},
+            format='json',
+        )
         self.assertEqual(cancel.status_code, status.HTTP_200_OK)
         self.assertEqual(cancel.data['status'], 'cancelled')
         third = self.client.post(self.subscriptions_url, self._subscribe_payload(), format='json')
@@ -387,7 +391,11 @@ class CustomerSubscriptionAPITestCase(APITestCase):
         self.assertGreater(len(today_slots), 0)
         self.assertGreater(future_count, 0)
         self._auth(self.other_token)
-        denied = self.client.post(self.cancel_url, {}, format='json')
+        denied = self.client.post(
+            self.cancel_url,
+            {'reason_code': 'moving_away'},
+            format='json',
+        )
         self.assertEqual(denied.status_code, status.HTTP_404_NOT_FOUND)
         subscription.refresh_from_db()
         self.assertEqual(subscription.status, CustomerSubscription.Status.ACTIVE)
@@ -398,7 +406,11 @@ class CustomerSubscriptionAPITestCase(APITestCase):
             'orders.services.subscription_service.meal_off_business_now',
             return_value=after_dinner,
         ):
-            cancel = self.client.post(self.cancel_url, {}, format='json')
+            cancel = self.client.post(
+                self.cancel_url,
+                {'reason_code': 'moving_away', 'reason_text': 'relocating'},
+                format='json',
+            )
         self.assertEqual(cancel.status_code, status.HTTP_200_OK)
         subscription.refresh_from_db()
         self.assertEqual(subscription.status, CustomerSubscription.Status.CANCELLED)

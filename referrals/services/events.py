@@ -1,10 +1,14 @@
-"""Validation event recording and share tracking."""
+"""Validation / attribution event recording and share tracking."""
 
 from __future__ import annotations
 
+import logging
+
 from django.utils import timezone
 
-from referrals.models import ReferralProfile, ReferralValidationEvent
+from referrals.models import ReferralAttributionEvent, ReferralProfile, ReferralValidationEvent
+
+logger = logging.getLogger(__name__)
 
 
 def record_validation_event(
@@ -24,6 +28,37 @@ def record_validation_event(
         client_ip=client_ip,
         user_agent=(user_agent or '')[:255],
     )
+
+
+def record_attribution_event(
+    *,
+    customer=None,
+    referral_code: str,
+    client_type: str = '',
+    stage: str,
+    outcome: str,
+    error_code: str = '',
+) -> ReferralAttributionEvent:
+    """Persist a structured attribution outcome (skips must include error_code)."""
+    event = ReferralAttributionEvent.objects.create(
+        customer=customer,
+        referral_code=(referral_code or '').strip().upper()[:16],
+        client_type=(client_type or '').strip().lower()[:16],
+        stage=stage,
+        outcome=outcome,
+        error_code=(error_code or '')[:64],
+    )
+    logger.info(
+        'Referral attribution outcome customer_id=%s code=%s client_type=%s '
+        'stage=%s outcome=%s error_code=%s',
+        getattr(customer, 'pk', None),
+        event.referral_code,
+        event.client_type,
+        event.stage,
+        event.outcome,
+        event.error_code or '-',
+    )
+    return event
 
 
 def record_share(profile: ReferralProfile) -> ReferralProfile:

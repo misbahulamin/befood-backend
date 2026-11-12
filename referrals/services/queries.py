@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from orders.models import CustomerSubscription
 from referrals.models import (
+    ReferralAttributionEvent,
     ReferralCommission,
     ReferralRelationship,
     ReferralValidationEvent,
@@ -105,15 +106,18 @@ def admin_analytics(*, date_from=None, date_to=None) -> dict:
     rel_qs = ReferralRelationship.objects.all()
     comm_qs = ReferralCommission.objects.filter(status=ReferralCommission.Status.SUCCESS)
     val_qs = ReferralValidationEvent.objects.all()
+    attr_qs = ReferralAttributionEvent.objects.all()
 
     if date_from:
         rel_qs = rel_qs.filter(attributed_at__gte=date_from)
         comm_qs = comm_qs.filter(created_at__gte=date_from)
         val_qs = val_qs.filter(created_at__gte=date_from)
+        attr_qs = attr_qs.filter(created_at__gte=date_from)
     if date_to:
         rel_qs = rel_qs.filter(attributed_at__lte=date_to)
         comm_qs = comm_qs.filter(created_at__lte=date_to)
         val_qs = val_qs.filter(created_at__lte=date_to)
+        attr_qs = attr_qs.filter(created_at__lte=date_to)
 
     total_relationships = rel_qs.count()
     active_referrer_ids = set(
@@ -127,6 +131,9 @@ def admin_analytics(*, date_from=None, date_to=None) -> dict:
     )
     total_validations = val_qs.count()
     successful_validations = val_qs.filter(is_valid=True).count()
+    unique_successful_validation_codes = (
+        val_qs.filter(is_valid=True).values('code').distinct().count()
+    )
     paid_from_referral = (
         CustomerSubscription.objects.filter(
             status=CustomerSubscription.Status.ACTIVE,
@@ -141,6 +148,19 @@ def admin_analytics(*, date_from=None, date_to=None) -> dict:
         if successful_validations
         else Decimal('0.00')
     )
+    attribution_rate_vs_unique_ok = (
+        Decimal(total_relationships) / Decimal(unique_successful_validation_codes)
+        if unique_successful_validation_codes
+        else Decimal('0.00')
+    )
+    skips = (
+        attr_qs.filter(outcome=ReferralAttributionEvent.Outcome.SKIPPED)
+        .exclude(error_code='')
+        .values('error_code')
+        .annotate(count=Count('id'))
+        .order_by('error_code')
+    )
+    attribution_skips_by_reason = {row['error_code']: row['count'] for row in skips}
     return {
         'total_relationships': total_relationships,
         'total_active_referrers': len(active_referrer_ids),
@@ -148,9 +168,14 @@ def admin_analytics(*, date_from=None, date_to=None) -> dict:
         'total_admin_wallet_deductions': total_commission,
         'total_validations': total_validations,
         'total_successful_validations': successful_validations,
+        'unique_successful_validation_codes': unique_successful_validation_codes,
         'total_successful_registrations': total_relationships,
         'total_paid_subscribers_from_referral': paid_from_referral,
         'conversion_rate': conversion_rate.quantize(Decimal('0.0001')),
+        'attribution_rate_vs_unique_ok': attribution_rate_vs_unique_ok.quantize(
+            Decimal('0.0001')
+        ),
+        'attribution_skips_by_reason': attribution_skips_by_reason,
     }
 
 

@@ -111,9 +111,12 @@ def login_with_facebook(
     except SocialLinkConflict as exc:
         raise FacebookOAuthError(exc.message, code='SOCIAL_CONFLICT') from exc
 
+    referral_fields = None
     if created and (referral_code or '').strip():
+        from referrals.models import ReferralAttributionEvent
         from referrals.services.attribution import attribute_on_signup
         from referrals.services.eligibility import ReferralError
+        from referrals.services.events import record_attribution_event
 
         try:
             attribute_on_signup(
@@ -121,13 +124,27 @@ def login_with_facebook(
                 referral_code=referral_code,
                 client_type=client_type or 'web',
             )
+            record_attribution_event(
+                customer=user.customer_profile,
+                referral_code=referral_code,
+                client_type=client_type or 'web',
+                stage=ReferralAttributionEvent.Stage.OAUTH,
+                outcome=ReferralAttributionEvent.Outcome.ATTRIBUTED,
+            )
+            referral_fields = {
+                'referral_attributed': True,
+                'referral_status_reason': None,
+            }
         except ReferralError as exc:
             raise FacebookOAuthError(exc.message, code=exc.code) from exc
 
-    return build_customer_auth_response(
+    response = build_customer_auth_response(
         user,
         auth_provider='facebook',
         device_token=device_token,
         platform=platform,
         user_agent=user_agent,
     )
+    if referral_fields is not None:
+        response.update(referral_fields)
+    return response

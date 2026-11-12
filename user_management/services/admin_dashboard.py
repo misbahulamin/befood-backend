@@ -42,6 +42,10 @@ def build_dashboard_summary() -> dict[str, Any]:
         status=WalletTransaction.Status.PENDING,
     ).count()
 
+    from user_management.services.churn import dashboard_churn_kpis
+
+    churn_kpis = dashboard_churn_kpis(today=today)
+
     return {
         'total_customers': CustomerProfile.objects.count(),
         'total_meals_served': total_meals_served,
@@ -54,6 +58,7 @@ def build_dashboard_summary() -> dict[str, Any]:
         'unread_support_count': unread_support_count,
         'pending_wallet_requests': pending_wallet_requests,
         'pending_actions': unread_support_count + pending_wallet_requests,
+        **churn_kpis,
     }
 
 

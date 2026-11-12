@@ -2,7 +2,8 @@ from datetime import date, datetime
 
 from django.db.models import Prefetch, Q, QuerySet
 
-from delivery_zones.models import DeliveryLocation, DeliveryZone
+from delivery_zones.models import DeliveryLocation, DeliverySubLocation, DeliveryZone
+from delivery_zones.services.assignment import resolve_operational_sub_location
 from delivery_zones.services.errors import DeliveryZoneError
 from delivery_zones.services.zones import zone_for_rider
 from orders.models import OrderDelivery, OrderItem
@@ -55,15 +56,40 @@ def resolve_board_statuses(
 
 
 def _zone_customer_q(zone: DeliveryZone) -> Q:
-    return Q(subscription__customer__delivery_location__zone=zone) | Q(
-        order__customer__delivery_location__zone=zone
+    # Prefer sub-location derived zone; Bridge fallback when sub is null.
+    return (
+        Q(subscription__customer__delivery_sub_location__location__zone=zone)
+        | Q(order__customer__delivery_sub_location__location__zone=zone)
+        | (
+            Q(subscription__customer__delivery_sub_location__isnull=True)
+            & Q(subscription__customer__delivery_location__zone=zone)
+        )
+        | (
+            Q(order__customer__delivery_sub_location__isnull=True)
+            & Q(order__customer__delivery_location__zone=zone)
+        )
     )
 
 
-def _active_location_q() -> Q:
-    return Q(
-        subscription__customer__delivery_location__status=DeliveryLocation.Status.ACTIVE
-    ) | Q(order__customer__delivery_location__status=DeliveryLocation.Status.ACTIVE)
+def _active_hierarchy_q() -> Q:
+    active_sub = DeliverySubLocation.Status.ACTIVE
+    active_loc = DeliveryLocation.Status.ACTIVE
+    via_sub = (
+        Q(subscription__customer__delivery_sub_location__status=active_sub)
+        & Q(subscription__customer__delivery_sub_location__location__status=active_loc)
+    ) | (
+        Q(order__customer__delivery_sub_location__status=active_sub)
+        & Q(order__customer__delivery_sub_location__location__status=active_loc)
+    )
+    # Bridge fallback only when sub is still null.
+    via_loc = (
+        Q(subscription__customer__delivery_sub_location__isnull=True)
+        & Q(subscription__customer__delivery_location__status=active_loc)
+    ) | (
+        Q(order__customer__delivery_sub_location__isnull=True)
+        & Q(order__customer__delivery_location__status=active_loc)
+    )
+    return via_sub | via_loc
 
 
 def zone_scoped_deliveries(
@@ -87,11 +113,17 @@ def zone_scoped_deliveries(
             'order__customer__user',
             'order__customer__delivery_location',
             'order__customer__delivery_location__zone',
+            'order__customer__delivery_sub_location',
+            'order__customer__delivery_sub_location__location',
+            'order__customer__delivery_sub_location__location__zone',
             'order__meal',
             'subscription',
             'subscription__customer__user',
             'subscription__customer__delivery_location',
             'subscription__customer__delivery_location__zone',
+            'subscription__customer__delivery_sub_location',
+            'subscription__customer__delivery_sub_location__location',
+            'subscription__customer__delivery_sub_location__location__zone',
             'subscription__meal',
             'delivered_by_rider',
             'delivered_by_rider__user',
@@ -104,7 +136,7 @@ def zone_scoped_deliveries(
         )
         .filter(live_delivery_q(service_date), service_date=service_date)
         .filter(_zone_customer_q(zone))
-        .filter(_active_location_q())
+        .filter(_active_hierarchy_q())
     )
     if meal_period:
         qs = qs.filter(meal_period=meal_period)
@@ -115,7 +147,17 @@ def zone_scoped_deliveries(
     return qs
 
 
+def _delivery_sub_location(delivery: OrderDelivery) -> DeliverySubLocation | None:
+    customer = delivery_customer(delivery)
+    if customer is None:
+        return None
+    return resolve_operational_sub_location(customer)
+
+
 def _delivery_location(delivery: OrderDelivery) -> DeliveryLocation | None:
+    sub = _delivery_sub_location(delivery)
+    if sub is not None:
+        return sub.location
     customer = delivery_customer(delivery)
     if customer is None:
         return None
@@ -290,19 +332,22 @@ def build_deliveryman_board(
 
     def sort_key(d: OrderDelivery):
         loc = _delivery_location(d)
+        sub = _delivery_sub_location(d)
         customer = delivery_customer(d)
         name = customer_display_name(customer) if customer else ''
         return (
             loc.priority if loc else 9999,
             loc.name if loc else '',
+            sub.priority if sub else 9999,
+            sub.name if sub else '',
             name.lower(),
             str(d.public_id),
         )
 
     deliveries.sort(key=sort_key)
 
-    groups: dict[str, dict] = {}
-    ordered_groups = []
+    location_groups: dict[str, dict] = {}
+    ordered_locations = []
     menu_cache: dict[int, list[str]] = {}
     listed_count = 0
     from orders.services.guest_meal import guest_quantities_by_delivery_ids
@@ -310,21 +355,40 @@ def build_deliveryman_board(
     guest_by_delivery = guest_quantities_by_delivery_ids([d.pk for d in deliveries])
     for delivery in deliveries:
         loc = _delivery_location(delivery)
-        if loc is None:
+        sub = _delivery_sub_location(delivery)
+        # Spec: omit customers without an active sub-location.
+        if loc is None or sub is None:
             continue
-        key = str(loc.public_id)
-        if key not in groups:
-            group = {
-                'location_public_id': key,
+        loc_key = str(loc.public_id)
+        if loc_key not in location_groups:
+            location_group = {
+                'location_public_id': loc_key,
                 'location_name': loc.name,
                 'location_priority': loc.priority,
                 'delivery_count': 0,
+                'sub_locations': [],
+                '_sub_map': {},
+            }
+            location_groups[loc_key] = location_group
+            ordered_locations.append(location_group)
+
+        location_group = location_groups[loc_key]
+        sub_key = str(sub.public_id)
+        sub_map = location_group['_sub_map']
+        if sub_key not in sub_map:
+            sub_group = {
+                'sub_location_public_id': sub_key,
+                'sub_location_name': sub.name,
+                'sub_location_priority': sub.priority,
+                'delivery_count': 0,
                 'customers': [],
             }
-            groups[key] = group
-            ordered_groups.append(group)
+            sub_map[sub_key] = sub_group
+            location_group['sub_locations'].append(sub_group)
+
         customer = delivery_customer(delivery)
-        groups[key]['delivery_count'] += 1
+        location_group['delivery_count'] += 1
+        sub_map[sub_key]['delivery_count'] += 1
         listed_count += 1
         package_name, package_public_id = _package_fields(delivery)
         row = {
@@ -340,6 +404,8 @@ def build_deliveryman_board(
             'city': delivery.delivery_city_snapshot,
             'location_name': loc.name,
             'location_priority': loc.priority,
+            'sub_location_name': sub.name,
+            'sub_location_priority': sub.priority,
             'meal_period': delivery.meal_period,
             'meal_name': package_name,
             'package_name': package_name,
@@ -355,7 +421,10 @@ def build_deliveryman_board(
             ),
         }
         row.update(_completion_fields(delivery))
-        groups[key]['customers'].append(row)
+        sub_map[sub_key]['customers'].append(row)
+
+    for location_group in ordered_locations:
+        location_group.pop('_sub_map', None)
 
     return {
         'service_date': service_date.isoformat(),
@@ -366,7 +435,7 @@ def build_deliveryman_board(
         'periods': {
             active_meal_period: {
                 'total_count': listed_count,
-                'locations': ordered_groups,
+                'locations': ordered_locations,
             }
         },
     }

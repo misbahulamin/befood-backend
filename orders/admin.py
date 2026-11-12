@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     Cart,
     CartItem,
+    ChurnFollowUp,
     CustomerSubscription,
     DeliveryActivityLog,
     DeliveryManDailySummary,
@@ -15,6 +16,7 @@ from .models import (
     OrderReview,
     OrderStatusHistory,
     OrderWalletSettings,
+    SubscriptionCancellation,
 )
 
 
@@ -118,6 +120,49 @@ class CustomerSubscriptionAdmin(admin.ModelAdmin):
     date_hierarchy = 'started_on'
 
 
+@admin.register(SubscriptionCancellation)
+class SubscriptionCancellationAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'subscription',
+        'customer',
+        'reason_code',
+        'cancelled_by',
+        'created_at',
+    )
+    list_filter = ('reason_code', 'cancelled_by', 'created_at')
+    search_fields = (
+        'subscription__public_id',
+        'customer__user__email',
+        'reason_text',
+    )
+    readonly_fields = ('created_at',)
+    raw_id_fields = ('subscription', 'customer')
+    date_hierarchy = 'created_at'
+
+
+@admin.register(ChurnFollowUp)
+class ChurnFollowUpAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'public_id',
+        'customer',
+        'status',
+        'admin',
+        'updated_at',
+        'created_at',
+    )
+    list_filter = ('status', 'updated_at')
+    search_fields = (
+        'public_id',
+        'customer__user__email',
+        'note',
+    )
+    readonly_fields = ('public_id', 'created_at', 'updated_at')
+    raw_id_fields = ('customer', 'admin')
+    date_hierarchy = 'created_at'
+
+
 @admin.register(OrderDelivery)
 class OrderDeliveryAdmin(admin.ModelAdmin):
     list_display = (
@@ -185,6 +230,7 @@ class OrderDeliveryAdmin(admin.ModelAdmin):
         'delivered_by_rider',
         'logistics_zone',
         'logistics_location',
+        'logistics_sub_location',
     )
 
 

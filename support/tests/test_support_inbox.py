@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from channels.db import database_sync_to_async
@@ -5,6 +6,7 @@ from channels.testing import WebsocketCommunicator
 from django.contrib.auth.models import Group, User
 from django.core import mail
 from django.test import TransactionTestCase, override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
@@ -21,6 +23,7 @@ from support.services.presence import (
     mark_customer_online,
     mark_admin_online,
 )
+from support.services.realtime import serialize_conversation_summary
 from user_management.models import AdminProfile, CustomerProfile
 
 
@@ -167,6 +170,114 @@ class SupportRestAPITests(APITestCase):
         delete = self.client.delete(f'/api/v1/support/messages/{msg.public_id}/')
         self.assertIn(delete.status_code, (status.HTTP_404_NOT_FOUND, status.HTTP_405_METHOD_NOT_ALLOWED))
         self.assertTrue(SupportMessage.objects.filter(pk=msg.pk).exists())
+
+    def test_admin_list_excludes_empty_by_default(self):
+        empty = SupportConversation.objects.create(customer=self.other.customer_profile)
+        self._auth(self.customer_token)
+        self.client.post(self.messages_url, {'message': 'Has message'}, format='json')
+        messaged = SupportConversation.objects.get(customer=self.customer.customer_profile)
+
+        self._auth(self.admin_token)
+        listing = self.client.get(self.admin_list_url)
+        self.assertEqual(listing.status_code, status.HTTP_200_OK)
+        ids = [row['public_id'] for row in listing.data['results']]
+        self.assertIn(str(messaged.public_id), ids)
+        self.assertNotIn(str(empty.public_id), ids)
+
+    def test_admin_list_include_empty_puts_nulls_last(self):
+        now = timezone.now()
+        empty = SupportConversation.objects.create(customer=self.other.customer_profile)
+        older_customer = _make_customer('supolder', 'supolder@example.com', '1766666666')
+        older = SupportConversation.objects.create(
+            customer=older_customer.customer_profile,
+            last_message='Older',
+            last_message_at=now - timedelta(hours=2),
+            last_message_sender=SupportConversation.LastMessageSender.CUSTOMER,
+        )
+        newer = SupportConversation.objects.create(
+            customer=self.customer.customer_profile,
+            last_message='Newer',
+            last_message_at=now - timedelta(minutes=5),
+            last_message_sender=SupportConversation.LastMessageSender.CUSTOMER,
+        )
+
+        self._auth(self.admin_token)
+        listing = self.client.get(self.admin_list_url, {'include_empty': 'true'})
+        self.assertEqual(listing.status_code, status.HTTP_200_OK)
+        ids = [row['public_id'] for row in listing.data['results']]
+        self.assertEqual(ids[0], str(newer.public_id))
+        self.assertLess(ids.index(str(newer.public_id)), ids.index(str(older.public_id)))
+        self.assertEqual(ids[-1], str(empty.public_id))
+
+    def test_admin_list_unknown_filter_rejected_include_empty_ok(self):
+        self._auth(self.admin_token)
+        bad = self.client.get(self.admin_list_url, {'foo': 'bar'})
+        self.assertEqual(bad.status_code, status.HTTP_400_BAD_REQUEST)
+        ok = self.client.get(self.admin_list_url, {'include_empty': 'true'})
+        self.assertEqual(ok.status_code, status.HTTP_200_OK)
+
+    def test_last_message_sender_customer_then_admin(self):
+        conversation = SupportConversation.objects.create(
+            customer=self.customer.customer_profile
+        )
+        post_message(
+            conversation=conversation,
+            sender_type=SupportMessage.SenderType.CUSTOMER,
+            sender_user=self.customer,
+            body='From customer',
+            broadcast=False,
+        )
+        conversation.refresh_from_db()
+        self.assertEqual(
+            conversation.last_message_sender,
+            SupportConversation.LastMessageSender.CUSTOMER,
+        )
+
+        self._auth(self.admin_token)
+        listing = self.client.get(self.admin_list_url)
+        row = next(
+            r for r in listing.data['results'] if r['public_id'] == str(conversation.public_id)
+        )
+        self.assertEqual(row['last_message_sender'], 'customer')
+
+        post_message(
+            conversation=conversation,
+            sender_type=SupportMessage.SenderType.ADMIN,
+            sender_user=self.admin,
+            body='From admin',
+            broadcast=False,
+        )
+        conversation.refresh_from_db()
+        self.assertEqual(
+            conversation.last_message_sender,
+            SupportConversation.LastMessageSender.ADMIN,
+        )
+        listing = self.client.get(self.admin_list_url)
+        row = next(
+            r for r in listing.data['results'] if r['public_id'] == str(conversation.public_id)
+        )
+        self.assertEqual(row['last_message_sender'], 'admin')
+
+    def test_serialize_conversation_summary_includes_sender_and_avatar(self):
+        conversation = SupportConversation.objects.create(
+            customer=self.customer.customer_profile
+        )
+        post_message(
+            conversation=conversation,
+            sender_type=SupportMessage.SenderType.CUSTOMER,
+            sender_user=self.customer,
+            body='Summary check',
+            broadcast=False,
+        )
+        conversation.refresh_from_db()
+        # Ensure related customer/user available for summary.
+        conversation = SupportConversation.objects.select_related(
+            'customer', 'customer__user'
+        ).get(pk=conversation.pk)
+        summary = serialize_conversation_summary(conversation)
+        self.assertEqual(summary['last_message_sender'], 'customer')
+        self.assertIn('profile_picture_url', summary['customer'])
+        self.assertIn('public_id', summary['customer'])
 
 
 @override_settings(
@@ -351,3 +462,55 @@ class SupportWebsocketTests(TransactionTestCase):
 
         await customer_ws.disconnect()
         await admin_ws.disconnect()
+
+    def _inbox_ws(self, token: str | None = None):
+        path = '/ws/support/inbox/'
+        if token:
+            path = f'{path}?token={token}'
+        return WebsocketCommunicator(
+            application,
+            path,
+            headers=[(b'origin', b'http://localhost')],
+        )
+
+    async def test_admin_inbox_ws_accepted(self):
+        communicator = self._inbox_ws(self.admin_token)
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        await communicator.disconnect()
+
+    async def test_customer_inbox_ws_rejected(self):
+        communicator = self._inbox_ws(self.customer_token)
+        connected, code = await communicator.connect()
+        self.assertFalse(connected)
+        self.assertEqual(code, 4403)
+
+    async def test_inbox_only_admin_receives_conversation_updated(self):
+        inbox = self._inbox_ws(self.admin_token)
+        self.assertTrue((await inbox.connect())[0])
+
+        customer_ws = self._ws(self.customer_token)
+        self.assertTrue((await customer_ws.connect())[0])
+
+        await customer_ws.send_json_to(
+            {'type': 'message.send', 'payload': {'message': 'Inbox fanout'}}
+        )
+
+        got_updated = False
+        payload = None
+        for _ in range(20):
+            event = await inbox.receive_json_from(timeout=5)
+            if event.get('type') == 'conversation.updated':
+                got_updated = True
+                payload = event.get('payload') or {}
+                break
+        self.assertTrue(got_updated)
+        self.assertEqual(payload.get('last_message_sender'), 'customer')
+        self.assertIn('profile_picture_url', (payload.get('customer') or {}))
+        self.assertEqual(
+            payload.get('public_id'),
+            str(self.conversation.public_id),
+        )
+
+        await customer_ws.disconnect()
+        await inbox.disconnect()

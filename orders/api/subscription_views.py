@@ -205,11 +205,18 @@ class CustomerSubscriptionViewSet(
                 {'detail': 'No active meal subscription.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        updated = cancel_subscription(
-            subscription,
-            cancelled_by=request.user,
-            cancel_source=CustomerSubscription.CancelSource.CUSTOMER,
+        serializer = CancelSubscriptionSerializer(
+            data=request.data or {},
+            context={
+                'subscription': subscription,
+                'cancelled_by': request.user,
+                'cancel_source': CustomerSubscription.CancelSource.CUSTOMER,
+                'request': request,
+            },
         )
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        updated = serializer.save()
         return Response(CustomerSubscriptionSerializer(updated, context={'request': request}).data)
 
     @extend_schema(

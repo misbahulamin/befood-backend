@@ -207,3 +207,33 @@ class SupportConversationConsumer(AsyncJsonWebsocketConsumer):
                 'payload': event.get('payload') or {},
             }
         )
+
+
+class SupportAdminInboxConsumer(AsyncJsonWebsocketConsumer):
+    """Verified-admin inbox fan-out without an open conversation."""
+
+    async def connect(self):
+        user = self.scope.get('user')
+        if user is None or isinstance(user, AnonymousUser) or not user.is_authenticated:
+            await self.close(code=4401)
+            return
+
+        if not await database_sync_to_async(is_verified_admin)(user):
+            await self.close(code=4403)
+            return
+
+        await self.channel_layer.group_add(ADMIN_INBOX_GROUP, self.channel_name)
+        await self.accept()
+
+    async def disconnect(self, code):
+        await self.channel_layer.group_discard(ADMIN_INBOX_GROUP, self.channel_name)
+
+    async def support_event(self, event):
+        if event.get('exclude_channel') == self.channel_name:
+            return
+        await self.send_json(
+            {
+                'type': event['event_type'],
+                'payload': event.get('payload') or {},
+            }
+        )

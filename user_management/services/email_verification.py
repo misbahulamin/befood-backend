@@ -32,14 +32,18 @@ from .pending_registration import (
 )
 
 
-def _email_verify_success_payload(message: str, profile=None) -> dict:
+def _email_verify_success_payload(message: str, profile=None, *, referral_outcome=None) -> dict:
     """Additive verify success body; keeps existing ``message`` contract."""
     phone_required = True if profile is None else is_phone_verification_required(profile)
-    return {
+    payload = {
         'message': message,
         'email_verified': True,
         'phone_verification_required': phone_required,
     }
+    if referral_outcome:
+        payload['referral_attributed'] = referral_outcome.get('referral_attributed')
+        payload['referral_status_reason'] = referral_outcome.get('referral_status_reason')
+    return payload
 
 
 class EmailVerificationTokenGenerator(PasswordResetTokenGenerator):
@@ -153,6 +157,7 @@ def verify_email_with_otp(email: str, otp: str) -> dict:
         return _email_verify_success_payload(
             EMAIL_VERIFIED_SUCCESS_MESSAGE,
             getattr(user, 'customer_profile', None),
+            referral_outcome=getattr(user, '_referral_outcome', None),
         )
 
     user = User.objects.filter(email__iexact=normalized).first()
@@ -187,7 +192,14 @@ def verify_email_link(uidb64: str, token: str) -> tuple[dict, int]:
         if profile is None and message == EMAIL_ALREADY_VERIFIED_MESSAGE:
             # Pending path deleted after conflict with existing verified email.
             return _email_verify_success_payload(message, None), 200
-        return _email_verify_success_payload(message, profile), 200
+        return (
+            _email_verify_success_payload(
+                message,
+                profile,
+                referral_outcome=getattr(user, '_referral_outcome', None) if user else None,
+            ),
+            200,
+        )
     if message == '' and status_code == 400:
         # Not a valid pending link — try legacy user path.
         pass

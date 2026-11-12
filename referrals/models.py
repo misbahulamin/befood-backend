@@ -257,3 +257,39 @@ class ReferralValidationEvent(TimeStampedModel):
             models.Index(fields=['created_at']),
             models.Index(fields=['is_valid', 'created_at']),
         ]
+
+
+class ReferralAttributionEvent(TimeStampedModel):
+    """Structured outcome when signup attribution is attempted (esp. email finalize skips)."""
+
+    class Stage(models.TextChoices):
+        FINALIZE = 'finalize', 'Email finalize'
+        PHONE = 'phone', 'Phone create'
+        OAUTH = 'oauth', 'OAuth create'
+        SIGNUP = 'signup', 'Signup'
+
+    class Outcome(models.TextChoices):
+        ATTRIBUTED = 'attributed', 'Attributed'
+        SKIPPED = 'skipped', 'Skipped'
+        FAILED = 'failed', 'Failed'
+
+    customer = models.ForeignKey(
+        CustomerProfile,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='referral_attribution_events',
+    )
+    referral_code = models.CharField(max_length=16, db_index=True)
+    client_type = models.CharField(max_length=16, blank=True, default='')
+    stage = models.CharField(max_length=16, choices=Stage.choices, db_index=True)
+    outcome = models.CharField(max_length=16, choices=Outcome.choices, db_index=True)
+    error_code = models.CharField(max_length=64, blank=True, default='')
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['created_at']),
+            models.Index(fields=['outcome', 'created_at']),
+            models.Index(fields=['error_code', 'created_at']),
+        ]

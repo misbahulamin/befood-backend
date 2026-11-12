@@ -734,10 +734,17 @@ class PhoneOtpVerifyView(APIView):
             'If the request is already authenticated as a customer, the phone is '
             'bound to that account (same as bind verify) — a second User is never created. '
             'Referral code is applied only when a brand-new customer is created; '
-            'ignored on existing phone login / bind.'
+            'ignored on existing phone login / bind. '
+            'When a non-empty referral_code is applied on create, the success body includes '
+            'additive `referral_attributed` (bool) and `referral_status_reason` (string|null).'
         ),
         responses={
-            200: OpenApiResponse(description='Unified auth success envelope.'),
+            200: OpenApiResponse(
+                description=(
+                    'Unified auth success envelope. May include referral_attributed / '
+                    'referral_status_reason when referral_code was present on create.'
+                )
+            ),
             400: OpenApiResponse(description='Invalid OTP or referral error.'),
             409: OpenApiResponse(description='Phone already linked to another account.'),
         },

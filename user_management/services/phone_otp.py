@@ -204,9 +204,12 @@ def verify_phone_otp(
             profile.save(update_fields=['is_phone_verified', 'phone_verified_at', 'updated_at'])
 
     # Referral only for brand-new customers; ignore code on existing login.
+    referral_fields = None
     if created and (referral_code or '').strip():
+        from referrals.models import ReferralAttributionEvent
         from referrals.services.attribution import attribute_on_signup
         from referrals.services.eligibility import ReferralError
+        from referrals.services.events import record_attribution_event
 
         try:
             attribute_on_signup(
@@ -214,16 +217,30 @@ def verify_phone_otp(
                 referral_code=referral_code,
                 client_type=client_type or 'mobile',
             )
+            record_attribution_event(
+                customer=profile,
+                referral_code=referral_code,
+                client_type=client_type or 'mobile',
+                stage=ReferralAttributionEvent.Stage.PHONE,
+                outcome=ReferralAttributionEvent.Outcome.ATTRIBUTED,
+            )
+            referral_fields = {
+                'referral_attributed': True,
+                'referral_status_reason': None,
+            }
         except ReferralError as exc:
             raise PhoneOtpError(exc.message, code=exc.code) from exc
 
-    return build_customer_auth_response(
+    response = build_customer_auth_response(
         user,
         auth_provider='phone',
         device_token=device_token,
         platform=platform,
         user_agent=user_agent,
     )
+    if referral_fields is not None:
+        response.update(referral_fields)
+    return response
 
 
 def _consume_valid_otp(phone: str, normalized_code: str) -> None:

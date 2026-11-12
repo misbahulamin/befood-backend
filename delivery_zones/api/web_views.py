@@ -5,11 +5,17 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from delivery_zones.models import DeliverySubLocation
+
 from delivery_zones.api.serializers import (
     DeliveryLocationReorderSerializer,
     DeliveryLocationSerializer,
     DeliveryLocationUpdateSerializer,
     DeliveryLocationWriteSerializer,
+    DeliverySubLocationReorderSerializer,
+    DeliverySubLocationSerializer,
+    DeliverySubLocationUpdateSerializer,
+    DeliverySubLocationWriteSerializer,
     DeliveryZoneAssignRiderSerializer,
     DeliveryZoneSerializer,
     DeliveryZoneUpdateSerializer,
@@ -23,7 +29,19 @@ from delivery_zones.services.locations import (
     list_locations,
     update_location,
 )
-from delivery_zones.services.priority import reorder_location_priorities
+from delivery_zones.services.geo_analytics import build_geo_analytics_matrix
+from delivery_zones.services.ops import build_ops_summary, parse_ops_query
+from delivery_zones.services.priority import (
+    reorder_location_priorities,
+    reorder_sub_location_priorities,
+)
+from delivery_zones.services.sub_locations import (
+    create_sub_location,
+    delete_sub_location_if_empty,
+    get_sub_location_by_public_id,
+    list_sub_locations,
+    update_sub_location,
+)
 from delivery_zones.services.zones import (
     assign_delivery_man,
     clear_delivery_man,
@@ -39,7 +57,9 @@ from user_management.api.permissions import IsVerifiedAdmin
 
 ZONE_TAG = 'Admin Delivery Zones'
 LOCATION_TAG = 'Admin Delivery Locations'
+SUB_LOCATION_TAG = 'Admin Delivery Sub-Locations'
 OPS_TAG = 'Admin Delivery Zone Ops'
+ANALYTICS_TAG = 'Admin Delivery Geo Analytics'
 
 
 class DeliveryZonePagination(PageNumberPagination):
@@ -48,11 +68,32 @@ class DeliveryZonePagination(PageNumberPagination):
     max_page_size = 100
 
 
+def _attach_zone_counts(zone) -> None:
+    zone.location_count = zone.locations.count()
+    zone.sub_location_count = DeliverySubLocation.objects.filter(location__zone=zone).count()
+
+
 def _error_response(exc, http_status=status.HTTP_422_UNPROCESSABLE_ENTITY):
     code = getattr(exc, 'code', 'DELIVERY_ZONE_ERROR')
-    if code in {'ZONE_NOT_FOUND', 'LOCATION_NOT_FOUND', 'DELIVERY_MAN_NOT_FOUND'}:
+    if code in {
+        'ZONE_NOT_FOUND',
+        'LOCATION_NOT_FOUND',
+        'SUB_LOCATION_NOT_FOUND',
+        'DELIVERY_MAN_NOT_FOUND',
+    }:
         http_status = status.HTTP_404_NOT_FOUND
-    elif code == 'UNSUPPORTED_FILTER':
+    elif code in {
+        'UNSUPPORTED_FILTER',
+        'DATE_RANGE_REQUIRED',
+        'INVALID_DATE',
+        'INVALID_DATE_RANGE',
+        'DATE_RANGE_TOO_LONG',
+        'INVALID_MEAL_PERIOD',
+        'INVALID_PUBLIC_ID',
+        'SERVICE_DATE_REQUIRED',
+        'INVALID_SERVICE_DATE',
+        'MEAL_PERIOD_REQUIRED',
+    }:
         http_status = status.HTTP_400_BAD_REQUEST
     elif code == 'DELIVERY_MAN_ALREADY_ASSIGNED':
         http_status = status.HTTP_409_CONFLICT
@@ -86,7 +127,10 @@ class DeliveryZoneListCreateView(APIView):
         qs = list_zones(
             status=request.query_params.get('status') or None,
             q=request.query_params.get('q') or None,
-        ).annotate(location_count=Count('locations'))
+        ).annotate(
+            location_count=Count('locations', distinct=True),
+            sub_location_count=Count('locations__sub_locations', distinct=True),
+        )
         paginator = DeliveryZonePagination()
         page = paginator.paginate_queryset(qs, request)
         return paginator.get_paginated_response(
@@ -107,7 +151,15 @@ class DeliveryZoneListCreateView(APIView):
             zone = create_zone(**serializer.validated_data)
         except DeliveryZoneError as exc:
             return _error_response(exc)
-        zone = list_zones().filter(pk=zone.pk).annotate(location_count=Count('locations')).get()
+        zone = (
+            list_zones()
+            .filter(pk=zone.pk)
+            .annotate(
+                location_count=Count('locations', distinct=True),
+                sub_location_count=Count('locations__sub_locations', distinct=True),
+            )
+            .get()
+        )
         return Response(DeliveryZoneSerializer(zone).data, status=status.HTTP_201_CREATED)
 
 
@@ -124,7 +176,7 @@ class DeliveryZoneDetailView(APIView):
             zone = get_zone_by_public_id(public_id)
         except DeliveryZoneError as exc:
             return _error_response(exc)
-        zone.location_count = zone.locations.count()
+        _attach_zone_counts(zone)
         return Response(DeliveryZoneSerializer(zone).data)
 
     @extend_schema(
@@ -141,7 +193,7 @@ class DeliveryZoneDetailView(APIView):
             zone = update_zone(zone, **serializer.validated_data)
         except DeliveryZoneError as exc:
             return _error_response(exc)
-        zone.location_count = zone.locations.count()
+        _attach_zone_counts(zone)
         return Response(DeliveryZoneSerializer(zone).data)
 
     @extend_schema(
@@ -181,7 +233,7 @@ class DeliveryZoneAssignRiderView(APIView):
                 zone = assign_delivery_man(zone, delivery_man_public_id=rider_id)
         except DeliveryZoneError as exc:
             return _error_response(exc)
-        zone.location_count = zone.locations.count()
+        _attach_zone_counts(zone)
         return Response(DeliveryZoneSerializer(zone).data)
 
 
@@ -221,7 +273,7 @@ class DeliveryZoneDeactivateView(APIView):
             zone = deactivate_zone(get_zone_by_public_id(public_id))
         except DeliveryZoneError as exc:
             return _error_response(exc)
-        zone.location_count = zone.locations.count()
+        _attach_zone_counts(zone)
         return Response(DeliveryZoneSerializer(zone).data)
 
 
@@ -322,7 +374,7 @@ class DeliveryZoneOpsSummaryView(APIView):
     @extend_schema(
         tags=[OPS_TAG],
         operation_id='adminDeliveryZoneOpsSummary',
-        summary='Zone/location delivery counts and Delivery Man workload',
+        summary='Zone/location/sub-location delivery counts and Delivery Man workload',
         parameters=[
             OpenApiParameter(name='service_date', required=True, type=str),
             OpenApiParameter(name='meal_period', required=True, type=str),
@@ -336,3 +388,151 @@ class DeliveryZoneOpsSummaryView(APIView):
         except DeliveryZoneError as exc:
             return _error_response(exc)
         return Response(payload)
+
+
+class DeliveryGeoAnalyticsMatrixView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=[ANALYTICS_TAG],
+        operation_id='adminDeliveryGeoAnalyticsMatrix',
+        summary='Period geo analytics matrix (zone → location → sub-location)',
+        description=(
+            'Verified admin only. Required from/to (Asia/Dhaka, max 366 days). '
+            'Optional meal_period and hierarchy filters. Rankings included in the same payload.'
+        ),
+        parameters=[
+            OpenApiParameter(name='from', required=True, type=str),
+            OpenApiParameter(name='to', required=True, type=str),
+            OpenApiParameter(name='meal_period', required=False, type=str),
+            OpenApiParameter(name='zone_public_id', required=False, type=str),
+            OpenApiParameter(name='location_public_id', required=False, type=str),
+            OpenApiParameter(name='sub_location_public_id', required=False, type=str),
+        ],
+        responses={200: OpenApiResponse(description='Geo analytics matrix + rankings')},
+    )
+    def get(self, request):
+        try:
+            payload = build_geo_analytics_matrix(request.query_params)
+        except DeliveryZoneError as exc:
+            return _error_response(exc)
+        return Response(payload)
+
+
+class DeliverySubLocationListCreateView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=[SUB_LOCATION_TAG],
+        operation_id='adminDeliverySubLocationList',
+        parameters=[
+            OpenApiParameter(name='location_public_id', required=False, type=str),
+            OpenApiParameter(name='zone_public_id', required=False, type=str),
+            OpenApiParameter(name='status', required=False, type=str),
+            OpenApiParameter(name='q', required=False, type=str),
+            OpenApiParameter(name='page', required=False, type=int),
+            OpenApiParameter(name='page_size', required=False, type=int),
+        ],
+        responses={200: DeliverySubLocationSerializer(many=True)},
+    )
+    def get(self, request):
+        qs = list_sub_locations(
+            location_public_id=request.query_params.get('location_public_id') or None,
+            zone_public_id=request.query_params.get('zone_public_id') or None,
+            status=request.query_params.get('status') or None,
+            q=request.query_params.get('q') or None,
+        )
+        paginator = DeliveryZonePagination()
+        page = paginator.paginate_queryset(qs, request)
+        return paginator.get_paginated_response(
+            DeliverySubLocationSerializer(page, many=True).data
+        )
+
+    @extend_schema(
+        tags=[SUB_LOCATION_TAG],
+        operation_id='adminDeliverySubLocationCreate',
+        request=DeliverySubLocationWriteSerializer,
+        responses={201: DeliverySubLocationSerializer},
+    )
+    def post(self, request):
+        serializer = DeliverySubLocationWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            sub = create_sub_location(**serializer.validated_data)
+        except DeliveryZoneError as exc:
+            return _error_response(exc)
+        sub = get_sub_location_by_public_id(sub.public_id)
+        return Response(
+            DeliverySubLocationSerializer(sub).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class DeliverySubLocationDetailView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=[SUB_LOCATION_TAG],
+        operation_id='adminDeliverySubLocationRetrieve',
+        responses={200: DeliverySubLocationSerializer},
+    )
+    def get(self, request, public_id):
+        try:
+            sub = get_sub_location_by_public_id(public_id)
+        except DeliveryZoneError as exc:
+            return _error_response(exc)
+        return Response(DeliverySubLocationSerializer(sub).data)
+
+    @extend_schema(
+        tags=[SUB_LOCATION_TAG],
+        operation_id='adminDeliverySubLocationUpdate',
+        request=DeliverySubLocationUpdateSerializer,
+        responses={200: DeliverySubLocationSerializer},
+    )
+    def patch(self, request, public_id):
+        serializer = DeliverySubLocationUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        try:
+            sub = get_sub_location_by_public_id(public_id)
+            sub = update_sub_location(sub, **serializer.validated_data)
+            sub = get_sub_location_by_public_id(sub.public_id)
+        except DeliveryZoneError as exc:
+            return _error_response(exc)
+        return Response(DeliverySubLocationSerializer(sub).data)
+
+    @extend_schema(
+        tags=[SUB_LOCATION_TAG],
+        operation_id='adminDeliverySubLocationDelete',
+        responses={204: OpenApiResponse(description='Deleted')},
+    )
+    def delete(self, request, public_id):
+        try:
+            sub = get_sub_location_by_public_id(public_id)
+            delete_sub_location_if_empty(sub)
+        except DeliveryZoneError as exc:
+            return _error_response(exc)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DeliveryLocationSubLocationReorderView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=[SUB_LOCATION_TAG],
+        operation_id='adminDeliveryLocationSubLocationReorder',
+        summary='Rewrite every sub-location priority under a location',
+        request=DeliverySubLocationReorderSerializer,
+        responses={200: DeliverySubLocationSerializer(many=True)},
+    )
+    def patch(self, request, public_id):
+        serializer = DeliverySubLocationReorderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            location = get_location_by_public_id(public_id)
+            reorder_sub_location_priorities(
+                location, serializer.validated_data['sub_locations']
+            )
+        except DeliveryZoneError as exc:
+            return _error_response(exc)
+        subs = list_sub_locations(location_public_id=public_id)
+        return Response(DeliverySubLocationSerializer(subs, many=True).data)

@@ -30,6 +30,25 @@ Auth: verified admin. Prefer `X-Client-Type: web`.
 
 Commission percent for Admin Settings UI: see `referral-settings-admin.md`.
 
+## Conversion Funnel (analytics)
+
+| UI label (typical) | API field | Meaning |
+|--------------------|-----------|---------|
+| Validations | `total_validations` | All validate API events |
+| Valid OK | `total_successful_validations` | Successful validate **attempts** (not unique users) |
+| Unique Valid OK codes | `unique_successful_validation_codes` | Distinct codes among Valid OK |
+| Registrations | `total_successful_registrations` | Count of `ReferralRelationship` |
+| Subscribers | `total_paid_subscribers_from_referral` | Referred customers with an **active** meal subscription |
+| Conversion rate | `conversion_rate` | Registrations / Valid OK attempts (attempt-based) |
+| Attribution vs unique | `attribution_rate_vs_unique_ok` | Registrations / unique Valid OK codes |
+| Attribution skips | `attribution_skips_by_reason` | Map of skip `error_code` → count |
+
+### Interpreting Valid OK ≫ Registrations
+
+This usually means clients validated codes (invite page / retries) without completing a **mobile** brand-new create that re-sends `referral_code`. It is not automatically a commission bug.
+
+Also check `attribution_skips_by_reason` (for example `REFERRER_INACTIVE`, `REFERRAL_MOBILE_ONLY`) and Django admin `ReferralAttributionEvent` rows for email finalize fail-closed skips.
+
 ## Investigating a missing commission
 
 1. Confirm a `ReferralRelationship` exists for the referred customer.

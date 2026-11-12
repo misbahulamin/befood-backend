@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from delivery_zones.models import DeliveryLocation, DeliveryZone
+from delivery_zones.models import DeliveryLocation, DeliverySubLocation, DeliveryZone
 
 
 class DeliveryManSummarySerializer(serializers.Serializer):
@@ -25,9 +25,18 @@ class LocationSummarySerializer(serializers.Serializer):
     status = serializers.CharField(required=False)
 
 
+class SubLocationSummarySerializer(serializers.Serializer):
+    public_id = serializers.UUIDField()
+    name = serializers.CharField()
+    priority = serializers.IntegerField()
+    status = serializers.CharField(required=False)
+    is_default = serializers.BooleanField(required=False)
+
+
 class DeliveryZoneSerializer(serializers.ModelSerializer):
     assigned_delivery_man = serializers.SerializerMethodField()
     location_count = serializers.SerializerMethodField()
+    sub_location_count = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryZone
@@ -39,6 +48,7 @@ class DeliveryZoneSerializer(serializers.ModelSerializer):
             'status',
             'assigned_delivery_man',
             'location_count',
+            'sub_location_count',
             'created_at',
             'updated_at',
         )
@@ -60,6 +70,12 @@ class DeliveryZoneSerializer(serializers.ModelSerializer):
         if annotated is not None:
             return annotated
         return obj.locations.count()
+
+    def get_sub_location_count(self, obj):
+        annotated = getattr(obj, 'sub_location_count', None)
+        if annotated is not None:
+            return int(annotated)
+        return DeliverySubLocation.objects.filter(location__zone=obj).count()
 
 
 class DeliveryZoneWriteSerializer(serializers.Serializer):
@@ -89,6 +105,7 @@ class DeliveryZoneAssignRiderSerializer(serializers.Serializer):
 class DeliveryLocationSerializer(serializers.ModelSerializer):
     zone = serializers.SerializerMethodField()
     customer_count = serializers.SerializerMethodField()
+    sub_location_count = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryLocation
@@ -101,6 +118,7 @@ class DeliveryLocationSerializer(serializers.ModelSerializer):
             'centroid_latitude',
             'centroid_longitude',
             'customer_count',
+            'sub_location_count',
             'created_at',
             'updated_at',
         )
@@ -121,6 +139,12 @@ class DeliveryLocationSerializer(serializers.ModelSerializer):
         if annotated is not None:
             return int(annotated)
         return obj.customers.count()
+
+    def get_sub_location_count(self, obj):
+        annotated = getattr(obj, 'sub_location_count', None)
+        if annotated is not None:
+            return int(annotated)
+        return obj.sub_locations.count()
 
 
 class DeliveryLocationWriteSerializer(serializers.Serializer):
@@ -165,8 +189,118 @@ class DeliveryLocationReorderSerializer(serializers.Serializer):
     locations = DeliveryLocationReorderItemSerializer(many=True, allow_empty=False)
 
 
+class DeliverySubLocationSerializer(serializers.ModelSerializer):
+    location = serializers.SerializerMethodField()
+    zone = serializers.SerializerMethodField()
+    customer_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DeliverySubLocation
+        fields = (
+            'public_id',
+            'name',
+            'priority',
+            'status',
+            'is_default',
+            'location',
+            'zone',
+            'centroid_latitude',
+            'centroid_longitude',
+            'customer_count',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = fields
+
+    def get_location(self, obj):
+        loc = obj.location
+        return {
+            'public_id': str(loc.public_id),
+            'name': loc.name,
+            'priority': loc.priority,
+            'status': loc.status,
+        }
+
+    def get_zone(self, obj):
+        zone = obj.location.zone
+        return {
+            'public_id': str(zone.public_id),
+            'name': zone.name,
+            'code': zone.code,
+            'priority': zone.priority,
+            'status': zone.status,
+        }
+
+    def get_customer_count(self, obj):
+        annotated = getattr(obj, 'customer_count', None)
+        if annotated is not None:
+            return int(annotated)
+        return obj.customers.count()
+
+
+class DeliverySubLocationWriteSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255)
+    location_public_id = serializers.UUIDField()
+    priority = serializers.IntegerField(required=False, min_value=1)
+    status = serializers.ChoiceField(
+        choices=DeliverySubLocation.Status.choices,
+        required=False,
+        default=DeliverySubLocation.Status.ACTIVE,
+    )
+    is_default = serializers.BooleanField(required=False, default=False)
+    centroid_latitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+    centroid_longitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+
+
+class DeliverySubLocationUpdateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255, required=False)
+    location_public_id = serializers.UUIDField(required=False)
+    priority = serializers.IntegerField(required=False, min_value=1)
+    status = serializers.ChoiceField(
+        choices=DeliverySubLocation.Status.choices,
+        required=False,
+    )
+    is_default = serializers.BooleanField(required=False)
+    centroid_latitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+    centroid_longitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+
+
+class DeliverySubLocationReorderItemSerializer(serializers.Serializer):
+    public_id = serializers.UUIDField()
+    priority = serializers.IntegerField(min_value=1)
+
+
+class DeliverySubLocationReorderSerializer(serializers.Serializer):
+    sub_locations = DeliverySubLocationReorderItemSerializer(many=True, allow_empty=False)
+
+
 class CustomerDeliveryLocationAssignSerializer(serializers.Serializer):
+    delivery_sub_location_public_id = serializers.UUIDField(
+        required=False, allow_null=True
+    )
     delivery_location_public_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        has_sub = 'delivery_sub_location_public_id' in attrs
+        has_loc = 'delivery_location_public_id' in attrs
+        if not has_sub and not has_loc:
+            raise serializers.ValidationError(
+                {
+                    'delivery_sub_location_public_id': [
+                        'Provide delivery_sub_location_public_id '
+                        '(or delivery_location_public_id during Bridge).'
+                    ]
+                }
+            )
+        return attrs
 
 
 class DeliverymanBoardQuerySerializer(serializers.Serializer):

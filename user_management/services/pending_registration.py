@@ -124,6 +124,18 @@ def upsert_pending_registration(validated_data) -> PendingCustomerRegistration:
         if profile is not None:
             referrer_snapshot_id = profile.customer_id
         referral_intent_created_at = timezone.now()
+    else:
+        # Preserve prior intent when a later register omit the code.
+        existing = (
+            PendingCustomerRegistration.objects.filter(email__iexact=email)
+            .order_by('-created_at')
+            .first()
+        )
+        if existing is not None and (existing.referral_code or '').strip():
+            referral_code = (existing.referral_code or '').strip().upper()
+            referral_client_type = (existing.referral_client_type or '').strip().lower()
+            referrer_snapshot_id = existing.referrer_snapshot_id
+            referral_intent_created_at = existing.referral_intent_created_at
 
     defaults = {
         'password_hash': password_hash,
@@ -360,8 +372,10 @@ def finalize_pending_registration(pending: PendingCustomerRegistration) -> User:
 
     ensure_referral_profile(profile)
     if referral_code:
+        from referrals.models import ReferralAttributionEvent
         from referrals.services.attribution import attribute_on_signup
         from referrals.services.eligibility import ReferralError
+        from referrals.services.events import record_attribution_event
 
         try:
             attribute_on_signup(
@@ -369,14 +383,31 @@ def finalize_pending_registration(pending: PendingCustomerRegistration) -> User:
                 referral_code=referral_code,
                 client_type=referral_client_type,
             )
-        except ReferralError:
-            # Account creation succeeds; attribution fails closed when ineligible.
-            import logging
-
-            logging.getLogger(__name__).info(
-                'Referral attribution skipped/failed for customer_id=%s',
-                profile.pk,
+            record_attribution_event(
+                customer=profile,
+                referral_code=referral_code,
+                client_type=referral_client_type,
+                stage=ReferralAttributionEvent.Stage.FINALIZE,
+                outcome=ReferralAttributionEvent.Outcome.ATTRIBUTED,
             )
+            user._referral_outcome = {
+                'referral_attributed': True,
+                'referral_status_reason': None,
+            }
+        except ReferralError as exc:
+            # Account creation succeeds; attribution fails closed when ineligible.
+            record_attribution_event(
+                customer=profile,
+                referral_code=referral_code,
+                client_type=referral_client_type,
+                stage=ReferralAttributionEvent.Stage.FINALIZE,
+                outcome=ReferralAttributionEvent.Outcome.SKIPPED,
+                error_code=exc.code,
+            )
+            user._referral_outcome = {
+                'referral_attributed': False,
+                'referral_status_reason': exc.code,
+            }
 
     return user
 

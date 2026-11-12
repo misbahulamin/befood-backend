@@ -3,7 +3,7 @@ from datetime import date
 
 from django.db.models import Q
 
-from delivery_zones.models import DeliveryLocation, DeliveryZone
+from delivery_zones.models import DeliveryLocation, DeliverySubLocation, DeliveryZone
 from delivery_zones.services.errors import DeliveryZoneError
 from orders.models import OrderDelivery
 from orders.services.subscription_parent import live_delivery_q
@@ -24,9 +24,9 @@ def _parse_service_date(raw) -> date:
         ) from exc
 
 
-def _has_location_q() -> Q:
-    return Q(subscription__customer__delivery_location__isnull=False) | Q(
-        order__customer__delivery_location__isnull=False
+def _has_sub_location_q() -> Q:
+    return Q(subscription__customer__delivery_sub_location__isnull=False) | Q(
+        order__customer__delivery_sub_location__isnull=False
     )
 
 
@@ -43,44 +43,54 @@ def build_ops_summary(*, service_date: date, meal_period: str) -> dict:
         meal_period=meal_period,
     )
 
-    unassigned_count = base.exclude(_has_location_q()).count()
+    unassigned_count = base.exclude(_has_sub_location_q()).count()
 
-    loc_counts: dict[int, dict[str, int]] = defaultdict(
-        lambda: {'scheduled': 0, 'delivered': 0, 'skipped': 0, 'missed': 0, 'total': 0}
-    )
+    empty_counts = lambda: {
+        'scheduled': 0,
+        'delivered': 0,
+        'skipped': 0,
+        'missed': 0,
+        'total': 0,
+    }
+    sub_counts: dict[int, dict[str, int]] = defaultdict(empty_counts)
 
-    for row in base.filter(_has_location_q()).values(
+    for row in base.filter(_has_sub_location_q()).values(
         'status',
-        'subscription__customer__delivery_location_id',
-        'order__customer__delivery_location_id',
+        'subscription__customer__delivery_sub_location_id',
+        'order__customer__delivery_sub_location_id',
     ):
-        loc_id = (
-            row['subscription__customer__delivery_location_id']
-            or row['order__customer__delivery_location_id']
+        sub_id = (
+            row['subscription__customer__delivery_sub_location_id']
+            or row['order__customer__delivery_sub_location_id']
         )
-        if not loc_id:
+        if not sub_id:
             continue
         status_key = row['status']
-        loc_counts[loc_id]['total'] += 1
-        if status_key in loc_counts[loc_id]:
-            loc_counts[loc_id][status_key] += 1
+        sub_counts[sub_id]['total'] += 1
+        if status_key in sub_counts[sub_id]:
+            sub_counts[sub_id][status_key] += 1
 
-    locations = {
-        loc.pk: loc
-        for loc in DeliveryLocation.objects.select_related(
-            'zone',
-            'zone__assigned_delivery_man',
-            'zone__assigned_delivery_man__user',
-        ).filter(pk__in=loc_counts.keys())
+    sub_locations = {
+        sub.pk: sub
+        for sub in DeliverySubLocation.objects.select_related(
+            'location',
+            'location__zone',
+            'location__zone__assigned_delivery_man',
+            'location__zone__assigned_delivery_man__user',
+        ).filter(pk__in=sub_counts.keys())
     }
 
     zone_buckets: dict[int, dict] = {}
-    for loc_id, counts in loc_counts.items():
-        loc = locations.get(loc_id)
-        if loc is None:
+    location_buckets: dict[int, dict] = {}
+
+    for sub_id, counts in sub_counts.items():
+        sub = sub_locations.get(sub_id)
+        if sub is None:
             continue
+        loc = sub.location
         zone = loc.zone
-        bucket = zone_buckets.setdefault(
+
+        zone_bucket = zone_buckets.setdefault(
             zone.pk,
             {
                 'zone': zone,
@@ -90,16 +100,36 @@ def build_ops_summary(*, service_date: date, meal_period: str) -> dict:
                 'missed': 0,
                 'total': 0,
                 'locations': [],
+                '_loc_map': {},
             },
         )
         for key in ('scheduled', 'delivered', 'skipped', 'missed', 'total'):
-            bucket[key] += counts[key]
-        bucket['locations'].append(
-            {
+            zone_bucket[key] += counts[key]
+
+        loc_bucket = zone_bucket['_loc_map'].get(loc.pk)
+        if loc_bucket is None:
+            loc_bucket = {
                 'public_id': str(loc.public_id),
                 'name': loc.name,
                 'priority': loc.priority,
                 'status': loc.status,
+                'counts': empty_counts(),
+                'sub_locations': [],
+            }
+            zone_bucket['_loc_map'][loc.pk] = loc_bucket
+            zone_bucket['locations'].append(loc_bucket)
+            location_buckets[loc.pk] = loc_bucket
+
+        for key in ('scheduled', 'delivered', 'skipped', 'missed', 'total'):
+            loc_bucket['counts'][key] += counts[key]
+
+        loc_bucket['sub_locations'].append(
+            {
+                'public_id': str(sub.public_id),
+                'name': sub.name,
+                'priority': sub.priority,
+                'status': sub.status,
+                'is_default': bool(sub.is_default),
                 'counts': dict(counts),
             }
         )
@@ -117,6 +147,7 @@ def build_ops_summary(*, service_date: date, meal_period: str) -> dict:
                 'missed': 0,
                 'total': 0,
                 'locations': [],
+                '_loc_map': {},
             },
         )
 
@@ -129,6 +160,9 @@ def build_ops_summary(*, service_date: date, meal_period: str) -> dict:
         bucket = zone_buckets[zone_id]
         zone = bucket['zone']
         bucket['locations'].sort(key=lambda x: (x['priority'], x['name']))
+        for loc_entry in bucket['locations']:
+            loc_entry['sub_locations'].sort(key=lambda x: (x['priority'], x['name']))
+        bucket.pop('_loc_map', None)
         rider = zone.assigned_delivery_man
         counts = {
             'scheduled': bucket['scheduled'],
@@ -188,6 +222,7 @@ def build_ops_summary(*, service_date: date, meal_period: str) -> dict:
         'service_date': service_date.isoformat(),
         'meal_period': meal_period,
         'unassigned_location_count': unassigned_count,
+        'unassigned_sub_location_count': unassigned_count,
         'zones': zones_out,
         'delivery_man_workload': workload,
     }

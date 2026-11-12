@@ -187,12 +187,124 @@ class CustomerSubscription(PublicIdMixin, models.Model):
         ]
         indexes = [
             models.Index(fields=['status', 'started_on']),
+            models.Index(fields=['status', 'cancel_effective_on']),
+            models.Index(fields=['status', 'cancelled_at']),
         ]
 
     def __str__(self):
         return (
             f'Subscription #{self.pk} - {self.meal_name_snapshot} '
             f'({self.status})'
+        )
+
+
+class SubscriptionCancellation(models.Model):
+    """Structured cancel reason for one subscription cancel event."""
+
+    class ReasonCode(models.TextChoices):
+        PRICE_TOO_HIGH = 'price_too_high', 'Price too high'
+        FOOD_TASTE = 'food_taste', 'Food taste'
+        FOOD_QUANTITY = 'food_quantity', 'Food quantity'
+        DELIVERY_LATE = 'delivery_late', 'Delivery late'
+        DELIVERY_AREA_NOT_COVERED = (
+            'delivery_area_not_covered',
+            'Delivery area not covered',
+        )
+        MOVING_AWAY = 'moving_away', 'Moving away'
+        EXAM_OR_VACATION = 'exam_or_vacation', 'Exam or vacation'
+        COOKING_MYSELF = 'cooking_myself', 'Cooking myself'
+        SWITCHED_COMPETITOR = 'switched_competitor', 'Switched competitor'
+        WALLET_TOPUP_HASSLE = 'wallet_topup_hassle', 'Wallet top-up hassle'
+        APP_PROBLEM = 'app_problem', 'App problem'
+        TEMPORARY_PAUSE = 'temporary_pause', 'Temporary pause'
+        OTHER = 'other', 'Other'
+        # Migration-only for historical cancels; reject from interactive APIs.
+        UNKNOWN = 'unknown', 'Unknown'
+
+    class CancelledBy(models.TextChoices):
+        CUSTOMER = 'customer', 'Customer'
+        ADMIN = 'admin', 'Admin'
+        SYSTEM = 'system', 'System'
+
+    subscription = models.OneToOneField(
+        CustomerSubscription,
+        on_delete=models.CASCADE,
+        related_name='cancellation',
+    )
+    customer = models.ForeignKey(
+        'user_management.CustomerProfile',
+        on_delete=models.CASCADE,
+        related_name='subscription_cancellations',
+    )
+    reason_code = models.CharField(
+        max_length=40,
+        choices=ReasonCode.choices,
+        db_index=True,
+    )
+    reason_text = models.TextField(blank=True)
+    cancelled_by = models.CharField(
+        max_length=20,
+        choices=CancelledBy.choices,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['reason_code', 'created_at']),
+            models.Index(fields=['customer', 'created_at']),
+        ]
+
+    def __str__(self):
+        return (
+            f'Cancellation #{self.pk} subscription={self.subscription_id} '
+            f'reason={self.reason_code}'
+        )
+
+
+class ChurnFollowUp(PublicIdMixin, models.Model):
+    """Admin win-back outreach tracking for a churned customer."""
+
+    class Status(models.TextChoices):
+        NOT_CONTACTED = 'not_contacted', 'Not contacted'
+        CONTACTED = 'contacted', 'Contacted'
+        INTERESTED = 'interested', 'Interested'
+        WON_BACK = 'won_back', 'Won back'
+        LOST = 'lost', 'Lost'
+
+    customer = models.ForeignKey(
+        'user_management.CustomerProfile',
+        on_delete=models.CASCADE,
+        related_name='churn_follow_ups',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.NOT_CONTACTED,
+        db_index=True,
+    )
+    note = models.TextField(blank=True)
+    admin = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='churn_follow_ups',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at', '-created_at']
+        indexes = [
+            models.Index(fields=['customer', 'status']),
+            models.Index(fields=['status', 'updated_at']),
+        ]
+
+    def __str__(self):
+        return (
+            f'ChurnFollowUp #{self.pk} customer={self.customer_id} '
+            f'status={self.status}'
         )
 
 
@@ -327,6 +439,14 @@ class OrderDelivery(PublicIdMixin, models.Model):
         null=True,
         blank=True,
         related_name='attributed_deliveries',
+    )
+    logistics_sub_location = models.ForeignKey(
+        'delivery_zones.DeliverySubLocation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='attributed_deliveries',
+        help_text='Optional snapshot of sub-location at rider completion (not backfilled historically).',
     )
     logistics_status = models.CharField(
         max_length=32,

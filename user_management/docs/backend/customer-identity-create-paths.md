@@ -32,6 +32,22 @@ Confirmed: bind sets `phone` + verification flags on the authenticated profile; 
 - Anonymous verify: phone hit → login; miss → create once + referral only then
 - Referral UI only when identifier is new (`referral_input_allowed`)
 
+## Referral attribution (related)
+
+See also:
+
+- `referrals/docs/frontend/referral-mobile-integration.md` — persist code until create; envelope fields
+- `referrals/docs/frontend/referral-customer-web.md` — invite → mobile deep-link; no web attribution
+- `referrals/docs/frontend/referral-admin-panel.md` — Conversion Funnel field meanings
+
+Rules that explain “registered but not referred”:
+
+1. `POST /referrals/validate/` never creates a relationship.
+2. Attribution requires brand-new create + `referral_code` + `X-Client-Type: mobile`.
+3. Existing phone/email/social login ignores referral codes.
+4. Email finalize may create the account while skipping attribution (`referral_attributed=false` + `ReferralAttributionEvent`).
+5. Pending email re-register without a code **preserves** a previously stored referral intent.
+
 ## Regression scenario (tests)
 
 Email account (phone null) + authenticated session hitting anonymous phone verify must **not** create a second `User`.

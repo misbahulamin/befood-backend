@@ -123,6 +123,8 @@ Uses `Decimal` (not float). Quantities serialized as decimal strings.
 
 When `service_date` and `meal_period` are omitted, the server uses the default kitchen slot (today + lunch/dinner from meal-off clock). `package_public_id` scopes both `packages[]` and ingredient aggregation. Unknown package → `404`.
 
+**Diagnostic field `excluded_other_period_count`:** count of **active** `CustomerSubscription` rows whose `meal_period_snapshot` does **not** include the requested slot (`lunch` excludes dinner-only; `dinner` excludes lunch-only; `both` is never excluded). This does **not** change `expected_meal_count` or `final_cooking_count`. Admin UI may show: `active_subscribers − excluded_other_period_count = expected` when period filter is the only difference (e.g. 106 active − 2 dinner-only = 104 expected for Lunch). Dashboard `active_subscribers` remains the all-period active total from `/dashboard/summary/`.
+
 **Success 200**
 
 ```json
@@ -132,6 +134,7 @@ When `service_date` and `meal_period` are omitted, the server uses the default k
   "confirmation_status": "confirmed",
   "expected_meal_count": 13,
   "meal_off_count": 0,
+  "excluded_other_period_count": 2,
   "final_cooking_count": 13,
   "total_customers": 13,
   "packages": [

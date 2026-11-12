@@ -58,7 +58,11 @@ Allowlisted only; unknown keys → `400`.
 | `has_wallet` | Customer has wallet row |
 | `has_pending_recharge` | Pending wallet recharge txn exists |
 | `subscription_expiring_soon` | Active sub with `cancel_effective_on` within 14 days |
-| `inactive_subscription` | Has subscription history but no active subscription |
+| `inactive_subscription` | Has subscription history but no active subscription (overlap: prefer `lifecycle=unsubscribed` for new UI) |
+| `lifecycle` | `active` \| `at_risk` \| `unsubscribed` \| `never_subscribed` \| `won_back` |
+| `churned_from` / `churned_to` | Inclusive Asia/Dhaka churn date range (`YYYY-MM-DD`) |
+| `cancel_reason` | Latest cancellation `reason_code` |
+| `package` | Meal package public id (active or last subscription) |
 | `meal_public_id` / `package_id` | Active subscription or legacy active order package |
 | `registered_from` / `registered_to` | `User.date_joined` date range |
 | `sort` | `date_joined`, `-date_joined` (default), `created_at`, `-created_at`, `email`, `-email` |

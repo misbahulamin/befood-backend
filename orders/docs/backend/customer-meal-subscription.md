@@ -27,7 +27,7 @@ Example: lunch cutoff `02:00`, subscribe at `03:00` on a `both` plan → today�
 | Customer | `POST` | `/api/v1/subscriptions/` | Subscribe (`plan_public_id`, optional `meal_preference`, `quantity`) |
 | Customer | `GET` | `/api/v1/subscriptions/current/` | Active subscription or null |
 | Customer | `GET` | `/api/v1/subscriptions/{public_id}/` | Own detail + slots |
-| Customer | `POST` | `/api/v1/subscriptions/current/cancel/` | Cancel; soft-skip slots still inside meal-off window; preserve past-cutoff same-day slots |
+| Customer | `POST` | `/api/v1/subscriptions/current/cancel/` | Cancel with required `reason_code` (+ optional `reason_text`); soft-skip slots still inside meal-off window; preserve past-cutoff same-day slots |
 | Customer | `POST` | `/orders/` | **Retired** — always `409 SUBSCRIBE_REQUIRED` |
 | Customer | `GET` | `/orders/orderable-months/` | **Retired** — same `409` |
 | Customer | `GET` | `/orders/current-package/` | Active subscription payload (compat) |

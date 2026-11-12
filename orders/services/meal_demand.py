@@ -495,6 +495,24 @@ def _package_demand_dict(row: PackageDemandRow) -> dict[str, Any]:
     }
 
 
+def count_excluded_other_period_subscriptions(meal_period: str) -> int:
+    """Active subscriptions whose plan snapshot does not include ``meal_period``.
+
+    Diagnostic only: does not change expected/cook demand formulas. A lunch slot
+    excludes dinner-only actives; dinner excludes lunch-only; ``both`` is never
+    excluded for either slot.
+    """
+    from orders.models import CustomerSubscription
+
+    if meal_period not in ('lunch', 'dinner'):
+        return 0
+    return (
+        CustomerSubscription.objects.filter(status=CustomerSubscription.Status.ACTIVE)
+        .exclude(meal_period_snapshot__in=(meal_period, 'both'))
+        .count()
+    )
+
+
 def build_kitchen_requirement(
     service_date: date,
     meal_period: str,
@@ -519,6 +537,9 @@ def build_kitchen_requirement(
         'meal_off_count': demand.meal_off_count,
         'customer_meal_off_count': demand.meal_off_count,
         'low_balance_blocked_count': demand.low_balance_blocked_count,
+        'excluded_other_period_count': count_excluded_other_period_subscriptions(
+            demand.meal_period
+        ),
         'final_cooking_count': demand.final_cooking_count,
         'total_customers': demand.total_customers,
         'packages': [_package_demand_dict(row) for row in demand.packages],

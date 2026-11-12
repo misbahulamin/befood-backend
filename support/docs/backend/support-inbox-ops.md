@@ -41,12 +41,17 @@ Local tests use `InMemoryChannelLayer` automatically when `manage.py test` runs 
 python manage.py migrate support
 ```
 
-Created migration: `support/migrations/0001_support_conversation_message.py`
+Migrations:
+
+- `support/migrations/0001_support_conversation_message.py`
+- `support/migrations/0002_last_message_sender_nulls_last_ordering.py` — adds `last_message_sender`; replaces list index with `last_message_at DESC NULLS LAST, id DESC` on PostgreSQL (SQLite gets a plain composite index; ORM still orders nulls last)
 
 Models:
 
-- `SupportConversation` — one per `CustomerProfile`
+- `SupportConversation` — one per `CustomerProfile`; denormalized `last_message_sender` (`customer` \| `admin` \| null)
 - `SupportMessage` — immutable history
+
+Admin list defaults: exclude `last_message_at IS NULL` unless `include_empty=true`.
 
 ## ASGI / process model
 
@@ -82,9 +87,14 @@ Alternatively run **all** traffic through Daphne/Uvicorn (single ASGI service).
 
 `runserver` alone is not enough for multi-worker WS in production; use Daphne for `/ws/`.
 
-## WebSocket URL
+## WebSocket URLs
 
 ```text
+# Admin inbox fan-out (verified admin only; no conversation required)
+ws://<host>/ws/support/inbox/?token=<drf-token>
+wss://<host>/ws/support/inbox/?token=<drf-token>
+
+# Per-conversation chat
 ws://<host>/ws/support/<conversation_public_id>/?token=<drf-token>
 wss://<host>/ws/support/<conversation_public_id>/?token=<drf-token>
 ```

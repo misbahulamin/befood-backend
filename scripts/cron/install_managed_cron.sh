@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 AUTO_DELIVER_RUNNER="${PROJECT_DIR}/scripts/cron/run_auto_deliver.sh"
 WALLET_THRESHOLD_RUNNER="${PROJECT_DIR}/scripts/cron/run_wallet_threshold_check.sh"
+UNASSIGNED_DIGEST_RUNNER="${PROJECT_DIR}/scripts/cron/run_unassigned_delivery_digest.sh"
 
 BEGIN_MARK="# BEGIN BEFOOD-MANAGED"
 END_MARK="# END BEFOOD-MANAGED"
@@ -17,11 +18,13 @@ END_MARK="# END BEFOOD-MANAGED"
 # Wrappers resolve venv via scripts/cron/_cron_env.sh (sibling ../venv on production).
 chmod +x "${AUTO_DELIVER_RUNNER}" 2>/dev/null || true
 chmod +x "${WALLET_THRESHOLD_RUNNER}" 2>/dev/null || true
+chmod +x "${UNASSIGNED_DIGEST_RUNNER}" 2>/dev/null || true
 chmod +x "${SCRIPT_DIR}/install_managed_cron.sh" 2>/dev/null || true
 
 # UTC crontab hours (Asia/Dhaka business → UTC):
 #   Lunch 15:00 BD → 09:00 UTC | Dinner 23:00 BD → 17:00 UTC
 #   Wallet 08:00 BD → 02:00 UTC | Wallet 20:00 BD → 14:00 UTC
+#   Unassigned digest 18:00 BD → 12:00 UTC | 22:00 BD → 16:00 UTC
 MANAGED_BLOCK=$(cat <<EOF
 ${BEGIN_MARK}
 # Host cron timezone: UTC
@@ -32,6 +35,9 @@ ${BEGIN_MARK}
 # Wallet low-balance reminder + meal-stop + admin summary.
 0 2 * * * ${WALLET_THRESHOLD_RUNNER}
 0 14 * * * ${WALLET_THRESHOLD_RUNNER}
+# Active subscribers missing delivery_sub_location (admin digest).
+0 12 * * * ${UNASSIGNED_DIGEST_RUNNER} evening
+0 16 * * * ${UNASSIGNED_DIGEST_RUNNER} night
 ${END_MARK}
 EOF
 )
@@ -52,6 +58,7 @@ printf '%s\n' "${NEW_CRON}" | crontab -
 echo "Installed/updated BeFood managed cron jobs (UTC schedules; Asia/Dhaka business times)."
 echo "  Auto-deliver: 09:00/17:00 UTC (= 15:00/23:00 Asia/Dhaka)"
 echo "  Wallet-threshold: 02:00/14:00 UTC (= 08:00/20:00 Asia/Dhaka)"
+echo "  Unassigned-delivery digest: 12:00/16:00 UTC (= 18:00/22:00 Asia/Dhaka)"
 echo "  CRON_TZ is not used (host cron is UTC)."
 echo "Project: ${PROJECT_DIR}"
 crontab -l | sed -n "/${BEGIN_MARK}/,/${END_MARK}/p"

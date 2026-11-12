@@ -18,7 +18,10 @@ def get_location_by_public_id(public_id) -> DeliveryLocation:
                 'zone__assigned_delivery_man',
                 'zone__assigned_delivery_man__user',
             )
-            .annotate(customer_count=Count('customers', distinct=True))
+            .annotate(
+                customer_count=Count('customers', distinct=True),
+                sub_location_count=Count('sub_locations', distinct=True),
+            )
             .get(public_id=public_id)
         )
     except DeliveryLocation.DoesNotExist as exc:
@@ -32,7 +35,10 @@ def list_locations(*, zone_public_id=None, status: str | None = None, q: str | N
             'zone__assigned_delivery_man',
             'zone__assigned_delivery_man__user',
         )
-        .annotate(customer_count=Count('customers', distinct=True))
+        .annotate(
+            customer_count=Count('customers', distinct=True),
+            sub_location_count=Count('sub_locations', distinct=True),
+        )
         .order_by('zone__priority', 'priority', 'name', 'id')
     )
     if zone_public_id:
@@ -119,6 +125,16 @@ def create_location(
         },
     )
     location.save()
+    # Bridge/Contract: every location has a default sub-location for legacy assign mapping.
+    from delivery_zones.models import DeliverySubLocation
+
+    DeliverySubLocation.objects.create(
+        name=name,
+        location=location,
+        priority=1,
+        status=DeliverySubLocation.Status.ACTIVE,
+        is_default=True,
+    )
     return location
 
 
@@ -198,9 +214,22 @@ def deactivate_location(location: DeliveryLocation) -> DeliveryLocation:
 
 @transaction.atomic
 def delete_location_if_empty(location: DeliveryLocation) -> None:
+    # Bridge: customers may still hang off delivery_location during dual-write.
     if location.customers.exists():
         raise DeliveryZoneError(
             'Cannot delete a location that still has assigned customers. Reassign them first.',
             code='LOCATION_HAS_CUSTOMERS',
+        )
+    # Source of truth: customers assigned via any child sub-location.
+    if location.sub_locations.filter(customers__isnull=False).exists():
+        raise DeliveryZoneError(
+            'Cannot delete a location that still has customers on a sub-location. '
+            'Reassign them first.',
+            code='LOCATION_HAS_CUSTOMERS',
+        )
+    if location.sub_locations.exists():
+        raise DeliveryZoneError(
+            'Cannot delete a location that still has sub-locations. Delete them first.',
+            code='LOCATION_HAS_SUB_LOCATIONS',
         )
     location.delete()

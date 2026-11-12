@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from django.db.models import F
 from django.utils import timezone
 
 from core.models import PublicIdMixin
@@ -10,6 +11,10 @@ class SupportConversation(PublicIdMixin, models.Model):
         OPEN = 'open', 'Open'
         CLOSED = 'closed', 'Closed'
         ARCHIVED = 'archived', 'Archived'
+
+    class LastMessageSender(models.TextChoices):
+        CUSTOMER = 'customer', 'Customer'
+        ADMIN = 'admin', 'Admin'
 
     customer = models.OneToOneField(
         'user_management.CustomerProfile',
@@ -24,15 +29,25 @@ class SupportConversation(PublicIdMixin, models.Model):
     )
     last_message = models.CharField(max_length=255, blank=True, default='')
     last_message_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_message_sender = models.CharField(
+        max_length=20,
+        choices=LastMessageSender.choices,
+        null=True,
+        blank=True,
+    )
     customer_unread_count = models.PositiveIntegerField(default=0)
     admin_unread_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['-last_message_at', '-id']
+        ordering = [F('last_message_at').desc(nulls_last=True), F('id').desc()]
         indexes = [
-            models.Index(fields=['-last_message_at', '-id']),
+            models.Index(
+                F('last_message_at').desc(nulls_last=True),
+                F('id').desc(),
+                name='support_sup_last_me_nulls_idx',
+            ),
             models.Index(fields=['status', '-last_message_at']),
         ]
 
