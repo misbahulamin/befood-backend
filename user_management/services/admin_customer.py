@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from django.db.models import Count, Exists, OuterRef, Prefetch, Q, QuerySet, Sum
+from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q, QuerySet, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework.exceptions import ValidationError
@@ -33,14 +33,21 @@ LIST_QUERY_ALLOWLIST = frozenset(
         'inactive_subscription',
         'meal_public_id',
         'package_id',
+        'package',
         'registered_from',
         'registered_to',
+        'lifecycle',
+        'churned_from',
+        'churned_to',
+        'cancel_reason',
         'sort',
         'page',
         'page_size',
         'zone_public_id',
         'location_public_id',
+        'sub_location_public_id',
         'has_delivery_location',
+        'has_delivery_sub_location',
     }
 )
 
@@ -62,6 +69,10 @@ SORT_ALLOWLIST = {
     '-created_at': ('-created_at', 'public_id'),
     'email': ('user__email', 'public_id'),
     '-email': ('-user__email', 'public_id'),
+    'churn_date': ('churn_date', 'public_id'),
+    '-churn_date': ('-churn_date', 'public_id'),
+    'tenure_days': ('tenure_days', 'public_id'),
+    '-tenure_days': ('-tenure_days', 'public_id'),
 }
 
 TRUE_VALUES = frozenset({'true', '1', 'yes'})
@@ -110,6 +121,9 @@ def customer_base_queryset() -> QuerySet[CustomerProfile]:
         'wallet',
         'delivery_location',
         'delivery_location__zone',
+        'delivery_sub_location',
+        'delivery_sub_location__location',
+        'delivery_sub_location__location__zone',
     ).prefetch_related(
         Prefetch(
             'addresses',
@@ -194,13 +208,40 @@ def apply_customer_list_filters(queryset: QuerySet[CustomerProfile], params) -> 
     elif has_delivery_location is False:
         queryset = queryset.filter(delivery_location__isnull=True)
 
+    has_delivery_sub_location = parse_bool_param(
+        params.get('has_delivery_sub_location'), field='has_delivery_sub_location'
+    )
+    if has_delivery_sub_location is True:
+        queryset = queryset.filter(delivery_sub_location__isnull=False)
+    elif has_delivery_sub_location is False:
+        queryset = queryset.filter(delivery_sub_location__isnull=True)
+
     zone_public_id = (params.get('zone_public_id') or '').strip()
     if zone_public_id:
-        queryset = queryset.filter(delivery_location__zone__public_id=zone_public_id)
+        # Prefer derived zone via sub-location; Bridge also matches mirrored location.
+        queryset = queryset.filter(
+            Q(delivery_sub_location__location__zone__public_id=zone_public_id)
+            | Q(
+                delivery_sub_location__isnull=True,
+                delivery_location__zone__public_id=zone_public_id,
+            )
+        )
 
     location_public_id = (params.get('location_public_id') or '').strip()
     if location_public_id:
-        queryset = queryset.filter(delivery_location__public_id=location_public_id)
+        queryset = queryset.filter(
+            Q(delivery_sub_location__location__public_id=location_public_id)
+            | Q(
+                delivery_sub_location__isnull=True,
+                delivery_location__public_id=location_public_id,
+            )
+        )
+
+    sub_location_public_id = (params.get('sub_location_public_id') or '').strip()
+    if sub_location_public_id:
+        queryset = queryset.filter(
+            delivery_sub_location__public_id=sub_location_public_id
+        )
 
     has_pending_recharge = parse_bool_param(
         params.get('has_pending_recharge'), field='has_pending_recharge'
@@ -269,6 +310,16 @@ def apply_customer_list_filters(queryset: QuerySet[CustomerProfile], params) -> 
     if registered_to is not None:
         queryset = queryset.filter(user__date_joined__date__lte=registered_to)
 
+    # Lifecycle / churn enrichment filters (shared with churn customers collection).
+    # Overlap: inactive_subscription=true ≈ lifecycle=unsubscribed (prefer lifecycle for new UI).
+    from user_management.services.churn import (
+        apply_lifecycle_churn_filters,
+        enrich_customer_churn_annotations,
+    )
+
+    queryset = enrich_customer_churn_annotations(queryset)
+    queryset = apply_lifecycle_churn_filters(queryset, params)
+
     sort_key = (params.get('sort') or '-date_joined').strip()
     order_by = SORT_ALLOWLIST.get(sort_key)
     if order_by is None:
@@ -279,6 +330,10 @@ def apply_customer_list_filters(queryset: QuerySet[CustomerProfile], params) -> 
                 ]
             }
         )
+    if sort_key in ('tenure_days', '-tenure_days'):
+        # Tenure is derived in serializers; sort by churn_date as proxy.
+        sort_key = '-churn_date' if sort_key.startswith('-') else 'churn_date'
+        order_by = SORT_ALLOWLIST[sort_key]
     return queryset.order_by(*order_by)
 
 

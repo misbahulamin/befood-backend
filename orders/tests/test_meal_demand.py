@@ -318,6 +318,8 @@ class MealDemandServiceTestCase(TestCase):
         )
         self.assertEqual(len(payload['packages']), 2)
         self.assertEqual(payload['final_cooking_count'], 4)
+        self.assertIn('excluded_other_period_count', payload)
+        self.assertGreaterEqual(payload['excluded_other_period_count'], 0)
         rice = next(i for i in payload['ingredients'] if i['name'] == 'Rice Demand')
         self.assertEqual(rice['customer_count'], 4)
         self.assertEqual(len(rice['package_contributions']), 2)
@@ -869,6 +871,7 @@ class MealDemandAPITestCase(APITestCase):
             'meal_off_count',
             'customer_meal_off_count',
             'low_balance_blocked_count',
+            'excluded_other_period_count',
             'final_cooking_count',
             'total_customers',
             'packages',
@@ -876,6 +879,7 @@ class MealDemandAPITestCase(APITestCase):
             'ingredients',
         ):
             self.assertIn(key, kitchen.data)
+        self.assertGreaterEqual(kitchen.data['excluded_other_period_count'], 0)
         # Blocked customer remains in expected + low_balance; cooking stays Peer only.
         self.assertEqual(kitchen.data['expected_meal_count'], 2)
         self.assertEqual(kitchen.data['low_balance_blocked_count'], 1)

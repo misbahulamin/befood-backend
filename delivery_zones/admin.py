@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from delivery_zones.models import DeliveryLocation, DeliveryZone
+from delivery_zones.models import DeliveryLocation, DeliverySubLocation, DeliveryZone
 
 
 @admin.register(DeliveryZone)
@@ -34,3 +34,26 @@ class DeliveryLocationAdmin(admin.ModelAdmin):
     search_fields = ('name', 'public_id', 'zone__name', 'zone__code')
     raw_id_fields = ('zone',)
     ordering = ('zone__priority', 'priority', 'name')
+
+
+@admin.register(DeliverySubLocation)
+class DeliverySubLocationAdmin(admin.ModelAdmin):
+    list_display = (
+        'name',
+        'location',
+        'priority',
+        'status',
+        'is_default',
+        'public_id',
+        'updated_at',
+    )
+    list_filter = ('status', 'is_default', 'location__zone')
+    search_fields = (
+        'name',
+        'public_id',
+        'location__name',
+        'location__zone__name',
+        'location__zone__code',
+    )
+    raw_id_fields = ('location',)
+    ordering = ('location__zone__priority', 'location__priority', 'priority', 'name')

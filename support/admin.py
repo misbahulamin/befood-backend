@@ -30,11 +30,12 @@ class SupportConversationAdmin(admin.ModelAdmin):
         'customer',
         'status',
         'last_message_at',
+        'last_message_sender',
         'customer_unread_count',
         'admin_unread_count',
         'updated_at',
     )
-    list_filter = ('status',)
+    list_filter = ('status', 'last_message_sender')
     search_fields = (
         'public_id',
         'customer__user__email',
@@ -47,6 +48,7 @@ class SupportConversationAdmin(admin.ModelAdmin):
         'customer',
         'last_message',
         'last_message_at',
+        'last_message_sender',
         'customer_unread_count',
         'admin_unread_count',
         'created_at',

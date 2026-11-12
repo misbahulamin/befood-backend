@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
-from orders.models import CustomerSubscription, Order, OrderDelivery
+from orders.models import CustomerSubscription, Order, OrderDelivery, SubscriptionCancellation
+from orders.api.subscription_serializers import CLIENT_CANCEL_REASON_CHOICES
 from user_management.models import CustomerAddress, CustomerProfile, SocialIdentity
 from user_management.services.admin_customer import (
     build_active_order_payload,
@@ -49,8 +50,15 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
     wallet_balance = serializers.SerializerMethodField()
     meal_service_blocked_low_balance = serializers.BooleanField(read_only=True)
     meal_service_blocked_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    delivery_sub_location = serializers.SerializerMethodField()
     delivery_location = serializers.SerializerMethodField()
     delivery_zone = serializers.SerializerMethodField()
+    lifecycle = serializers.SerializerMethodField()
+    last_subscription_package = serializers.SerializerMethodField()
+    churn_date = serializers.SerializerMethodField()
+    tenure_days = serializers.SerializerMethodField()
+    total_meals_delivered = serializers.SerializerMethodField()
+    last_cancel_reason = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomerProfile
@@ -71,8 +79,15 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
             'wallet_balance',
             'meal_service_blocked_low_balance',
             'meal_service_blocked_at',
+            'delivery_sub_location',
             'delivery_location',
             'delivery_zone',
+            'lifecycle',
+            'last_subscription_package',
+            'churn_date',
+            'tenure_days',
+            'total_meals_delivered',
+            'last_cancel_reason',
         )
         read_only_fields = fields
 
@@ -103,15 +118,57 @@ class AdminCustomerListSerializer(serializers.ModelSerializer):
             return None
         return f'{wallet.balance:.2f}'
 
-    def get_delivery_location(self, obj):
-        from delivery_zones.services.assignment import location_summary
+    def get_delivery_sub_location(self, obj):
+        from delivery_zones.services.assignment import (
+            resolve_operational_sub_location,
+            sub_location_summary,
+        )
 
-        return location_summary(getattr(obj, 'delivery_location', None))
+        return sub_location_summary(resolve_operational_sub_location(obj))
+
+    def get_delivery_location(self, obj):
+        from delivery_zones.services.assignment import (
+            location_summary,
+            resolve_operational_location,
+        )
+
+        return location_summary(resolve_operational_location(obj))
 
     def get_delivery_zone(self, obj):
-        from delivery_zones.services.assignment import zone_summary_from_location
+        from delivery_zones.services.assignment import (
+            resolve_operational_location,
+            zone_summary_from_location,
+        )
 
-        return zone_summary_from_location(getattr(obj, 'delivery_location', None))
+        return zone_summary_from_location(resolve_operational_location(obj))
+
+    def get_lifecycle(self, obj):
+        return getattr(obj, 'lifecycle', None)
+
+    def get_last_subscription_package(self, obj):
+        return getattr(obj, 'last_subscription_package', None)
+
+    def get_churn_date(self, obj):
+        value = getattr(obj, 'churn_date', None)
+        return value.isoformat() if value else None
+
+    def get_tenure_days(self, obj):
+        value = getattr(obj, 'tenure_days', None)
+        if value is not None:
+            if hasattr(value, 'days'):
+                return value.days
+            return int(value)
+        churn_date = getattr(obj, 'churn_date', None)
+        started = getattr(obj, 'last_subscription_started_on', None)
+        if churn_date is not None and started is not None:
+            return max((churn_date - started).days, 0)
+        return None
+
+    def get_total_meals_delivered(self, obj):
+        return getattr(obj, 'total_meals_delivered', None)
+
+    def get_last_cancel_reason(self, obj):
+        return getattr(obj, 'last_cancel_reason', None)
 
 
 class AdminCustomerDetailSerializer(AdminCustomerListSerializer):
@@ -411,4 +468,17 @@ class AdminCancelSubscriptionResultSerializer(serializers.Serializer):
 
 
 class AdminCancelSubscriptionRequestSerializer(serializers.Serializer):
+    reason_code = serializers.ChoiceField(choices=CLIENT_CANCEL_REASON_CHOICES)
+    reason_text = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+        default='',
+    )
+    # Legacy optional free-text; mapped to reason_text when reason_text omitted.
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+    def validate(self, attrs):
+        text = attrs.get('reason_text') or attrs.get('reason') or ''
+        attrs['reason_text'] = text
+        return attrs

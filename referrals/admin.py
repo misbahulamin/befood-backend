@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from referrals.models import (
+    ReferralAttributionEvent,
     ReferralCommission,
     ReferralProfile,
     ReferralProgramSettings,
@@ -62,3 +63,18 @@ class ReferralValidationEventAdmin(admin.ModelAdmin):
     list_display = ('code', 'is_valid', 'reason', 'client_ip', 'created_at')
     list_filter = ('is_valid',)
     search_fields = ('code',)
+
+
+@admin.register(ReferralAttributionEvent)
+class ReferralAttributionEventAdmin(admin.ModelAdmin):
+    list_display = (
+        'referral_code',
+        'customer',
+        'stage',
+        'outcome',
+        'error_code',
+        'client_type',
+        'created_at',
+    )
+    list_filter = ('stage', 'outcome', 'error_code')
+    search_fields = ('referral_code', 'customer__user__email', 'error_code')

@@ -19,6 +19,7 @@ urlpatterns = [
     path('api/v1/web/subscription-plans/', include('orders.api.web_subscription_plan_urls')),
     path('api/v1/web/subscriptions/', include('orders.api.web_subscription_urls')),
     path('api/v1/web/customers/', include('user_management.api.web_urls')),
+    path('api/v1/web/churn/', include('user_management.api.web_churn_urls')),
     path('api/v1/web/delivery-men/', include('user_management.api.web_deliveryman_urls')),
     path('api/v1/web/dashboard/', include('user_management.api.web_dashboard_urls')),
     path('notices/', include('notices.api.urls')),
@@ -42,6 +43,10 @@ urlpatterns = [
     path('api/v1/web/service-areas/', include('service_area.api.web_urls')),
     path('api/v1/web/delivery-zones/', include('delivery_zones.api.web_urls')),
     path('api/v1/web/delivery-locations/', include('delivery_zones.api.location_urls')),
+    path(
+        'api/v1/web/delivery-sub-locations/',
+        include('delivery_zones.api.sub_location_urls'),
+    ),
     path('api/v1/search/', include('search.api.urls')),
     path('api/v1/web/search/', include('search.api.web_urls')),
     path('api/v1/web/notifications/', include('notifications.api.web_urls')),

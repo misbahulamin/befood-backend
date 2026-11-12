@@ -77,37 +77,62 @@ def post_message(
         created_at=now,
     )
 
+    if sender_type == SupportMessage.SenderType.CUSTOMER:
+        last_sender = SupportConversation.LastMessageSender.CUSTOMER
+    elif sender_type == SupportMessage.SenderType.ADMIN:
+        last_sender = SupportConversation.LastMessageSender.ADMIN
+    else:
+        last_sender = None
+
     updates = {
         'last_message': _preview(text),
         'last_message_at': now,
+        'last_message_sender': last_sender,
         'updated_at': now,
     }
     conversation.last_message = updates['last_message']
     conversation.last_message_at = now
+    conversation.last_message_sender = last_sender
 
     if sender_type == SupportMessage.SenderType.CUSTOMER:
         SupportConversation.objects.filter(pk=conversation.pk).update(
             last_message=updates['last_message'],
             last_message_at=now,
+            last_message_sender=last_sender,
             updated_at=now,
             admin_unread_count=F('admin_unread_count') + 1,
         )
         conversation.refresh_from_db(
-            fields=['admin_unread_count', 'last_message', 'last_message_at', 'updated_at']
+            fields=[
+                'admin_unread_count',
+                'last_message',
+                'last_message_at',
+                'last_message_sender',
+                'updated_at',
+            ]
         )
     elif sender_type == SupportMessage.SenderType.ADMIN:
         SupportConversation.objects.filter(pk=conversation.pk).update(
             last_message=updates['last_message'],
             last_message_at=now,
+            last_message_sender=last_sender,
             updated_at=now,
             customer_unread_count=F('customer_unread_count') + 1,
         )
         conversation.refresh_from_db(
-            fields=['customer_unread_count', 'last_message', 'last_message_at', 'updated_at']
+            fields=[
+                'customer_unread_count',
+                'last_message',
+                'last_message_at',
+                'last_message_sender',
+                'updated_at',
+            ]
         )
     else:
         SupportConversation.objects.filter(pk=conversation.pk).update(**updates)
-        conversation.refresh_from_db(fields=['last_message', 'last_message_at', 'updated_at'])
+        conversation.refresh_from_db(
+            fields=['last_message', 'last_message_at', 'last_message_sender', 'updated_at']
+        )
 
     if broadcast:
         _broadcast_message(message)

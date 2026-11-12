@@ -115,3 +115,64 @@ class DeliveryLocation(PublicIdMixin, TimeStampedModel):
 
     def __str__(self):
         return f'{self.name} @ {self.zone.name} (P{self.priority})'
+
+
+class DeliverySubLocation(PublicIdMixin, TimeStampedModel):
+    """Named delivery stop inside a DeliveryLocation (e.g. Gate A under Chawkbazar)."""
+
+    class Status(models.TextChoices):
+        ACTIVE = 'active', 'Active'
+        INACTIVE = 'inactive', 'Inactive'
+
+    name = models.CharField(max_length=255)
+    location = models.ForeignKey(
+        DeliveryLocation,
+        on_delete=models.PROTECT,
+        related_name='sub_locations',
+    )
+    priority = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)],
+        help_text='Lower number = deliver first within the location.',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
+    )
+    is_default = models.BooleanField(
+        default=False,
+        help_text='Designated default stop for legacy location-only assignment mapping.',
+    )
+    # Future GPS / map hooks (unused in this change).
+    centroid_latitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    centroid_longitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    boundary_geojson = models.JSONField(null=True, blank=True)
+    external_map_place_id = models.CharField(max_length=255, blank=True, default='')
+    geo_metadata = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['location__zone__priority', 'location__priority', 'priority', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['location', 'priority'],
+                condition=models.Q(status='active'),
+                name='uniq_active_delivery_sub_location_priority_per_location',
+            ),
+            models.UniqueConstraint(
+                fields=['location'],
+                condition=models.Q(is_default=True),
+                name='uniq_default_delivery_sub_location_per_location',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['location', 'status', 'priority']),
+            models.Index(fields=['status', 'name']),
+        ]
+
+    def __str__(self):
+        return f'{self.name} @ {self.location.name} (P{self.priority})'

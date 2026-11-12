@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q
 
 from support.models import SupportConversation
 from user_management.models import CustomerProfile
@@ -44,7 +44,14 @@ def admin_conversations_queryset():
     ).all()
 
 
-def apply_admin_conversation_filters(qs, *, status: str | None = None, has_unread=None, q: str | None = None):
+def apply_admin_conversation_filters(
+    qs,
+    *,
+    status: str | None = None,
+    has_unread=None,
+    q: str | None = None,
+    include_empty: bool = False,
+):
     if status:
         qs = qs.filter(status=status)
     if has_unread is True:
@@ -58,4 +65,6 @@ def apply_admin_conversation_filters(qs, *, status: str | None = None, has_unrea
                 build_customer_people_q(q, customer_prefix='customer__')
                 | Q(last_message__icontains=q)
             )
-    return qs.order_by('-last_message_at', '-id')
+    if not include_empty:
+        qs = qs.filter(last_message_at__isnull=False)
+    return qs.order_by(F('last_message_at').desc(nulls_last=True), '-id')

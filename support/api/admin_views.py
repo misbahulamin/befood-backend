@@ -40,6 +40,15 @@ class AdminSupportMessagePagination(PageNumberPagination):
         parameters=[
             OpenApiParameter('status', str, required=False),
             OpenApiParameter('has_unread', bool, required=False),
+            OpenApiParameter(
+                'include_empty',
+                bool,
+                required=False,
+                description=(
+                    'When true, include conversations with no messages '
+                    '(null last_message_at). Default false.'
+                ),
+            ),
             OpenApiParameter('q', str, required=False),
             OpenApiParameter('page', int, required=False),
             OpenApiParameter('page_size', int, required=False),
@@ -75,6 +84,18 @@ class AdminSupportConversationViewSet(
                 from rest_framework.exceptions import ValidationError
 
                 raise ValidationError({'has_unread': ['Must be true or false.']})
+        include_empty_raw = params.get('include_empty')
+        include_empty = False
+        if include_empty_raw is not None:
+            normalized_empty = str(include_empty_raw).strip().lower()
+            if normalized_empty in ('1', 'true', 'yes'):
+                include_empty = True
+            elif normalized_empty in ('0', 'false', 'no'):
+                include_empty = False
+            else:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({'include_empty': ['Must be true or false.']})
         if status_value and status_value not in ('open', 'closed', 'archived'):
             from rest_framework.exceptions import ValidationError
 
@@ -82,6 +103,7 @@ class AdminSupportConversationViewSet(
         unknown = set(params.keys()) - {
             'status',
             'has_unread',
+            'include_empty',
             'q',
             'page',
             'page_size',
@@ -95,6 +117,7 @@ class AdminSupportConversationViewSet(
             status=status_value,
             has_unread=has_unread,
             q=q,
+            include_empty=include_empty,
         )
 
     def get_serializer_class(self):

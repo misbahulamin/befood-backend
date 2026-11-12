@@ -32,7 +32,8 @@ While `estimated`, copy should say numbers can still change until the meal-off d
 2. Morning (before dinner off time, default 16:00 Asia/Dhaka) → lunch; afternoon → dinner
 3. Render:
    - Hero: `final_cooking_count`, period, date, `confirmation_status`
-   - Expected / meal-off line
+   - Expected / meal-off line with Expected tooltip (“Active subscriptions whose plan includes this meal period (lunch/dinner).”)
+   - Under Expected, when `excluded_other_period_count` is present, show breakdown using dashboard `active_subscribers` (e.g. `106 active − 2 dinner-only = 104 expected for Lunch`). Do **not** invent the excluded count as `active − expected` when the field is missing.
    - **Package-wise summary** from `packages[]` (customers + final meals; show expected/meal-off on screen)
    - **Item-wise cooking** from `ingredients[]`:
      - `customer_count` (people across packages that include the item)

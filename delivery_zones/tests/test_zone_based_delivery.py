@@ -457,7 +457,7 @@ class DeliveryZoneAPITests(APITestCase):
         locations = rider_board.data['periods']['lunch']['locations']
         self.assertEqual(locations[0]['location_name'], 'Chawkbazar')
         self.assertEqual(locations[1]['location_name'], 'DC Road')
-        customer_row = locations[0]['customers'][0]
+        customer_row = locations[0]['sub_locations'][0]['customers'][0]
         self.assertEqual(customer_row['customer_phone'], '1713000001')
         self.assertNotIn('wallet_balance', customer_row)
         self.assertEqual(customer_row['meal_name'], 'Student Package')
@@ -574,7 +574,7 @@ class DeliveryZoneAPITests(APITestCase):
                 '/user_management/deliveryman/deliveries/today-board/'
             )
         self.assertEqual(board.status_code, status.HTTP_200_OK)
-        row = board.data['periods']['lunch']['locations'][0]['customers'][0]
+        row = board.data['periods']['lunch']['locations'][0]['sub_locations'][0]['customers'][0]
         self.assertNotIn('wallet_balance', row)
         self.assertEqual(row['meal_name'], 'Student Package')
         self.assertEqual(
@@ -621,7 +621,7 @@ class DeliveryZoneAPITests(APITestCase):
         locations = board.data['periods']['lunch']['locations']
         self.assertEqual(len(locations), 1)
         self.assertEqual(locations[0]['delivery_count'], 1)
-        phones = [row['customer_phone'] for row in locations[0]['customers']]
+        phones = [row['customer_phone'] for row in locations[0]['sub_locations'][0]['customers']]
         self.assertEqual(phones, ['1713000001'])
 
     def test_deliveryman_board_all_blocked_yields_empty_period(self):
@@ -1047,7 +1047,7 @@ class DeliverymanTodayOpsTests(APITestCase):
 
         self.assertEqual(pending.status_code, status.HTTP_200_OK)
         self.assertEqual(pending.data['total_count'], 1)
-        row = pending.data['periods']['lunch']['locations'][0]['customers'][0]
+        row = pending.data['periods']['lunch']['locations'][0]['sub_locations'][0]['customers'][0]
         self.assertEqual(row['delivery_public_id'], str(d1.public_id))
         self.assertEqual(row['package_name'], 'Student Package')
         self.assertEqual(row['meal_name'], 'Student Package')
@@ -1092,7 +1092,7 @@ class DeliverymanTodayOpsTests(APITestCase):
 
         self.assertEqual(pending2.data['total_count'], 0)
         self.assertEqual(delivered.data['total_count'], 1)
-        drow = delivered.data['periods']['lunch']['locations'][0]['customers'][0]
+        drow = delivered.data['periods']['lunch']['locations'][0]['sub_locations'][0]['customers'][0]
         self.assertEqual(drow['delivery_public_id'], str(d1.public_id))
         self.assertIsNotNone(drow['delivered_at'])
         self.assertEqual(drow['delivered_by_rider_public_id'], str(self.rider.public_id))
@@ -1100,7 +1100,8 @@ class DeliverymanTodayOpsTests(APITestCase):
         public_ids = {
             c['delivery_public_id']
             for loc in delivered.data['periods']['lunch']['locations']
-            for c in loc['customers']
+            for sub in loc['sub_locations']
+            for c in sub['customers']
         }
         self.assertNotIn(str(foreign.public_id), public_ids)
 
@@ -1236,3 +1237,387 @@ class DeliverymanTodayOpsTests(APITestCase):
                 {'include_delivered': 'true'},
             )
         self.assertEqual(both.data['total_count'], 2)
+
+
+class DeliverySubLocationServiceTests(TestCase):
+    def setUp(self):
+        customer_group, _ = Group.objects.get_or_create(name='CUSTOMER')
+        user = User.objects.create_user(
+            username='sub_cust',
+            email='sub_cust@example.com',
+            password='StrongPassword123',
+            first_name='Rahim',
+            is_active=True,
+        )
+        user.groups.add(customer_group)
+        self.customer = CustomerProfile.objects.create(
+            user=user,
+            phone='1715000001',
+            is_email_verified=True,
+        )
+        self.zone = create_zone(name='Zone 1', code='sub-z1', priority=1)
+        self.location = create_location(
+            name='Chawkbazar', zone_public_id=self.zone.public_id, priority=1
+        )
+        # create_location seeds a default sub-location at priority 1
+        from delivery_zones.models import DeliverySubLocation
+
+        self.default_sub = DeliverySubLocation.objects.get(
+            location=self.location, is_default=True
+        )
+
+    def test_settings_legacy_flag_readable(self):
+        from django.conf import settings
+
+        self.assertTrue(
+            getattr(settings, 'DELIVERY_SUB_LOCATION_LEGACY_LOCATION_ASSIGN', False)
+        )
+
+    def test_create_duplicate_priority_rejected(self):
+        from delivery_zones.services.sub_locations import create_sub_location
+
+        with self.assertRaises(DeliveryZoneError) as ctx:
+            create_sub_location(
+                name='Gate A',
+                location_public_id=self.location.public_id,
+                priority=1,
+            )
+        self.assertEqual(ctx.exception.code, 'PRIORITY_CONFLICT')
+
+    def test_create_and_delete_with_customers_blocked(self):
+        from delivery_zones.services.assignment import assign_customer_sub_location
+        from delivery_zones.services.sub_locations import (
+            create_sub_location,
+            delete_sub_location_if_empty,
+        )
+
+        gate_a = create_sub_location(
+            name='Gate A',
+            location_public_id=self.location.public_id,
+            priority=2,
+        )
+        assign_customer_sub_location(
+            self.customer, sub_location_public_id=gate_a.public_id
+        )
+        with self.assertRaises(DeliveryZoneError) as ctx:
+            delete_sub_location_if_empty(gate_a)
+        self.assertEqual(ctx.exception.code, 'SUB_LOCATION_HAS_CUSTOMERS')
+
+    def test_move_sub_location_cascades_derived_zone(self):
+        from delivery_zones.services.assignment import (
+            assign_customer_sub_location,
+            derived_zone,
+        )
+        from delivery_zones.services.sub_locations import (
+            create_sub_location,
+            move_sub_location_to_location,
+        )
+
+        zone2 = create_zone(name='Zone 2', code='sub-z2', priority=2)
+        loc2 = create_location(
+            name='DC Road', zone_public_id=zone2.public_id, priority=1
+        )
+        gate_a = create_sub_location(
+            name='Gate A',
+            location_public_id=self.location.public_id,
+            priority=2,
+        )
+        assign_customer_sub_location(
+            self.customer, sub_location_public_id=gate_a.public_id
+        )
+        self.assertEqual(derived_zone(self.customer).pk, self.zone.pk)
+        move_sub_location_to_location(gate_a, location_public_id=loc2.public_id)
+        self.customer.refresh_from_db()
+        self.assertEqual(derived_zone(self.customer).pk, zone2.pk)
+
+    def test_location_delete_blocked_when_sub_has_customers(self):
+        from delivery_zones.services.assignment import assign_customer_sub_location
+        from delivery_zones.services.sub_locations import create_sub_location
+
+        gate_a = create_sub_location(
+            name='Gate A',
+            location_public_id=self.location.public_id,
+            priority=2,
+        )
+        assign_customer_sub_location(
+            self.customer, sub_location_public_id=gate_a.public_id
+        )
+        with self.assertRaises(DeliveryZoneError) as ctx:
+            delete_location_if_empty(self.location)
+        self.assertEqual(ctx.exception.code, 'LOCATION_HAS_CUSTOMERS')
+
+    def test_legacy_assign_maps_to_default_sub(self):
+        from delivery_zones.services.assignment import assign_customer_location
+
+        assign_customer_location(
+            self.customer, location_public_id=self.location.public_id
+        )
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.delivery_sub_location_id, self.default_sub.pk)
+        self.assertEqual(self.customer.delivery_location_id, self.location.pk)
+
+    def test_legacy_assign_rejected_when_flag_false(self):
+        from django.test import override_settings
+
+        from delivery_zones.services.assignment import assign_customer_location
+
+        with override_settings(DELIVERY_SUB_LOCATION_LEGACY_LOCATION_ASSIGN=False):
+            with self.assertRaises(DeliveryZoneError) as ctx:
+                assign_customer_location(
+                    self.customer, location_public_id=self.location.public_id
+                )
+        self.assertEqual(ctx.exception.code, 'LEGACY_LOCATION_ASSIGN_DISABLED')
+
+
+class DeliverySubLocationAPITests(APITestCase):
+    def setUp(self):
+        admin_group, _ = Group.objects.get_or_create(name='ADMIN')
+        self.admin_user = User.objects.create_user(
+            username='sub_admin',
+            email='sub_admin@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        self.admin_user.groups.add(admin_group)
+        AdminProfile.objects.create(user=self.admin_user, is_verified=True)
+        self.admin_token = Token.objects.create(user=self.admin_user)
+
+        customer_group, _ = Group.objects.get_or_create(name='CUSTOMER')
+        self.customer_user = User.objects.create_user(
+            username='sub_api_cust',
+            email='sub_api_cust@example.com',
+            password='StrongPassword123',
+            first_name='Karim',
+            is_active=True,
+        )
+        self.customer_user.groups.add(customer_group)
+        self.customer = CustomerProfile.objects.create(
+            user=self.customer_user,
+            phone='1715000002',
+            is_email_verified=True,
+        )
+        self.zone = create_zone(name='Zone 1', code='sub-api-z1', priority=1)
+        self.location = create_location(
+            name='Chawkbazar', zone_public_id=self.zone.public_id, priority=1
+        )
+
+    def _auth_admin(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+
+    def test_create_list_filter_and_auth(self):
+        resp = self.client.post(
+            '/api/v1/web/delivery-sub-locations/',
+            {
+                'name': 'Gate A',
+                'location_public_id': str(self.location.public_id),
+                'priority': 2,
+            },
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        self._auth_admin()
+        resp = self.client.post(
+            '/api/v1/web/delivery-sub-locations/',
+            {
+                'name': 'Gate A',
+                'location_public_id': str(self.location.public_id),
+                'priority': 2,
+            },
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(resp.data['name'], 'Gate A')
+        self.assertEqual(resp.data['location']['public_id'], str(self.location.public_id))
+
+        listed = self.client.get(
+            '/api/v1/web/delivery-sub-locations/',
+            {'location_public_id': str(self.location.public_id)},
+        )
+        self.assertEqual(listed.status_code, status.HTTP_200_OK)
+        names = [row['name'] for row in listed.data['results']]
+        self.assertIn('Gate A', names)
+        self.assertIn('Chawkbazar', names)  # default
+
+        loc_detail = self.client.get(
+            f'/api/v1/web/delivery-locations/{self.location.public_id}/'
+        )
+        self.assertGreaterEqual(loc_detail.data['sub_location_count'], 2)
+
+        zone_list = self.client.get('/api/v1/web/delivery-zones/')
+        zone_row = next(
+            row
+            for row in zone_list.data['results']
+            if row['public_id'] == str(self.zone.public_id)
+        )
+        self.assertGreaterEqual(zone_row['sub_location_count'], 2)
+
+    def test_assign_sub_location_and_clear(self):
+        from delivery_zones.models import DeliverySubLocation
+        from delivery_zones.services.sub_locations import create_sub_location
+
+        self._auth_admin()
+        gate_a = create_sub_location(
+            name='Gate A',
+            location_public_id=self.location.public_id,
+            priority=2,
+        )
+        resp = self.client.patch(
+            f'/api/v1/web/customers/{self.customer.public_id}/delivery-location/',
+            {'delivery_sub_location_public_id': str(gate_a.public_id)},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['delivery_sub_location']['name'], 'Gate A')
+        self.assertEqual(resp.data['delivery_location']['name'], 'Chawkbazar')
+        self.assertEqual(resp.data['delivery_zone']['public_id'], str(self.zone.public_id))
+
+        detail = self.client.get(f'/api/v1/web/customers/{self.customer.public_id}/')
+        self.assertEqual(detail.data['delivery_sub_location']['public_id'], str(gate_a.public_id))
+
+        clear = self.client.patch(
+            f'/api/v1/web/customers/{self.customer.public_id}/delivery-location/',
+            {'delivery_sub_location_public_id': None},
+            format='json',
+        )
+        self.assertEqual(clear.status_code, status.HTTP_200_OK)
+        self.assertIsNone(clear.data['delivery_sub_location'])
+        self.assertIsNone(clear.data['delivery_location'])
+
+        # unused import guard for model presence
+        self.assertTrue(DeliverySubLocation.objects.filter(pk=gate_a.pk).exists())
+
+    def test_legacy_location_assign_api_and_contract_reject(self):
+        from django.test import override_settings
+
+        self._auth_admin()
+        resp = self.client.patch(
+            f'/api/v1/web/customers/{self.customer.public_id}/delivery-location/',
+            {'delivery_location_public_id': str(self.location.public_id)},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(resp.data['delivery_sub_location'])
+
+        with override_settings(DELIVERY_SUB_LOCATION_LEGACY_LOCATION_ASSIGN=False):
+            reject = self.client.patch(
+                f'/api/v1/web/customers/{self.customer.public_id}/delivery-location/',
+                {'delivery_location_public_id': str(self.location.public_id)},
+                format='json',
+            )
+        self.assertEqual(reject.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertEqual(reject.data['error_code'], 'LEGACY_LOCATION_ASSIGN_DISABLED')
+
+    def test_filter_by_sub_location_and_board_nesting(self):
+        from delivery_zones.models import DeliverySubLocation
+        from delivery_zones.services.sub_locations import create_sub_location
+
+        dm_group, _ = Group.objects.get_or_create(name='DELIVERY_MAN')
+        rider_user = User.objects.create_user(
+            username='sub_rider',
+            email='sub_rider@example.com',
+            password='StrongPassword123',
+            first_name='Rider',
+            is_active=True,
+        )
+        rider_user.groups.add(dm_group)
+        rider = RiderProfile.objects.create(
+            user=rider_user,
+            phone='1715000099',
+            approval_status=RiderProfile.ApprovalStatus.APPROVED,
+            is_verified=True,
+            is_email_verified=True,
+            verified_at=timezone.now(),
+        )
+        assign_delivery_man(self.zone, delivery_man_public_id=rider.public_id)
+
+        gate_a = create_sub_location(
+            name='Gate A', location_public_id=self.location.public_id, priority=2
+        )
+        gate_b = create_sub_location(
+            name='Gate B', location_public_id=self.location.public_id, priority=3
+        )
+        # Re-point default to keep priority 1 as Chawkbazar default; create Gate A/B above.
+
+        plan = MealCategory.objects.create(
+            meal_name='Sub Lunch',
+            total_price=Decimal('120.00'),
+            meal_thumbnail=make_test_image('sub.jpg'),
+            meal_type=MealCategory.MealType.MONTHLY,
+            meal_period=MealCategory.MealPeriod.BOTH,
+            is_active=True,
+            is_subscribable=True,
+        )
+        service_date = date(2026, 9, 18)
+
+        def seed(customer, sub):
+            from delivery_zones.services.assignment import assign_customer_sub_location
+
+            assign_customer_sub_location(customer, sub_location_public_id=sub.public_id)
+            sub_obj = CustomerSubscription.objects.create(
+                customer=customer,
+                meal=plan,
+                meal_name_snapshot=plan.meal_name,
+                meal_period_snapshot='both',
+                status=CustomerSubscription.Status.ACTIVE,
+                started_on=service_date,
+            )
+            return OrderDelivery.objects.create(
+                subscription=sub_obj,
+                service_date=service_date,
+                meal_period='lunch',
+                status=OrderDelivery.DeliveryStatus.SCHEDULED,
+                delivery_label_snapshot='Home',
+                delivery_full_address_snapshot='House',
+                delivery_area_snapshot=self.location.name,
+                delivery_city_snapshot='Chattogram',
+            )
+
+        other_user = User.objects.create_user(
+            username='sub_api_cust2',
+            email='sub_api_cust2@example.com',
+            password='StrongPassword123',
+            first_name='Abul',
+            is_active=True,
+        )
+        other = CustomerProfile.objects.create(
+            user=other_user, phone='1715000003', is_email_verified=True
+        )
+        seed(self.customer, gate_a)
+        seed(other, gate_b)
+
+        self._auth_admin()
+        filtered = self.client.get(
+            '/api/v1/web/customers/',
+            {'sub_location_public_id': str(gate_a.public_id)},
+        )
+        self.assertEqual(filtered.status_code, status.HTTP_200_OK)
+        ids = [row['public_id'] for row in filtered.data['results']]
+        self.assertEqual(ids, [str(self.customer.public_id)])
+
+        summary = build_ops_summary(service_date=service_date, meal_period='lunch')
+        self.assertEqual(summary['unassigned_sub_location_count'], 0)
+        zone_payload = next(z for z in summary['zones'] if z['code'] == 'sub-api-z1')
+        loc_payload = next(
+            loc for loc in zone_payload['locations'] if loc['name'] == 'Chawkbazar'
+        )
+        sub_names = [s['name'] for s in loc_payload['sub_locations']]
+        self.assertIn('Gate A', sub_names)
+        self.assertIn('Gate B', sub_names)
+
+        rider_token = Token.objects.create(user=rider_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {rider_token.key}')
+        with patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            board = self.client.get('/user_management/deliveryman/deliveries/today-board/')
+        self.assertEqual(board.status_code, status.HTTP_200_OK)
+        locations = board.data['periods']['lunch']['locations']
+        self.assertEqual(len(locations), 1)
+        subs = locations[0]['sub_locations']
+        self.assertEqual(subs[0]['sub_location_name'], 'Gate A')
+        self.assertEqual(subs[1]['sub_location_name'], 'Gate B')
+
+        # silence unused
+        self.assertTrue(DeliverySubLocation.objects.filter(pk=gate_a.pk).exists())

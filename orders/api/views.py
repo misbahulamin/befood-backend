@@ -105,10 +105,16 @@ def _today_board_queryset(request):
         'order__customer__user',
         'order__customer__delivery_location',
         'order__customer__delivery_location__zone',
+        'order__customer__delivery_sub_location',
+        'order__customer__delivery_sub_location__location',
+        'order__customer__delivery_sub_location__location__zone',
         'subscription',
         'subscription__customer__user',
         'subscription__customer__delivery_location',
         'subscription__customer__delivery_location__zone',
+        'subscription__customer__delivery_sub_location',
+        'subscription__customer__delivery_sub_location__location',
+        'subscription__customer__delivery_sub_location__location__zone',
     ).filter(live_delivery_q(service_date))
 
     week_of_month = request.query_params.get('week_of_month')
@@ -136,10 +142,16 @@ def _today_board_queryset(request):
             'order__customer__user',
             'order__customer__delivery_location',
             'order__customer__delivery_location__zone',
+            'order__customer__delivery_sub_location',
+            'order__customer__delivery_sub_location__location',
+            'order__customer__delivery_sub_location__location__zone',
             'subscription',
             'subscription__customer__user',
             'subscription__customer__delivery_location',
             'subscription__customer__delivery_location__zone',
+            'subscription__customer__delivery_sub_location',
+            'subscription__customer__delivery_sub_location__location',
+            'subscription__customer__delivery_sub_location__location__zone',
         ).filter(pk__in=matching_ids)
     else:
         qs = qs.filter(service_date=service_date)
@@ -154,15 +166,54 @@ def _today_board_queryset(request):
     zone_public_id = (request.query_params.get('zone_public_id') or '').strip()
     if zone_public_id:
         qs = qs.filter(
-            Q(subscription__customer__delivery_location__zone__public_id=zone_public_id)
-            | Q(order__customer__delivery_location__zone__public_id=zone_public_id)
+            Q(
+                subscription__customer__delivery_sub_location__location__zone__public_id=zone_public_id
+            )
+            | Q(
+                order__customer__delivery_sub_location__location__zone__public_id=zone_public_id
+            )
+            | (
+                Q(subscription__customer__delivery_sub_location__isnull=True)
+                & Q(
+                    subscription__customer__delivery_location__zone__public_id=zone_public_id
+                )
+            )
+            | (
+                Q(order__customer__delivery_sub_location__isnull=True)
+                & Q(order__customer__delivery_location__zone__public_id=zone_public_id)
+            )
         )
 
     location_public_id = (request.query_params.get('location_public_id') or '').strip()
     if location_public_id:
         qs = qs.filter(
-            Q(subscription__customer__delivery_location__public_id=location_public_id)
-            | Q(order__customer__delivery_location__public_id=location_public_id)
+            Q(
+                subscription__customer__delivery_sub_location__location__public_id=location_public_id
+            )
+            | Q(
+                order__customer__delivery_sub_location__location__public_id=location_public_id
+            )
+            | (
+                Q(subscription__customer__delivery_sub_location__isnull=True)
+                & Q(
+                    subscription__customer__delivery_location__public_id=location_public_id
+                )
+            )
+            | (
+                Q(order__customer__delivery_sub_location__isnull=True)
+                & Q(order__customer__delivery_location__public_id=location_public_id)
+            )
+        )
+
+    sub_location_public_id = (
+        request.query_params.get('sub_location_public_id') or ''
+    ).strip()
+    if sub_location_public_id:
+        qs = qs.filter(
+            Q(
+                subscription__customer__delivery_sub_location__public_id=sub_location_public_id
+            )
+            | Q(order__customer__delivery_sub_location__public_id=sub_location_public_id)
         )
 
     delivery_man_public_id = (request.query_params.get('delivery_man_public_id') or '').strip()
@@ -173,8 +224,18 @@ def _today_board_queryset(request):
             ).values_list('pk', flat=True)
         )
         qs = qs.filter(
-            Q(subscription__customer__delivery_location__zone_id__in=zone_ids)
-            | Q(order__customer__delivery_location__zone_id__in=zone_ids)
+            Q(
+                subscription__customer__delivery_sub_location__location__zone_id__in=zone_ids
+            )
+            | Q(order__customer__delivery_sub_location__location__zone_id__in=zone_ids)
+            | (
+                Q(subscription__customer__delivery_sub_location__isnull=True)
+                & Q(subscription__customer__delivery_location__zone_id__in=zone_ids)
+            )
+            | (
+                Q(order__customer__delivery_sub_location__isnull=True)
+                & Q(order__customer__delivery_location__zone_id__in=zone_ids)
+            )
         )
 
     return qs.order_by('service_date', 'meal_period', 'id'), None
@@ -259,6 +320,11 @@ class AdminDeliveryActionsMixin:
                 name='location_public_id',
                 type=str,
                 description='Filter by operational delivery location public_id',
+            ),
+            OpenApiParameter(
+                name='sub_location_public_id',
+                type=str,
+                description='Filter by operational delivery sub-location public_id',
             ),
             OpenApiParameter(
                 name='delivery_man_public_id',
@@ -1174,6 +1240,7 @@ class KitchenTodayMealRequirementView(APIView):
                     'confirmation_status': 'confirmed',
                     'expected_meal_count': 500,
                     'meal_off_count': 50,
+                    'excluded_other_period_count': 12,
                     'final_cooking_count': 450,
                     'total_customers': 500,
                     'packages': [

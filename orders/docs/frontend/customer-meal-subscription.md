@@ -116,9 +116,15 @@ Progress fields (read-only): `expected_deliveries`, `delivered_count`, `remainin
 
 ```http
 POST /api/v1/subscriptions/current/cancel/
+Content-Type: application/json
+
+{
+  "reason_code": "price_too_high",
+  "reason_text": "optional note"
+}
 ```
 
-Sets `status: cancelled`, `cancel_effective_on` = today. Future `scheduled` slots become `skipped` (`skip_source: system`). **Today’s** slots stay (still follow meal-off). No other customer can cancel this resource via `current/cancel` (they have their own current, or `404`).
+`reason_code` is **required** (422 if missing/invalid; subscription stays active). Do not send `unknown` (migration-only). Sets `status: cancelled`, `cancel_effective_on` = today, and persists `SubscriptionCancellation`. Future `scheduled` slots become `skipped` (`skip_source: system`). **Today’s** slots stay (still follow meal-off).
 
 ## Wallet minimum (subscribe gate)
 

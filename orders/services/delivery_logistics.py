@@ -86,11 +86,15 @@ def append_activity_log(
 def _resolve_zone_location(delivery: OrderDelivery):
     customer = delivery_customer(delivery)
     if customer is None:
-        return None, None
+        return None, None, None
+    sub = getattr(customer, 'delivery_sub_location', None)
+    if sub is not None:
+        location = sub.location
+        return getattr(location, 'zone', None), location, sub
     location = getattr(customer, 'delivery_location', None)
     if location is None:
-        return None, None
-    return getattr(location, 'zone', None), location
+        return None, None, None
+    return getattr(location, 'zone', None), location, None
 
 
 def record_phase_a_delivered(
@@ -117,13 +121,16 @@ def record_phase_a_delivered(
         delivery.delivered_by_rider = rider
         update_fields.append('delivered_by_rider')
 
-    zone, location = _resolve_zone_location(delivery)
+    zone, location, sub_location = _resolve_zone_location(delivery)
     if delivery.logistics_zone_id is None and zone is not None:
         delivery.logistics_zone = zone
         update_fields.append('logistics_zone')
     if delivery.logistics_location_id is None and location is not None:
         delivery.logistics_location = location
         update_fields.append('logistics_location')
+    if delivery.logistics_sub_location_id is None and sub_location is not None:
+        delivery.logistics_sub_location = sub_location
+        update_fields.append('logistics_sub_location')
 
     delivery.logistics_status = OrderDelivery.LogisticsStatus.DELIVERED
     if delivery.delivered_at is None:
@@ -185,7 +192,9 @@ def transition_logistics_status(
         OrderDelivery.objects.select_for_update(of=('self',))
         .select_related(
             'order__customer__delivery_location__zone',
+            'order__customer__delivery_sub_location__location__zone',
             'subscription__customer__delivery_location__zone',
+            'subscription__customer__delivery_sub_location__location__zone',
             'delivered_by_rider',
         )
         .get(pk=delivery.pk)
@@ -226,13 +235,16 @@ def transition_logistics_status(
         locked.delivered_by_rider = rider
         update_fields.append('delivered_by_rider')
 
-    zone, location = _resolve_zone_location(locked)
+    zone, location, sub_location = _resolve_zone_location(locked)
     if locked.logistics_zone_id is None and zone is not None:
         locked.logistics_zone = zone
         update_fields.append('logistics_zone')
     if locked.logistics_location_id is None and location is not None:
         locked.logistics_location = location
         update_fields.append('logistics_location')
+    if locked.logistics_sub_location_id is None and sub_location is not None:
+        locked.logistics_sub_location = sub_location
+        update_fields.append('logistics_sub_location')
 
     if to_status == OrderDelivery.LogisticsStatus.DELIVERED:
         if latitude is not None:

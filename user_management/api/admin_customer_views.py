@@ -308,8 +308,8 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
             )
 
         serializer = AdminCancelSubscriptionRequestSerializer(data=request.data or {})
-        serializer.is_valid(raise_exception=True)
-        reason = serializer.validated_data.get('reason') or ''
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
         # Classify before cancel so response meal lists match preview semantics.
         classification = build_cancel_classification_payload(subscription)
@@ -317,7 +317,8 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
             subscription,
             cancelled_by=request.user,
             cancel_source=CustomerSubscription.CancelSource.ADMIN,
-            reason=reason or None,
+            reason_code=serializer.validated_data['reason_code'],
+            reason_text=serializer.validated_data.get('reason_text') or '',
         )
         payload = build_subscription_cancel_response(
             updated,
@@ -344,37 +345,49 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
     @extend_schema(
         tags=['Admin Customers'],
         operation_id='adminCustomerDeliveryLocationAssign',
-        summary='Assign or clear customer operational delivery location',
+        summary='Assign or clear customer operational delivery sub-location',
         request=CustomerDeliveryLocationAssignSerializer,
-        responses={200: OpenApiResponse(description='Updated location and derived zone')},
+        responses={
+            200: OpenApiResponse(
+                description='Updated sub-location and derived location/zone'
+            )
+        },
     )
     @action(detail=True, methods=['patch'], url_path='delivery-location')
     def delivery_location(self, request, public_id=None):
         from delivery_zones.services.assignment import (
             assign_customer_location,
-            location_summary,
-            zone_summary_from_location,
+            assign_customer_sub_location,
+            customer_delivery_hierarchy,
         )
         from delivery_zones.services.errors import DeliveryZoneError
 
         customer = self.get_object()
         serializer = CustomerDeliveryLocationAssignSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
         try:
-            customer = assign_customer_location(
-                customer,
-                location_public_id=serializer.validated_data.get(
-                    'delivery_location_public_id'
-                ),
-            )
+            if 'delivery_sub_location_public_id' in data:
+                customer = assign_customer_sub_location(
+                    customer,
+                    sub_location_public_id=data.get('delivery_sub_location_public_id'),
+                )
+            else:
+                customer = assign_customer_location(
+                    customer,
+                    location_public_id=data.get('delivery_location_public_id'),
+                )
             customer = type(customer).objects.select_related(
                 'delivery_location',
                 'delivery_location__zone',
+                'delivery_sub_location',
+                'delivery_sub_location__location',
+                'delivery_sub_location__location__zone',
             ).get(pk=customer.pk)
         except DeliveryZoneError as exc:
             http_status = status.HTTP_422_UNPROCESSABLE_ENTITY
             code = getattr(exc, 'code', 'DELIVERY_ZONE_ERROR')
-            if code in {'LOCATION_NOT_FOUND'}:
+            if code in {'LOCATION_NOT_FOUND', 'SUB_LOCATION_NOT_FOUND'}:
                 http_status = status.HTTP_404_NOT_FOUND
             return Response(
                 {
@@ -385,12 +398,7 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
                 },
                 status=http_status,
             )
-        return Response(
-            {
-                'delivery_location': location_summary(customer.delivery_location),
-                'delivery_zone': zone_summary_from_location(customer.delivery_location),
-            }
-        )
+        return Response(customer_delivery_hierarchy(customer))
 
     @extend_schema(
         tags=['Admin Delivery Fees'],

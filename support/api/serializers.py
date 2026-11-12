@@ -71,6 +71,7 @@ class AdminConversationListSerializer(serializers.ModelSerializer):
             'status',
             'last_message',
             'last_message_at',
+            'last_message_sender',
             'admin_unread_count',
             'customer_unread_count',
             'customer_public_id',

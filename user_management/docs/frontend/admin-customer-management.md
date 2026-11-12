@@ -11,8 +11,8 @@ Admin Panel Customer 360 at `/admin/customers/:publicId`. **Subscription-first**
 
 ## Page flow
 
-1. **Customer list** — `GET /api/v1/web/customers/` with filters; search via `q` (name/email/username/phone with optional `+880`, or exact customer `public_id` UUID)
-2. **Customer detail** — `GET /api/v1/web/customers/{publicId}/` (overview only)
+1. **Customer list** — `GET /api/v1/web/customers/` with filters; search via `q` (name/email/username/phone with optional `+880`, or exact customer `public_id` UUID). Delivery hierarchy filters: `zone_public_id`, `location_public_id`, `sub_location_public_id`, `has_delivery_sub_location` (see [zone-based-delivery.md](../../delivery_zones/docs/frontend/zone-based-delivery.md)).
+2. **Customer detail** — `GET /api/v1/web/customers/{publicId}/` (overview only; includes `delivery_sub_location` + derived location/zone)
 3. **Tab switch** — enable React Query fetch for that tab's endpoint only
 
 ## Tabs
@@ -26,7 +26,7 @@ Admin Panel Customer 360 at `/admin/customers/:publicId`. **Subscription-first**
 | Meal-offs | `…/meal-offs/` | Yes |
 | Wallet overview | `…/wallet-overview/` | Yes |
 | Delivery fee | `…/delivery-fee-context/` + `…/delivery-fee-payments/` | Yes — see [delivery-fee-deduction.md](../../wallet/docs/frontend/delivery-fee-deduction.md) |
-| Delivery location / zone | Detail fields + `PATCH …/delivery-location/` | Yes — see [zone-based-delivery.md](../../delivery_zones/docs/frontend/zone-based-delivery.md) |
+| Delivery sub-location / location / zone | Detail fields (`delivery_sub_location`, derived `delivery_location`, `delivery_zone`) + `PATCH …/delivery-location/` with `delivery_sub_location_public_id` | Yes — see [zone-based-delivery.md](../../delivery_zones/docs/frontend/zone-based-delivery.md) |
 | Wallet history | `…/wallet-transactions/` | Yes |
 | Activity | `…/activity/` | Yes |
 

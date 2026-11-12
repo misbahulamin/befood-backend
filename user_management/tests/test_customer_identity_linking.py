@@ -243,6 +243,7 @@ class ReferralOnceTests(TestCase):
             HTTP_X_CLIENT_TYPE='mobile',
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data.get('referral_attributed'))
         profile = CustomerProfile.objects.get(phone='1755556666')
         self.assertTrue(ReferralRelationship.objects.filter(referred=profile).exists())
 

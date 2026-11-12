@@ -3,7 +3,7 @@ from rest_framework import serializers
 from meals.models import MealCategory
 from meals.services.meal_image import validate_image_extension, validate_image_size
 from meals.services.meal_offering import resolve_public_per_meal_price
-from orders.models import CustomerSubscription, OrderDelivery
+from orders.models import CustomerSubscription, OrderDelivery, SubscriptionCancellation
 from orders.services.meal_off import can_meal_off, can_meal_on, meal_off_deadline
 from orders.services.order_service import FrozenWalletOrderError, InsufficientWalletBalanceError
 from orders.services.subscription_service import (
@@ -346,7 +346,32 @@ class AdminSubscriptionDetailSerializer(AdminSubscriptionListSerializer):
         fields = AdminSubscriptionListSerializer.Meta.fields + ('deliveries', 'customer_note')
 
 
+CLIENT_CANCEL_REASON_CHOICES = [
+    (value, label)
+    for value, label in SubscriptionCancellation.ReasonCode.choices
+    if value != SubscriptionCancellation.ReasonCode.UNKNOWN
+]
+
+
 class CancelSubscriptionSerializer(serializers.Serializer):
+    """Customer self-cancel body. ``unknown`` is migration-only and rejected."""
+
+    reason_code = serializers.ChoiceField(choices=CLIENT_CANCEL_REASON_CHOICES)
+    reason_text = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+        default='',
+    )
+
     def save(self, **kwargs):
         subscription = self.context['subscription']
-        return cancel_subscription(subscription)
+        cancelled_by = self.context.get('cancelled_by')
+        cancel_source = self.context.get('cancel_source')
+        return cancel_subscription(
+            subscription,
+            cancelled_by=cancelled_by,
+            cancel_source=cancel_source,
+            reason_code=self.validated_data['reason_code'],
+            reason_text=self.validated_data.get('reason_text') or '',
+        )

@@ -732,7 +732,14 @@ class AdminCustomerManagementAPITests(APITestCase):
             self.assertEqual(lunch.status, OrderDelivery.DeliveryStatus.SCHEDULED)
             self.assertEqual(dinner.status, OrderDelivery.DeliveryStatus.SCHEDULED)
 
-            cancel = self.client.post(cancel_url, {'reason': 'admin support'}, format='json')
+            cancel = self.client.post(
+                cancel_url,
+                {
+                    'reason_code': 'other',
+                    'reason_text': 'admin support',
+                },
+                format='json',
+            )
             self.assertEqual(cancel.status_code, status.HTTP_200_OK)
             self.assertEqual(cancel.data['subscription']['status'], 'cancelled')
             self.assertEqual(cancel.data['subscription']['cancel_source'], 'admin')

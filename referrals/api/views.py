@@ -215,7 +215,29 @@ class AdminReferralProgramSettingsView(APIView):
 class AdminReferralAnalyticsView(APIView):
     permission_classes = [IsVerifiedAdmin]
 
-    @extend_schema(tags=['Admin Referrals'])
+    @extend_schema(
+        tags=['Admin Referrals'],
+        description=(
+            'Conversion funnel aggregates. '
+            '`total_successful_validations` counts validate API attempts (not unique users). '
+            '`unique_successful_validation_codes` counts distinct Valid OK codes. '
+            '`total_successful_registrations` counts `ReferralRelationship` rows. '
+            '`conversion_rate` is attempt-based (registrations / successful validations). '
+            '`attribution_rate_vs_unique_ok` uses unique successful codes as the denominator. '
+            '`attribution_skips_by_reason` aggregates finalize/create skip error codes.'
+        ),
+        responses={
+            200: OpenApiResponse(
+                description=(
+                    'Analytics payload including total_validations, '
+                    'total_successful_validations, unique_successful_validation_codes, '
+                    'total_successful_registrations, total_paid_subscribers_from_referral, '
+                    'conversion_rate, attribution_rate_vs_unique_ok, '
+                    'attribution_skips_by_reason.'
+                )
+            ),
+        },
+    )
     def get(self, request):
         data = admin_analytics(
             date_from=request.query_params.get('created_from'),

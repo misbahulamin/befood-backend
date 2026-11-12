@@ -225,13 +225,16 @@ Also stored in existing `/notifications/inbox/` feed.
 
 ```text
 Open Support Inbox page
-  → GET /api/v1/web/support/conversations/?page=1
-  → Render left list (name, phone, email, last message, unread, online)
+  → Connect inbox WS: /ws/support/inbox/?token=…
+  → GET /api/v1/web/support/conversations/ (default excludes empty threads)
+  → Render left list (Messenger-style: avatar, You: prefix, unread, online)
+  → Infinite-scroll next pages (do not put page in the URL)
   → On row click:
        GET .../conversations/{public_id}/
-       Connect WS for that public_id
+       Connect per-conversation WS for that public_id
   → Chat pane: history + live events
   → Send: WS message.send (or POST .../reply/ fallback)
+  → On inbox WS conversation.updated: move thread to top of cached list
   → Optional: PATCH .../status/ { "status": "closed" }
 ```
 
@@ -239,11 +242,11 @@ Open Support Inbox page
 
 **Left pane — conversation list**
 
-- Customer name, phone, email  
-- Last message + time  
+- Customer name, phone, email, avatar (`profile_picture_url`)  
+- Last message + time; prefix `You: ` when `last_message_sender` is `admin`  
 - Unread badge (`admin_unread_count`)  
 - Online dot (`customer_online`)  
-- Status chip (`open` / `closed` / `archived`)
+- Status chip only for `closed` / `archived` (hide for `open`)
 
 **Right pane — chat**
 
@@ -256,17 +259,20 @@ Open Support Inbox page
 
 **Permission:** verified admin (`IsVerifiedAdmin`).
 
+**Ordering:** `last_message_at DESC NULLS LAST`, then `-id`. Empty threads (null `last_message_at`) never sort above messaged threads.
+
 **Query filters (allowlisted)**
 
 | Param | Example | Meaning |
 |-------|---------|---------|
 | `status` | `open` | Filter by status |
 | `has_unread` | `true` | `admin_unread_count > 0` |
+| `include_empty` | `true` | Include never-messaged threads (default **false** — empties hidden) |
 | `q` | `rahim` | Search name / phone / email / last message |
-| `page` | `1` | Page |
+| `page` | `1` | Page (infinite-scroll client; keep out of URL) |
 | `page_size` | `20` (max 100) | Page size |
 
-Unknown filters → `400`.
+Unknown filters → `400`. Search/filters also exclude empties unless `include_empty=true`.
 
 **List item fields**
 
@@ -276,8 +282,10 @@ Unknown filters → `400`.
 | `customer_name` / `phone` / `email` | Identity |
 | `customer_public_id` | Link to customer 360 if needed |
 | `last_message` / `last_message_at` | Preview |
+| `last_message_sender` | `customer` \| `admin` \| `null` (no messages) |
 | `admin_unread_count` | Badge |
 | `customer_online` | Soft presence from cache |
+| `profile_picture_url` | Customer avatar URL (nullable) |
 | `status` | open/closed/archived |
 
 ### 5.3 `GET /api/v1/web/support/conversations/{public_id}/`
@@ -310,15 +318,41 @@ Opening detail **clears admin unread** for that thread.
 
 Allowed: `open`, `closed`, `archived`.
 
-### 5.6 Admin WebSocket
+### 5.6 Admin WebSockets
 
-Same URL and event contract as mobile. Admin may join **any** conversation. On connect, admin also joins an internal inbox group and may receive:
+**Inbox-wide (always on while Support Inbox page is open):**
 
-```json
-{ "type": "conversation.updated", "payload": { "public_id": "…", "last_message": "…", "admin_unread_count": 1, "customer": { ... } } }
+```text
+wss://<api-host>/ws/support/inbox/?token=<admin_token>
 ```
 
-Use this to bump the left list without polling.
+Verified admin only. Non-admin → close `4403`. Subscribes to the admin inbox group without opening a conversation. Prefer this for left-list live updates; poll the list only while this socket is disconnected.
+
+**Per-conversation (selected thread):** same URL/event contract as mobile. Admin may join **any** conversation. On connect, that consumer also joins the inbox group (harmless double membership).
+
+Inbox / list fan-out event:
+
+```json
+{
+  "type": "conversation.updated",
+  "payload": {
+    "public_id": "…",
+    "last_message": "…",
+    "last_message_at": "…",
+    "last_message_sender": "customer",
+    "admin_unread_count": 1,
+    "customer": {
+      "public_id": "…",
+      "name": "…",
+      "phone": "…",
+      "email": "…",
+      "profile_picture_url": null
+    }
+  }
+}
+```
+
+Every successful customer/admin message path (REST and WS) broadcasts this to the inbox group. Use it to move the thread to the top of the cached list without a full refresh.
 
 ---
 
@@ -369,11 +403,13 @@ Use this to bump the left list without polling.
 
 **Admin**
 
-- [ ] List with filters/search  
+- [ ] List with filters/search; empties hidden unless `include_empty=true`  
+- [ ] Order matches server (nulls last); `last_message_sender` for `You:` prefix  
+- [ ] Page-level `/ws/support/inbox/` for list updates  
 - [ ] Detail clears unread  
 - [ ] Live WS for open thread  
 - [ ] Status patch  
-- [ ] Left list updates on `conversation.updated`  
+- [ ] Left list move-to-top on `conversation.updated`  
 
 ---
 
