@@ -35,6 +35,7 @@ Verified admins can manually deduct a **monthly delivery fee** from a customer w
 | `POST` | `/api/v1/web/customers/{public_id}/delivery-fee-payments/` | Deduct fee |
 | `GET` | `/api/v1/web/delivery-fees/payments/` | Global payment list |
 | `GET` | `/api/v1/web/delivery-fees/reports/monthly/?year=&month=` | Dashboard month cards |
+| `GET` | `/api/v1/web/delivery-fees/reports/monthly/customers/?year=&month=&cohort=paid\|pending` | Paid/pending customer cohort drill-down |
 | `GET` | `/api/v1/web/delivery-fees/reports/lifetime/` | Lifetime cards |
 
 ---
@@ -114,6 +115,22 @@ Idempotent replay of the same key returns **`200`** with the original payment (n
 ### Global list filters
 
 `GET /api/v1/web/delivery-fees/payments/?year=&month=&customer=&status=&q=`
+
+Unsupported query keys → **`400`** with `error_code: UNSUPPORTED_FILTER`.
+
+### Monthly paid / pending cohort lists
+
+`GET /api/v1/web/delivery-fees/reports/monthly/customers/?year=2026&month=9&cohort=pending`
+
+Required: `year`, `month`, `cohort` (`paid` \| `pending`). Optional: `q`, `page`, `page_size`.
+
+When `q` is unset, list `count` MUST match the monthly card (`customers_paid` or `pending_customers`) for the same period.
+
+**Paid row fields:** `customer_public_id`, `customer_name`, `customer_phone`, `amount`, `paid_at`, `created_at`, `deducted_by_admin`, `payment_public_id`
+
+**Pending row fields:** `customer_public_id`, `customer_name`, `customer_phone`, `wallet_balance`, `wallet_status`, `package_name`, `subscription_status`
+
+Use these lists for Delivery fees hub card drill-down (navigate to Customer 360 to deduct). Do not invent pending rows from the payments ledger.
 
 Unsupported query keys → **`400`** with `error_code: UNSUPPORTED_FILTER`.
 

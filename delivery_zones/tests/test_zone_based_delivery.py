@@ -41,7 +41,12 @@ from meals.models import (
     MonthlyMenuSlotItem,
 )
 from orders.models import CustomerSubscription, OrderDelivery
-from user_management.models import AdminProfile, CustomerProfile, RiderProfile
+from user_management.models import (
+    AdminProfile,
+    CustomerDeliveryPlace,
+    CustomerProfile,
+    RiderProfile,
+)
 
 
 def make_test_image(name='meal.jpg', size=(100, 100), color='red'):
@@ -581,6 +586,80 @@ class DeliveryZoneAPITests(APITestCase):
             row['menu_items_label'],
             'chicken + dhal + vat + vegetable',
         )
+
+    def test_deliveryman_board_includes_building_floor_flat_from_place(self):
+        self._auth_admin()
+        zone1 = create_zone(name='Zone 1', code='zone-1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+        delivery = self._seed_delivery(self.customer, loc1, 'lunch')
+        place = CustomerDeliveryPlace.objects.create(
+            customer_profile=self.customer,
+            label='Home',
+            full_address='Mcs tower,muradpur Chittagong',
+            area='Muradpur',
+            city='Chittagong',
+            building_name='Me likely hostel',
+            floor='5',
+            flat_number='619',
+        )
+        delivery.delivery_place = place
+        delivery.delivery_full_address_snapshot = 'Mcs tower,muradpur Chittagong'
+        delivery.save(
+            update_fields=[
+                'delivery_place',
+                'delivery_full_address_snapshot',
+                'updated_at',
+            ]
+        )
+
+        self._auth_rider()
+        with patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            board = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/'
+            )
+        self.assertEqual(board.status_code, status.HTTP_200_OK)
+        row = board.data['periods']['lunch']['locations'][0]['sub_locations'][0][
+            'customers'
+        ][0]
+        self.assertEqual(row['full_address'], 'Mcs tower,muradpur Chittagong')
+        self.assertEqual(row['building_name'], 'Me likely hostel')
+        self.assertEqual(row['floor'], '5')
+        self.assertEqual(row['flat_number'], '619')
+
+    def test_deliveryman_board_empty_building_floor_flat_when_missing(self):
+        self._auth_admin()
+        zone1 = create_zone(name='Zone 1', code='zone-1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+        self._seed_delivery(self.customer, loc1, 'lunch')
+
+        self._auth_rider()
+        with patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            board = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/'
+            )
+        self.assertEqual(board.status_code, status.HTTP_200_OK)
+        row = board.data['periods']['lunch']['locations'][0]['sub_locations'][0][
+            'customers'
+        ][0]
+        self.assertEqual(row['full_address'], 'House 1')
+        self.assertIn('building_name', row)
+        self.assertIn('floor', row)
+        self.assertIn('flat_number', row)
+        self.assertEqual(row['building_name'], '')
+        self.assertEqual(row['floor'], '')
+        self.assertEqual(row['flat_number'], '')
 
     def test_deliveryman_board_omits_low_balance_blocked_customers(self):
         self._auth_admin()

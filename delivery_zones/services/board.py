@@ -125,6 +125,7 @@ def zone_scoped_deliveries(
             'subscription__customer__delivery_sub_location__location',
             'subscription__customer__delivery_sub_location__location__zone',
             'subscription__meal',
+            'delivery_place',
             'delivered_by_rider',
             'delivered_by_rider__user',
         )
@@ -181,6 +182,36 @@ def _special_notes(delivery: OrderDelivery) -> str:
     if delivery.order_id and delivery.order.customer_note:
         return delivery.order.customer_note
     return ''
+
+
+def _address_part(
+    *,
+    snapshot: str | None,
+    place_value: str | None,
+) -> str:
+    """Prefer non-empty snapshot, else live place value, else empty string."""
+    snap = (snapshot or '').strip()
+    if snap:
+        return snap
+    return (place_value or '').strip()
+
+
+def _building_floor_flat(delivery: OrderDelivery) -> dict[str, str]:
+    place = delivery.delivery_place
+    return {
+        'building_name': _address_part(
+            snapshot=delivery.delivery_building_name_snapshot,
+            place_value=place.building_name if place is not None else None,
+        ),
+        'floor': _address_part(
+            snapshot=delivery.delivery_floor_snapshot,
+            place_value=place.floor if place is not None else None,
+        ),
+        'flat_number': _address_part(
+            snapshot=delivery.delivery_flat_number_snapshot,
+            place_value=place.flat_number if place is not None else None,
+        ),
+    }
 
 
 def _menu_items_label(
@@ -391,6 +422,7 @@ def build_deliveryman_board(
         sub_map[sub_key]['delivery_count'] += 1
         listed_count += 1
         package_name, package_public_id = _package_fields(delivery)
+        address_parts = _building_floor_flat(delivery)
         row = {
             'delivery_public_id': str(delivery.public_id),
             'customer_public_id': str(customer.public_id) if customer else None,
@@ -402,6 +434,9 @@ def build_deliveryman_board(
             'full_address': delivery.delivery_full_address_snapshot,
             'area': delivery.delivery_area_snapshot,
             'city': delivery.delivery_city_snapshot,
+            'building_name': address_parts['building_name'],
+            'floor': address_parts['floor'],
+            'flat_number': address_parts['flat_number'],
             'location_name': loc.name,
             'location_priority': loc.priority,
             'sub_location_name': sub.name,

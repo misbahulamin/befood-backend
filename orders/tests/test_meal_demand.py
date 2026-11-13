@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from io import BytesIO
 from unittest.mock import patch
@@ -24,7 +24,13 @@ from meals.models import (
     MonthlyMenuSlot,
     MonthlyMenuSlotItem,
 )
-from orders.models import MealDemandSnapshot, MealOffSettings, Order, OrderDelivery
+from orders.models import (
+    CustomerSubscription,
+    MealDemandSnapshot,
+    MealOffSettings,
+    Order,
+    OrderDelivery,
+)
 from orders.services.meal_demand import (
     CONFIRMATION_CONFIRMED,
     CONFIRMATION_ESTIMATED,
@@ -35,6 +41,7 @@ from orders.services.meal_demand import (
     upsert_demand_snapshots_for_slot,
 )
 from user_management.models import AdminProfile, CustomerProfile
+from wallet.services.ledger import credit_wallet, get_or_create_wallet
 
 
 def make_test_image(name='meal.jpg', size=(100, 100), color='red'):
@@ -474,7 +481,13 @@ class MealDemandServiceTestCase(TestCase):
         )
         self.assertEqual(meal_off['count'], 1)
         self.assertEqual(len(meal_off['customers']), 1)
-        self.assertIn('reason', meal_off['customers'][0])
+        meal_off_row = meal_off['customers'][0]
+        self.assertIn('reason', meal_off_row)
+        # Meal-off payload shape stays lean (no low-balance-only decision fields).
+        self.assertNotIn('meal_block_days', meal_off_row)
+        self.assertNotIn('total_meals_delivered', meal_off_row)
+        self.assertNotIn('meals_delivered_this_month', meal_off_row)
+        self.assertNotIn('subscribed_at', meal_off_row)
 
         low_balance = build_kitchen_exclusion_details(
             self.service_date,
@@ -484,6 +497,101 @@ class MealDemandServiceTestCase(TestCase):
         names = {row['name'] for row in low_balance['customers']}
         self.assertIn('Wallet Blocked', names)
         self.assertEqual(low_balance['count'], 1)
+
+    def test_build_kitchen_exclusion_details_low_balance_decision_fields(self):
+        from orders.services.meal_demand import build_kitchen_exclusion_details
+
+        blocked = self._make_customer('blocked_metrics')
+        blocked.user.first_name = 'Metrics'
+        blocked.user.last_name = 'Blocked'
+        blocked.user.save(update_fields=['first_name', 'last_name'])
+        blocked_at = timezone.make_aware(
+            datetime.combine(self.service_date - timedelta(days=3), time(10, 0)),
+            timezone=ZoneInfo('Asia/Dhaka'),
+        )
+        blocked.meal_service_blocked_low_balance = True
+        blocked.meal_service_blocked_at = blocked_at
+        blocked.save(
+            update_fields=[
+                'meal_service_blocked_low_balance',
+                'meal_service_blocked_at',
+            ]
+        )
+        credit_wallet(get_or_create_wallet(blocked), Decimal('50.00'))
+        CustomerSubscription.objects.create(
+            customer=blocked,
+            meal=self.premium,
+            meal_name_snapshot=self.premium.meal_name,
+            meal_period_snapshot=MealCategory.MealPeriod.BOTH,
+            quantity=1,
+            status=CustomerSubscription.Status.ACTIVE,
+            started_on=self.service_date - timedelta(days=40),
+        )
+        # One August order: 2 prior DELIVERED + service_date dinner SCHEDULED (blocked).
+        august_order = Order.objects.create(
+            customer=blocked,
+            meal=self.premium,
+            meal_name_snapshot=self.premium.meal_name,
+            meal_type_snapshot=self.premium.meal_type,
+            meal_period_snapshot=self.premium.meal_period,
+            total_price_snapshot=self.premium.total_price,
+            per_meal_price_snapshot=Decimal('100.00'),
+            order_status=Order.OrderStatus.ACTIVE,
+            order_start_date=self.service_date - timedelta(days=5),
+            order_end_date=self.service_date,
+            service_days_count=3,
+            order_month='2026-08',
+        )
+        for offset, period in (
+            (3, OrderDelivery.MealPeriod.LUNCH),
+            (1, OrderDelivery.MealPeriod.DINNER),
+        ):
+            OrderDelivery.objects.create(
+                order=august_order,
+                service_date=self.service_date - timedelta(days=offset),
+                meal_period=period,
+                status=OrderDelivery.DeliveryStatus.DELIVERED,
+            )
+        OrderDelivery.objects.create(
+            order=august_order,
+            service_date=self.service_date,
+            meal_period=OrderDelivery.MealPeriod.DINNER,
+            status=OrderDelivery.DeliveryStatus.SCHEDULED,
+        )
+        # Outside current month — must not count in meals_delivered_this_month.
+        old_order = Order.objects.create(
+            customer=blocked,
+            meal=self.premium,
+            meal_name_snapshot=self.premium.meal_name,
+            meal_type_snapshot=self.premium.meal_type,
+            meal_period_snapshot=self.premium.meal_period,
+            total_price_snapshot=self.premium.total_price,
+            per_meal_price_snapshot=Decimal('100.00'),
+            order_status=Order.OrderStatus.COMPLETED,
+            order_start_date=date(2026, 7, 1),
+            order_end_date=date(2026, 7, 1),
+            service_days_count=1,
+            order_month='2026-07',
+        )
+        OrderDelivery.objects.create(
+            order=old_order,
+            service_date=date(2026, 7, 1),
+            meal_period=OrderDelivery.MealPeriod.LUNCH,
+            status=OrderDelivery.DeliveryStatus.DELIVERED,
+        )
+
+        payload = build_kitchen_exclusion_details(
+            self.service_date,
+            'dinner',
+            'low_balance',
+        )
+        row = next(r for r in payload['customers'] if r['name'] == 'Metrics Blocked')
+        self.assertEqual(row['meal_block_days'], 4)  # Aug 2..Aug 5 inclusive
+        self.assertEqual(row['total_meals_delivered'], 3)
+        self.assertEqual(row['meals_delivered_this_month'], 2)
+        self.assertIsNotNone(row['subscribed_at'])
+        self.assertIsNotNone(row['meal_service_blocked_at'])
+        self.assertIsNotNone(row['balance_shortfall'])
 
 
 @override_settings(MEDIA_ROOT='test_media', EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')

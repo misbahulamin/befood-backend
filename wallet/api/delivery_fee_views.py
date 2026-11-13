@@ -12,6 +12,7 @@ from user_management.services.admin_people_search import build_customer_people_q
 from wallet.api.delivery_fee_serializers import (
     DeliveryFeeLifetimeReportSerializer,
     DeliveryFeeMonthlyReportSerializer,
+    DeliveryFeePaidCohortRowSerializer,
     DeliveryFeePaymentSerializer,
 )
 from wallet.models import DeliveryFeePayment
@@ -22,13 +23,19 @@ from wallet.services.delivery_fee import (
 )
 from wallet.services.delivery_fee_reporting import (
     lifetime_delivery_fee_report,
+    list_monthly_delivery_fee_customers,
     monthly_delivery_fee_report,
+    parse_cohort,
     parse_report_year_month,
+    serialize_cohort_row,
 )
 
 DELIVERY_FEE_TAG = 'Admin Delivery Fees'
 ALLOWED_PAYMENT_FILTERS = frozenset(
     {'year', 'month', 'customer', 'status', 'q', 'page', 'page_size'}
+)
+ALLOWED_COHORT_FILTERS = frozenset(
+    {'year', 'month', 'cohort', 'q', 'page', 'page_size'}
 )
 
 
@@ -38,8 +45,8 @@ class DeliveryFeePagination(PageNumberPagination):
     max_page_size = 100
 
 
-def _unsupported_filters_response(query_params):
-    unknown = [key for key in query_params.keys() if key not in ALLOWED_PAYMENT_FILTERS]
+def _unsupported_filters_response(query_params, *, allowed):
+    unknown = [key for key in query_params.keys() if key not in allowed]
     if not unknown:
         return None
     return Response(
@@ -82,7 +89,9 @@ class DeliveryFeePaymentListView(APIView):
         },
     )
     def get(self, request):
-        bad = _unsupported_filters_response(request.query_params)
+        bad = _unsupported_filters_response(
+            request.query_params, allowed=ALLOWED_PAYMENT_FILTERS
+        )
         if bad is not None:
             return bad
 
@@ -183,3 +192,60 @@ class DeliveryFeeLifetimeReportView(APIView):
     )
     def get(self, request):
         return Response(lifetime_delivery_fee_report())
+
+
+class DeliveryFeeMonthlyCustomersView(APIView):
+    permission_classes = [IsVerifiedAdmin]
+
+    @extend_schema(
+        tags=[DELIVERY_FEE_TAG],
+        operation_id='adminDeliveryFeeMonthlyCustomers',
+        summary='Monthly paid or pending delivery-fee customer cohort',
+        parameters=[
+            OpenApiParameter(
+                name='year', type=int, location=OpenApiParameter.QUERY, required=True
+            ),
+            OpenApiParameter(
+                name='month', type=int, location=OpenApiParameter.QUERY, required=True
+            ),
+            OpenApiParameter(
+                name='cohort',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='paid | pending',
+            ),
+            OpenApiParameter(name='q', type=str, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='page', type=int, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='page_size', type=int, location=OpenApiParameter.QUERY),
+        ],
+        responses={
+            200: DeliveryFeePaidCohortRowSerializer(many=True),
+            400: OpenApiResponse(description='Invalid period/cohort or unsupported filter'),
+            401: OpenApiResponse(description='Unauthenticated'),
+            403: OpenApiResponse(description='Forbidden'),
+        },
+    )
+    def get(self, request):
+        bad = _unsupported_filters_response(
+            request.query_params, allowed=ALLOWED_COHORT_FILTERS
+        )
+        if bad is not None:
+            return bad
+
+        try:
+            month, year = parse_report_year_month(request.query_params)
+            cohort = parse_cohort(request.query_params.get('cohort'))
+            qs = list_monthly_delivery_fee_customers(
+                year=year,
+                month=month,
+                cohort=cohort,
+                q=request.query_params.get('q'),
+            )
+        except (DeliveryFeePeriodError, DeliveryFeeError) as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        paginator = DeliveryFeePagination()
+        page = paginator.paginate_queryset(qs, request)
+        payload = [serialize_cohort_row(cohort=cohort, row=row) for row in page]
+        return paginator.get_paginated_response(payload)

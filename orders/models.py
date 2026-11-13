@@ -410,6 +410,9 @@ class OrderDelivery(PublicIdMixin, models.Model):
     delivery_full_address_snapshot = models.TextField(blank=True)
     delivery_area_snapshot = models.CharField(max_length=100, blank=True)
     delivery_city_snapshot = models.CharField(max_length=100, blank=True)
+    delivery_building_name_snapshot = models.CharField(max_length=255, blank=True)
+    delivery_floor_snapshot = models.CharField(max_length=50, blank=True)
+    delivery_flat_number_snapshot = models.CharField(max_length=50, blank=True)
     delivery_latitude_snapshot = models.DecimalField(
         max_digits=9, decimal_places=6, null=True, blank=True
     )

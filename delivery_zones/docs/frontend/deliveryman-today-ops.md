@@ -54,6 +54,8 @@ When `status` is omitted, `include_delivered=true` still returns scheduled + del
 | `menu_items_label` | Daily menu ingredients (separate from package) |
 | `status` | `scheduled` / `delivered` / … — UI may translate `scheduled` → “নির্ধারিত”; de-emphasize in new UI |
 | `meal_period`, `meal_quantity`, address / phone / location | Unchanged |
+| `full_address`, `area`, `city` | Street / area / city snapshots (unchanged) |
+| `building_name`, `floor`, `flat_number` | Structured door-level parts; always present; `""` means unknown — do not invent values |
 | `delivered_at` | Present when delivered (logistics `delivered_at` or `marked_at`) |
 | `delivered_by_rider_public_id`, `delivered_by_name` | When rider attribution exists |
 
@@ -73,6 +75,12 @@ Do **not** remove `meal_name` or `status` — current mobile DTOs depend on them
   "package_public_id": "...",
   "menu_items_label": "Beef + dhal",
   "meal_quantity": 1,
+  "full_address": "Mcs tower,muradpur Chittagong",
+  "area": "Muradpur",
+  "city": "Chittagong",
+  "building_name": "Me likely hostel",
+  "floor": "5",
+  "flat_number": "619",
   "delivered_at": "2026-09-22T07:42:00+00:00",
   "delivered_by_rider_public_id": "...",
   "delivered_by_name": "Rahim Khan"

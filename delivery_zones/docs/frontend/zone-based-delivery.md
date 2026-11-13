@@ -223,7 +223,12 @@ Foreign `zone_public_id` is ignored—board is always the rider’s assigned zon
                   "delivery_public_id": "...",
                   "customer_name": "Rahim",
                   "customer_phone": "1713000001",
-                  "full_address": "...",
+                  "full_address": "Mcs tower,muradpur Chittagong",
+                  "area": "Muradpur",
+                  "city": "Chittagong",
+                  "building_name": "Me likely hostel",
+                  "floor": "5",
+                  "flat_number": "619",
                   "location_name": "Chawkbazar",
                   "location_priority": 1,
                   "sub_location_name": "Gate A",
@@ -249,6 +254,8 @@ Foreign `zone_public_id` is ignored—board is always the rider’s assigned zon
   }
 }
 ```
+
+Customer address parts `building_name`, `floor`, and `flat_number` are always present as strings. An empty string (`""`) means that part is unknown — clients must not invent values. Prefer these over parsing `full_address`.
 
 ## Delivery Man — Today summary
 

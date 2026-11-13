@@ -365,6 +365,7 @@ class DeliveryFeeApiTests(APITestCase):
         self.monthly_url = reverse('web_delivery_fees:report-monthly')
         self.lifetime_url = reverse('web_delivery_fees:report-lifetime')
         self.list_url = reverse('web_delivery_fees:payment-list')
+        self.cohort_url = reverse('web_delivery_fees:report-monthly-customers')
 
     def test_verified_admin_can_deduct(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
@@ -517,4 +518,144 @@ class DeliveryFeeApiTests(APITestCase):
     def test_customer_denied_reports(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.customer_token.key}')
         response = self.client.get(self.monthly_url, {'year': 2026, 'month': 9})
+        self.assertIn(response.status_code, (403, 401))
+
+    def _seed_paid_and_pending_month(self):
+        meal = _make_meal()
+        CustomerSubscription.objects.create(
+            customer=self.customer,
+            meal=meal,
+            meal_name_snapshot=meal.meal_name,
+            meal_period_snapshot=meal.meal_period,
+            status=CustomerSubscription.Status.ACTIVE,
+            started_on=date(2026, 1, 1),
+        )
+        _, other = _make_customer(username='fee_cohort_other', phone='1811111112')
+        other_wallet = get_or_create_wallet(other)
+        credit_wallet(
+            other_wallet,
+            Decimal('500.00'),
+            type=WalletTransaction.Type.RECHARGE,
+            status=WalletTransaction.Status.COMPLETED,
+        )
+        CustomerSubscription.objects.create(
+            customer=other,
+            meal=meal,
+            meal_name_snapshot=meal.meal_name,
+            meal_period_snapshot=meal.meal_period,
+            status=CustomerSubscription.Status.ACTIVE,
+            started_on=date(2026, 1, 1),
+        )
+        charge_delivery_fee(
+            self.customer,
+            Decimal('300.00'),
+            payment_month=9,
+            payment_year=2026,
+            reason='September Delivery Fee',
+            actor_admin=self.admin,
+        )
+        return other
+
+    def test_monthly_cohort_counts_match_report(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        other = self._seed_paid_and_pending_month()
+
+        monthly = self.client.get(self.monthly_url, {'year': 2026, 'month': 9})
+        self.assertEqual(monthly.status_code, 200)
+
+        paid = self.client.get(
+            self.cohort_url,
+            {'year': 2026, 'month': 9, 'cohort': 'paid'},
+        )
+        self.assertEqual(paid.status_code, 200)
+        self.assertEqual(paid.data['count'], monthly.data['customers_paid'])
+        self.assertEqual(paid.data['count'], 1)
+        self.assertEqual(
+            str(paid.data['results'][0]['customer_public_id']),
+            str(self.customer.public_id),
+        )
+        self.assertIn('amount', paid.data['results'][0])
+        self.assertIn('payment_public_id', paid.data['results'][0])
+
+        pending = self.client.get(
+            self.cohort_url,
+            {'year': 2026, 'month': 9, 'cohort': 'pending'},
+        )
+        self.assertEqual(pending.status_code, 200)
+        self.assertEqual(pending.data['count'], monthly.data['pending_customers'])
+        self.assertEqual(pending.data['count'], 1)
+        self.assertEqual(
+            str(pending.data['results'][0]['customer_public_id']),
+            str(other.public_id),
+        )
+        self.assertIn('wallet_balance', pending.data['results'][0])
+        self.assertEqual(pending.data['results'][0]['subscription_status'], 'active')
+
+    def test_monthly_cohort_empty_period(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        paid = self.client.get(
+            self.cohort_url,
+            {'year': 2020, 'month': 1, 'cohort': 'paid'},
+        )
+        self.assertEqual(paid.status_code, 200)
+        self.assertEqual(paid.data['count'], 0)
+        self.assertEqual(paid.data['results'], [])
+
+        pending = self.client.get(
+            self.cohort_url,
+            {'year': 2020, 'month': 1, 'cohort': 'pending'},
+        )
+        self.assertEqual(pending.status_code, 200)
+        self.assertEqual(pending.data['count'], 0)
+
+    def test_monthly_cohort_q_narrows(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        self._seed_paid_and_pending_month()
+
+        pending_all = self.client.get(
+            self.cohort_url,
+            {'year': 2026, 'month': 9, 'cohort': 'pending'},
+        )
+        self.assertEqual(pending_all.data['count'], 1)
+
+        pending_miss = self.client.get(
+            self.cohort_url,
+            {'year': 2026, 'month': 9, 'cohort': 'pending', 'q': 'zzzz-no-match'},
+        )
+        self.assertEqual(pending_miss.status_code, 200)
+        self.assertEqual(pending_miss.data['count'], 0)
+
+        paid_hit = self.client.get(
+            self.cohort_url,
+            {'year': 2026, 'month': 9, 'cohort': 'paid', 'q': 'Rahim'},
+        )
+        self.assertEqual(paid_hit.status_code, 200)
+        self.assertEqual(paid_hit.data['count'], 1)
+
+    def test_monthly_cohort_unsupported_filter(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        response = self.client.get(
+            self.cohort_url,
+            {'year': 2026, 'month': 9, 'cohort': 'paid', 'foo': 'bar'},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['error_code'], 'UNSUPPORTED_FILTER')
+
+    def test_monthly_cohort_invalid_period_and_cohort(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        missing = self.client.get(self.cohort_url, {'cohort': 'paid'})
+        self.assertEqual(missing.status_code, 400)
+
+        bad_cohort = self.client.get(
+            self.cohort_url,
+            {'year': 2026, 'month': 9, 'cohort': 'all'},
+        )
+        self.assertEqual(bad_cohort.status_code, 400)
+
+    def test_monthly_cohort_non_admin_denied(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.customer_token.key}')
+        response = self.client.get(
+            self.cohort_url,
+            {'year': 2026, 'month': 9, 'cohort': 'pending'},
+        )
         self.assertIn(response.status_code, (403, 401))

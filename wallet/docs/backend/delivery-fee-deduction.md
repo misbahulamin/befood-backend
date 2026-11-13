@@ -61,6 +61,24 @@ Delivery-fee debit **does not** credit or debit platform `AdminWallet` cash. Pre
 
 `pending_customers` = count of customers with an **active** `CustomerSubscription` who do **not** have a `paid` `DeliveryFeePayment` for that `(year, month)`.
 
+Shared helpers in `wallet.services.delivery_fee_reporting` (`paid_payments_qs`, `paid_customer_ids_for_period`, `pending_active_subscriber_qs`) back both report counts and the cohort list endpoint so list `count` matches the cards when search is unset.
+
+## Monthly cohort list
+
+`GET /api/v1/web/delivery-fees/reports/monthly/customers/?year=&month=&cohort=paid|pending&q=&page=&page_size=`
+
+| Query | Notes |
+|-------|--------|
+| `year`, `month` | Required; same period validation as monthly report |
+| `cohort` | Required: `paid` or `pending` |
+| `q` | Optional name/phone people search (narrows `count`) |
+| `page`, `page_size` | Pagination (default 20, max 100) |
+
+Unsupported keys → `400` `UNSUPPORTED_FILTER`. Invalid/missing period or cohort → `400`.
+
+- **Paid rows:** `customer_public_id`, `customer_name`, `customer_phone`, `amount`, `paid_at`, `created_at`, `deducted_by_admin`, `payment_public_id` (sorted `-created_at`, then name).
+- **Pending rows:** `customer_public_id`, `customer_name`, `customer_phone`, `wallet_balance`, `wallet_status`, `package_name`, `subscription_status` (sorted name, then phone).
+
 ## Reversal design (future)
 
 Do **not** mutate paid amount in place. Future reversal should:

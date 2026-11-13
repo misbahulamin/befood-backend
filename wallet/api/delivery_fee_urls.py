@@ -2,6 +2,7 @@ from django.urls import path
 
 from wallet.api.delivery_fee_views import (
     DeliveryFeeLifetimeReportView,
+    DeliveryFeeMonthlyCustomersView,
     DeliveryFeeMonthlyReportView,
     DeliveryFeePaymentListView,
 )
@@ -14,6 +15,11 @@ urlpatterns = [
         'reports/monthly/',
         DeliveryFeeMonthlyReportView.as_view(),
         name='report-monthly',
+    ),
+    path(
+        'reports/monthly/customers/',
+        DeliveryFeeMonthlyCustomersView.as_view(),
+        name='report-monthly-customers',
     ),
     path(
         'reports/lifetime/',
