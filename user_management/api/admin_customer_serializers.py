@@ -482,3 +482,74 @@ class AdminCancelSubscriptionRequestSerializer(serializers.Serializer):
         text = attrs.get('reason_text') or attrs.get('reason') or ''
         attrs['reason_text'] = text
         return attrs
+
+
+class AdminCustomerAnalyticsNamedCountSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    label = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class AdminCustomerAnalyticsConsumptionSerializer(serializers.Serializer):
+    lifetime_total = serializers.IntegerField()
+    window_total = serializers.IntegerField()
+    by_meal_period = AdminCustomerAnalyticsNamedCountSerializer(many=True)
+    by_meal_type = AdminCustomerAnalyticsNamedCountSerializer(many=True)
+    top_meals = AdminCustomerAnalyticsNamedCountSerializer(many=True)
+
+
+class AdminCustomerAnalyticsMealOffSerializer(serializers.Serializer):
+    lifetime_total = serializers.IntegerField()
+    window_total = serializers.IntegerField()
+    by_meal_period = AdminCustomerAnalyticsNamedCountSerializer(many=True)
+    by_weekday = AdminCustomerAnalyticsNamedCountSerializer(many=True)
+    top_off_meals_lifetime = AdminCustomerAnalyticsNamedCountSerializer(many=True)
+    top_off_meals_window = AdminCustomerAnalyticsNamedCountSerializer(many=True)
+    top_off_menus_window = AdminCustomerAnalyticsNamedCountSerializer(many=True)
+
+
+class AdminCustomerAnalyticsBlockedSerializer(serializers.Serializer):
+    currently_blocked = serializers.BooleanField()
+    blocked_at = serializers.CharField(allow_null=True)
+    blocked_meals_estimate = serializers.IntegerField()
+    blocked_meals_window_estimate = serializers.IntegerField()
+    note = serializers.CharField()
+
+
+class AdminCustomerAnalyticsRechargeSampleSerializer(serializers.Serializer):
+    public_id = serializers.CharField()
+    amount = serializers.CharField()
+    method = serializers.CharField()
+    created_at = serializers.CharField(allow_null=True)
+    reviewed_at = serializers.CharField(allow_null=True)
+
+
+class AdminCustomerAnalyticsWalletRechargeSerializer(serializers.Serializer):
+    recharge_count = serializers.IntegerField()
+    total_recharged = serializers.CharField()
+    average_amount = serializers.CharField(allow_null=True)
+    last_recharge_at = serializers.CharField(allow_null=True)
+    on_time_count = serializers.IntegerField()
+    recharges_after_block_count = serializers.IntegerField()
+    median_gap_days = serializers.FloatField(allow_null=True)
+    by_method = AdminCustomerAnalyticsNamedCountSerializer(many=True)
+    recent = AdminCustomerAnalyticsRechargeSampleSerializer(many=True)
+    note = serializers.CharField(allow_null=True)
+
+
+class AdminCustomerAnalyticsMatrixSerializer(serializers.Serializer):
+    delivery_rate = serializers.FloatField(allow_null=True)
+    preference_off_rate = serializers.FloatField(allow_null=True)
+    block_rate_estimate = serializers.FloatField(allow_null=True)
+    recharges_per_30d = serializers.FloatField(allow_null=True)
+
+
+class AdminCustomerAnalyticsSerializer(serializers.Serializer):
+    generated_at = serializers.CharField()
+    timezone = serializers.CharField()
+    window = serializers.DictField()
+    consumption = AdminCustomerAnalyticsConsumptionSerializer()
+    meal_off = AdminCustomerAnalyticsMealOffSerializer()
+    blocked_low_balance = AdminCustomerAnalyticsBlockedSerializer()
+    wallet_recharge = AdminCustomerAnalyticsWalletRechargeSerializer()
+    matrix = AdminCustomerAnalyticsMatrixSerializer()
