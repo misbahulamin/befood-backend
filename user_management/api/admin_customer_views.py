@@ -11,6 +11,7 @@ from user_management.api.admin_customer_serializers import (
     AdminCustomerActiveOrderSerializer,
     AdminCustomerActiveSubscriptionSerializer,
     AdminCustomerActivitySerializer,
+    AdminCustomerAnalyticsSerializer,
     AdminCustomerDetailSerializer,
     AdminCustomerListSerializer,
     AdminCustomerMealHistorySerializer,
@@ -41,6 +42,7 @@ from user_management.services.admin_customer import (
     customer_subscriptions_queryset,
     customer_wallet_transactions_queryset,
 )
+from user_management.services.admin_customer_analytics import build_customer_analytics
 from wallet.api.delivery_fee_serializers import (
     DeliveryFeeChargeSerializer,
     DeliveryFeeContextSerializer,
@@ -229,6 +231,40 @@ class AdminCustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
     def wallet_overview(self, request, public_id=None):
         customer = self.get_object()
         return Response({'wallet_overview': build_wallet_overview(customer)})
+
+    @extend_schema(
+        tags=['Admin Customers'],
+        operation_id='adminCustomerAnalytics',
+        summary='Customer 360 analytics',
+        description=(
+            'Verified admin only. Lifetime + window consumption, preference meal-offs, '
+            'low-balance block estimates, wallet recharge behavior, and compact matrix. '
+            'Allowlisted query params: from, to (YYYY-MM-DD). Defaults to current '
+            'Asia/Dhaka calendar month.'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='from',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Inclusive window start (YYYY-MM-DD, Asia/Dhaka).',
+            ),
+            OpenApiParameter(
+                name='to',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Inclusive window end (YYYY-MM-DD, Asia/Dhaka).',
+            ),
+        ],
+        responses={200: AdminCustomerAnalyticsSerializer},
+    )
+    @action(detail=True, methods=['get'], url_path='analytics')
+    def analytics(self, request, public_id=None):
+        customer = self.get_object()
+        payload = build_customer_analytics(customer, request.query_params)
+        return Response(AdminCustomerAnalyticsSerializer(payload).data)
 
     @extend_schema(
         tags=['Admin Customers'],
