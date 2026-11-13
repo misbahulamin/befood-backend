@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -15,7 +16,14 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from meals.services.slot_pricing import resolve_published_slot_for_delivery
-from orders.models import MealDemandSnapshot, MealOffSettings, Order, OrderDelivery
+from orders.models import (
+    CustomerSubscription,
+    MealDemandSnapshot,
+    MealOffSettings,
+    Order,
+    OrderDelivery,
+)
+from orders.services.customer_lifecycle import to_business_date
 from orders.services.meal_off import (
     get_meal_off_settings,
     meal_off_business_now,
@@ -691,6 +699,91 @@ def _meal_off_reason(delivery: OrderDelivery) -> str:
     return label
 
 
+def _calendar_month_bounds(service_date: date) -> tuple[date, date]:
+    """Inclusive Asia/Dhaka calendar month containing service_date (date-only)."""
+    month_start = service_date.replace(day=1)
+    last_day = monthrange(service_date.year, service_date.month)[1]
+    return month_start, service_date.replace(day=last_day)
+
+
+def _meal_block_days_for_customer(customer, service_date: date) -> int | None:
+    """
+    Uncapped inclusive Asia/Dhaka calendar days of the current low-balance block.
+
+    Null when not currently blocked or meal_service_blocked_at is absent.
+    """
+    if customer is None or not customer.meal_service_blocked_low_balance:
+        return None
+    blocked_from = to_business_date(customer.meal_service_blocked_at)
+    if blocked_from is None:
+        return None
+    return max((service_date - blocked_from).days + 1, 0)
+
+
+def _batch_delivered_meal_counts(
+    customer_ids: list[int],
+    *,
+    month_start: date,
+    month_end: date,
+) -> tuple[dict[int, int], dict[int, int]]:
+    """Lifetime lifetime and current-month DELIVERED counts keyed by customer id."""
+    if not customer_ids:
+        return {}, {}
+
+    delivered = OrderDelivery.DeliveryStatus.DELIVERED
+    scope = Q(order__customer_id__in=customer_ids) | Q(
+        subscription__customer_id__in=customer_ids
+    )
+
+    def _counts(*, extra: Q | None = None) -> dict[int, int]:
+        qs = OrderDelivery.objects.filter(scope, status=delivered)
+        if extra is not None:
+            qs = qs.filter(extra)
+        rows = (
+            qs.annotate(cid=Coalesce('order__customer_id', 'subscription__customer_id'))
+            .values('cid')
+            .annotate(cnt=Count('pk'))
+        )
+        return {int(row['cid']): int(row['cnt']) for row in rows if row['cid'] is not None}
+
+    lifetime = _counts()
+    this_month = _counts(
+        extra=Q(service_date__gte=month_start, service_date__lte=month_end)
+    )
+    return lifetime, this_month
+
+
+def _batch_subscribed_at(customer_ids: list[int]) -> dict[int, datetime]:
+    """Active subscription created_at, else latest subscription created_at."""
+    if not customer_ids:
+        return {}
+
+    result: dict[int, datetime] = {}
+    active_rows = (
+        CustomerSubscription.objects.filter(
+            customer_id__in=customer_ids,
+            status=CustomerSubscription.Status.ACTIVE,
+        )
+        .order_by('customer_id', '-created_at', '-id')
+        .values_list('customer_id', 'created_at')
+    )
+    for customer_id, created_at in active_rows:
+        if customer_id not in result:
+            result[int(customer_id)] = created_at
+
+    missing = [cid for cid in customer_ids if cid not in result]
+    if missing:
+        fallback_rows = (
+            CustomerSubscription.objects.filter(customer_id__in=missing)
+            .order_by('customer_id', '-created_at', '-id')
+            .values_list('customer_id', 'created_at')
+        )
+        for customer_id, created_at in fallback_rows:
+            if customer_id not in result:
+                result[int(customer_id)] = created_at
+    return result
+
+
 def build_kitchen_exclusion_details(
     service_date: date,
     meal_period: str,
@@ -734,8 +827,29 @@ def build_kitchen_exclusion_details(
     if exclusion_type == 'low_balance':
         threshold = get_order_wallet_settings().meal_stop_threshold
 
+    deliveries = list(qs)
+    lifetime_counts: dict[int, int] = {}
+    month_counts: dict[int, int] = {}
+    subscribed_at_map: dict[int, datetime] = {}
+    if exclusion_type == 'low_balance':
+        customer_ids = []
+        seen: set[int] = set()
+        for delivery in deliveries:
+            customer = delivery_customer(delivery)
+            if customer is None or customer.id in seen:
+                continue
+            seen.add(customer.id)
+            customer_ids.append(customer.id)
+        month_start, month_end = _calendar_month_bounds(service_date)
+        lifetime_counts, month_counts = _batch_delivered_meal_counts(
+            customer_ids,
+            month_start=month_start,
+            month_end=month_end,
+        )
+        subscribed_at_map = _batch_subscribed_at(customer_ids)
+
     customers: list[dict[str, Any]] = []
-    for delivery in qs:
+    for delivery in deliveries:
         customer = delivery_customer(delivery)
         package_name = delivery_meal_name(delivery) or ''
         base = {
@@ -769,6 +883,18 @@ def build_kitchen_exclusion_details(
             blocked = bool(
                 customer is not None and customer.meal_service_blocked_low_balance
             )
+            shortfall = None
+            if balance is not None and threshold is not None:
+                shortfall = max(Decimal('0.00'), threshold - balance)
+            blocked_at = (
+                customer.meal_service_blocked_at
+                if customer is not None
+                else None
+            )
+            customer_id = customer.id if customer is not None else None
+            subscribed_at = (
+                subscribed_at_map.get(customer_id) if customer_id is not None else None
+            )
             customers.append(
                 {
                     **base,
@@ -778,6 +904,28 @@ def build_kitchen_exclusion_details(
                     ),
                     'meal_status': 'Blocked' if blocked else 'Low balance',
                     'meal_service_blocked_low_balance': blocked,
+                    'meal_block_days': _meal_block_days_for_customer(
+                        customer, service_date
+                    ),
+                    'total_meals_delivered': (
+                        lifetime_counts.get(customer_id, 0)
+                        if customer_id is not None
+                        else None
+                    ),
+                    'meals_delivered_this_month': (
+                        month_counts.get(customer_id, 0)
+                        if customer_id is not None
+                        else None
+                    ),
+                    'subscribed_at': (
+                        subscribed_at.isoformat() if subscribed_at is not None else None
+                    ),
+                    'balance_shortfall': (
+                        f'{shortfall:.2f}' if shortfall is not None else None
+                    ),
+                    'meal_service_blocked_at': (
+                        blocked_at.isoformat() if blocked_at is not None else None
+                    ),
                 }
             )
 

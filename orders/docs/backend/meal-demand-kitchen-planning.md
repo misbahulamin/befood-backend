@@ -9,10 +9,12 @@ Admin/Kitchen tooling that turns order deliveries + meal-offs into **expected / 
 | GET | `/orders/meal-statistics/` | Verified admin | Date/period/package demand analytics |
 | GET | `/orders/kitchen/today-meal-requirement/` | Verified admin | Cook headcount, package-wise summary, item-wise contributions + kg (aggregate only — no per-customer list) |
 | GET | `/orders/kitchen/today-order-details/` | Verified admin | Cooking customer rows for Order Details PDF (name, phone, package, address, today's menu `ingredient_names` / `menu_items_label`) |
+| GET | `/orders/kitchen/today-exclusion-details/` | Verified admin | Per-customer meal-off or low-balance blocked cohort for Kitchen Today drill-down |
 | GET | `/orders/meal-history/` | Verified admin | Persisted snapshots (not live recalculation) |
 | GET | `/api/v1/web/orders/meal-statistics/` | Verified admin | Same handlers (web-prefixed alias) |
 | GET | `/api/v1/web/orders/kitchen/today-meal-requirement/` | Verified admin | Same handlers (web-prefixed alias) |
 | GET | `/api/v1/web/orders/kitchen/today-order-details/` | Verified admin | Same handlers (web-prefixed alias) |
+| GET | `/api/v1/web/orders/kitchen/today-exclusion-details/` | Verified admin | Same handlers (web-prefixed alias) |
 | GET | `/api/v1/web/orders/meal-history/` | Verified admin | Same handlers (web-prefixed alias) |
 | — | `python manage.py confirm_meal_demand_snapshots` | Ops | Upsert confirmed snapshots |
 
@@ -183,6 +185,29 @@ When `service_date` and `meal_period` are omitted, the server uses the default k
 ```
 
 **Printable sheet:** the Admin Kitchen Today UI prints/downloads from this same filtered payload (no separate print API). History snapshots still store the lean ingredient quantity shape without contribution fields.
+
+## Kitchen today exclusion details
+
+**Query:** required `exclusion_type` (`customer_meal_off` | `low_balance`); optional `service_date`, `meal_period`, `package_public_id` (same slot resolution as kitchen today requirement).
+
+Returns the exclusion cohort for that slot (and package when scoped). Customer Meal Off rows keep reason/period/date fields. Low Balance Blocked rows include additive decision metrics for triage.
+
+**Low-balance customer row fields** (`exclusion_type=low_balance`):
+
+| Field | Meaning |
+|-------|---------|
+| `wallet_balance` | Spendable balance (decimal string) |
+| `meal_stop_threshold` | Live meal-stop threshold (decimal string) |
+| `meal_status` | Compatibility label (`Blocked` / `Low balance`) |
+| `meal_service_blocked_low_balance` | Current block flag |
+| `meal_block_days` | Inclusive Asia/Dhaka calendar days of the **current** continuous low-balance block from `meal_service_blocked_at` through the exclusion `service_date` (uncapped; `null` when not blocked or timestamp absent) |
+| `total_meals_delivered` | Lifetime `OrderDelivery` count with status `DELIVERED` (order + subscription scope) |
+| `meals_delivered_this_month` | Same, filtered to the Asia/Dhaka calendar month of `service_date` by `service_date` |
+| `subscribed_at` | Active subscription `created_at` ISO datetime; else latest subscription `created_at`; else `null` |
+| `balance_shortfall` | Optional `max(0, threshold − balance)` decimal string |
+| `meal_service_blocked_at` | Optional exact block start ISO datetime |
+
+Clients MUST tolerate null/omitted optional metrics. Customer Meal Off rows are not required to include the low-balance-only decision fields.
 
 ## Kitchen today order details
 

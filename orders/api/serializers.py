@@ -605,6 +605,13 @@ class KitchenExclusionCustomerSerializer(serializers.Serializer):
     meal_stop_threshold = serializers.CharField(allow_null=True, required=False)
     meal_status = serializers.CharField(required=False)
     meal_service_blocked_low_balance = serializers.BooleanField(required=False)
+    # Low-balance decision metrics (additive; null when not computable).
+    meal_block_days = serializers.IntegerField(allow_null=True, required=False)
+    total_meals_delivered = serializers.IntegerField(allow_null=True, required=False)
+    meals_delivered_this_month = serializers.IntegerField(allow_null=True, required=False)
+    subscribed_at = serializers.DateTimeField(allow_null=True, required=False)
+    balance_shortfall = serializers.CharField(allow_null=True, required=False)
+    meal_service_blocked_at = serializers.DateTimeField(allow_null=True, required=False)
 
 
 class KitchenTodayExclusionDetailsSerializer(serializers.Serializer):

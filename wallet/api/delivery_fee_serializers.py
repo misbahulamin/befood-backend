@@ -97,3 +97,24 @@ class DeliveryFeeMonthlyReportSerializer(serializers.Serializer):
 class DeliveryFeeLifetimeReportSerializer(serializers.Serializer):
     total_collected = serializers.CharField()
     customers_paid = serializers.IntegerField()
+
+
+class DeliveryFeePaidCohortRowSerializer(serializers.Serializer):
+    customer_public_id = serializers.UUIDField()
+    customer_name = serializers.CharField()
+    customer_phone = serializers.CharField(allow_null=True, required=False)
+    amount = serializers.CharField()
+    paid_at = serializers.DateTimeField(allow_null=True)
+    created_at = serializers.DateTimeField(allow_null=True)
+    deducted_by_admin = serializers.CharField(allow_null=True, required=False)
+    payment_public_id = serializers.UUIDField(required=False)
+
+
+class DeliveryFeePendingCohortRowSerializer(serializers.Serializer):
+    customer_public_id = serializers.UUIDField()
+    customer_name = serializers.CharField()
+    customer_phone = serializers.CharField(allow_null=True, required=False)
+    wallet_balance = serializers.CharField(allow_null=True, required=False)
+    wallet_status = serializers.CharField(allow_null=True, required=False)
+    package_name = serializers.CharField(allow_null=True, required=False)
+    subscription_status = serializers.CharField()
