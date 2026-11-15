@@ -51,7 +51,7 @@ class PushLogSerializer(serializers.ModelSerializer):
 
 
 class DeviceTokenRegisterSerializer(serializers.Serializer):
-    token = serializers.CharField(max_length=255, trim_whitespace=True)
+    token = serializers.CharField(max_length=512, trim_whitespace=True)
     platform = serializers.ChoiceField(choices=DeviceToken.Platform.choices)
     device_name = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
     app_version = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
@@ -66,7 +66,7 @@ class DeviceTokenRegisterSerializer(serializers.Serializer):
 
 
 class DeviceTokenRemoveSerializer(serializers.Serializer):
-    token = serializers.CharField(max_length=255, trim_whitespace=True)
+    token = serializers.CharField(max_length=512, trim_whitespace=True)
 
     def validate_token(self, value):
         token = (value or '').strip()

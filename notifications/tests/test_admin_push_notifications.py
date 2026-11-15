@@ -411,6 +411,135 @@ class AdminPushNotificationAPITests(APITestCase):
         self.assertEqual(batch_sizes, [500, 100])
 
 
+class AdminPushWebTokenDeliveryTests(APITestCase):
+    def setUp(self):
+        admin_group, _ = Group.objects.get_or_create(name='ADMIN')
+        self.admin = User.objects.create_user(
+            username='webpush-admin',
+            email='webpush-admin@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        AdminProfile.objects.create(user=self.admin, is_verified=True)
+        self.admin.groups.add(admin_group)
+        self.admin_token = Token.objects.create(user=self.admin)
+        self.customer = _make_customer('webpushcust', 'webpushcust@example.com')
+        self.android_token = 'a' * 140
+        self.web_token = 'w' * 160
+        DeviceToken.objects.create(
+            user=self.customer,
+            token=self.android_token,
+            platform='android',
+            is_active=True,
+        )
+        DeviceToken.objects.create(
+            user=self.customer,
+            token=self.web_token,
+            platform='web',
+            is_active=True,
+        )
+        self.send_url = reverse('web_notifications:admin-push-send')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+
+    def test_campaign_includes_android_and_web_tokens(self):
+        captured = {}
+
+        def _capture(tokens, title, body, data=None):
+            captured['tokens'] = list(tokens)
+            return [
+                SendResult(token=t, success=True, message_id=f'm-{t[:4]}') for t in tokens
+            ]
+
+        payload = {
+            'title': 'Multi device',
+            'body': 'Reach android and web',
+            'notification_type': 'system',
+            'data': {'screen': 'home'},
+            'target': {'type': 'user', 'user_id': self.customer.id},
+            'idempotency_key': 'web-android-both-1',
+        }
+        with patch(
+            'notifications.api.admin_notification_views.transaction.on_commit',
+            side_effect=lambda func: func(),
+        ), patch(
+            'notifications.api.admin_notification_views.enqueue_dispatch',
+            side_effect=lambda campaign_id: __import__(
+                'notifications.services.notification_sender', fromlist=['dispatch_push_campaign']
+            ).dispatch_push_campaign(campaign_id),
+        ), patch(
+            'notifications.services.notification_sender.send_to_tokens',
+            side_effect=_capture,
+        ):
+            response = self.client.post(self.send_url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertIn(self.android_token, captured.get('tokens', []))
+        self.assertIn(self.web_token, captured.get('tokens', []))
+
+    def test_inbox_created_without_device_tokens(self):
+        from notifications.models import Notification
+
+        bare = _make_customer('nodevice', 'nodevice@example.com')
+        payload = {
+            'title': 'Inbox only',
+            'body': 'No FCM token needed',
+            'notification_type': 'system',
+            'data': {'screen': 'home'},
+            'target': {'type': 'user', 'user_id': bare.id},
+            'idempotency_key': 'inbox-no-device-1',
+        }
+        with patch(
+            'notifications.api.admin_notification_views.transaction.on_commit',
+            side_effect=lambda func: func(),
+        ), patch(
+            'notifications.api.admin_notification_views.enqueue_dispatch',
+            side_effect=lambda campaign_id: __import__(
+                'notifications.services.notification_sender', fromlist=['dispatch_push_campaign']
+            ).dispatch_push_campaign(campaign_id),
+        ), patch(
+            'notifications.services.notification_sender.send_to_tokens',
+            return_value=[],
+        ):
+            response = self.client.post(self.send_url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(
+            Notification.objects.filter(user=bare, title='Inbox only').count(),
+            1,
+        )
+
+    def test_multi_device_single_inbox_row(self):
+        from notifications.models import Notification
+
+        payload = {
+            'title': 'One inbox',
+            'body': 'Two devices',
+            'notification_type': 'system',
+            'data': {'screen': 'home'},
+            'target': {'type': 'user', 'user_id': self.customer.id},
+            'idempotency_key': 'multi-device-inbox-1',
+        }
+        with patch(
+            'notifications.api.admin_notification_views.transaction.on_commit',
+            side_effect=lambda func: func(),
+        ), patch(
+            'notifications.api.admin_notification_views.enqueue_dispatch',
+            side_effect=lambda campaign_id: __import__(
+                'notifications.services.notification_sender', fromlist=['dispatch_push_campaign']
+            ).dispatch_push_campaign(campaign_id),
+        ), patch(
+            'notifications.services.notification_sender.send_to_tokens',
+            return_value=[
+                SendResult(token=self.android_token, success=True, message_id='m1'),
+                SendResult(token=self.web_token, success=True, message_id='m2'),
+            ],
+        ):
+            response = self.client.post(self.send_url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(
+            Notification.objects.filter(user=self.customer, title='One inbox').count(),
+            1,
+        )
+
+
 class DispatchPushCampaignCommandTests(APITestCase):
     def setUp(self):
         admin = User.objects.create_user(

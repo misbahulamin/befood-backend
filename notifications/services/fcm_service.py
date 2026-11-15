@@ -96,6 +96,12 @@ def send_to_tokens(tokens: list[str], title: str, body: str, data: dict | None =
 
     for offset in range(0, len(tokens), FCM_BATCH_SIZE):
         batch = tokens[offset : offset + FCM_BATCH_SIZE]
+        # WebpushConfig helps browsers open a sensible deep link on click.
+        # AndroidConfig (channel/priority) is unchanged for native delivery.
+        link = payload_data.get('screen') or '/notifications'
+        if link and not str(link).startswith('/'):
+            # Logical screen keys — fall back to inbox for web click targets.
+            link = '/notifications'
         message = messaging.MulticastMessage(
             notification=messaging.Notification(title=title, body=body),
             data=payload_data,
@@ -105,6 +111,9 @@ def send_to_tokens(tokens: list[str], title: str, body: str, data: dict | None =
                 notification=messaging.AndroidNotification(
                     channel_id=channel_id,
                 ),
+            ),
+            webpush=messaging.WebpushConfig(
+                fcm_options=messaging.WebpushFCMOptions(link=str(link)),
             ),
         )
         response = messaging.send_each_for_multicast(message, dry_run=False)
