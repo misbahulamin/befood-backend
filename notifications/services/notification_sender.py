@@ -223,20 +223,20 @@ def dispatch_push_campaign(campaign_id: int) -> None:
     failed = campaign.total_failed
     skipped = campaign.total_skipped
 
-    if not tokens and not pending_recipients:
-        campaign.status = PushCampaign.Status.COMPLETED
-        campaign.total_sent = 0
-        campaign.total_failed = failed
-        campaign.total_skipped = skipped
-        campaign.save(
-            update_fields=['status', 'total_sent', 'total_failed', 'total_skipped', 'updated_at']
-        )
-        return
-
-    # One inbox row per unique user (best-effort; never blocks FCM).
-    inbox_users = {recipient.user for recipient in pending_recipients if recipient.user_id}
+    # One inbox row per unique targeted user — including no-device / failed rows
+    # so inbox is independent of browser permission or active FCM tokens.
+    # Multi-device customers still get a single inbox entry (dedupe by user_id).
+    # Must run before the no-token early return.
     campaign_data = campaign.data if isinstance(campaign.data, dict) else {}
-    for user in inbox_users:
+    inbox_user_ids = (
+        PushCampaignRecipient.objects.filter(campaign=campaign)
+        .exclude(status=PushCampaignRecipient.Status.SKIPPED)
+        .values_list('user_id', flat=True)
+        .distinct()
+    )
+    from django.contrib.auth import get_user_model
+
+    for user in get_user_model().objects.filter(id__in=inbox_user_ids):
         create_inbox_notification(
             user,
             title=campaign.title,
@@ -246,6 +246,16 @@ def dispatch_push_campaign(campaign_id: int) -> None:
             data=campaign_data,
             content_object=campaign,
         )
+
+    if not tokens and not pending_recipients:
+        campaign.status = PushCampaign.Status.COMPLETED
+        campaign.total_sent = 0
+        campaign.total_failed = failed
+        campaign.total_skipped = skipped
+        campaign.save(
+            update_fields=['status', 'total_sent', 'total_failed', 'total_skipped', 'updated_at']
+        )
+        return
 
     try:
         results = send_to_tokens(tokens, campaign.title, campaign.body, campaign.data)

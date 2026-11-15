@@ -367,6 +367,13 @@ CORS_ALLOWED_ORIGINS = [
     'https://befood.com.bd',
     'http://www.befood.com.bd',
     'https://www.befood.com.bd',
+    # Flutter Web customer app
+    'https://app.befood.com.bd',
+    # Local Flutter Web (flutter run / static build/web)
+    'http://127.0.0.1:8080',
+    'http://127.0.0.1:8081',
+    'http://localhost:8080',
+    'http://localhost:8081',
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -393,6 +400,12 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:8000",
     "http://localhost:8000",
     "https://api.befood.com.bd",
+    "https://app.befood.com.bd",
+    # Local Flutter Web (flutter run / static build/web)
+    "http://127.0.0.1:8080",
+    "http://127.0.0.1:8081",
+    "http://localhost:8080",
+    "http://localhost:8081",
 ]
 
 # --------------------------

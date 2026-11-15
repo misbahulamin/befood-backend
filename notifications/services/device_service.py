@@ -8,7 +8,7 @@ from django.utils import timezone
 from user_management.models import DeviceToken
 
 MIN_TOKEN_LENGTH = 10
-MAX_TOKEN_LENGTH = 255
+MAX_TOKEN_LENGTH = 512
 
 
 class DeviceTokenError(Exception):

@@ -148,6 +148,30 @@ class DeviceTokenAPITests(TestCase):
         response = self.client.post(self.remove_url, {'token': 'b' * 140}, format='json')
         self.assertEqual(response.status_code, 404)
 
+    def test_register_web_platform_token(self):
+        self._auth()
+        web_token = 'w' * 160
+        response = self.client.post(
+            self.register_url,
+            self._register_payload(token=web_token, platform='web'),
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        device = DeviceToken.objects.get(token=web_token)
+        self.assertEqual(device.platform, 'web')
+        self.assertTrue(device.is_active)
+
+    def test_register_long_web_token_up_to_512(self):
+        self._auth()
+        long_token = 'x' * 400
+        response = self.client.post(
+            self.register_url,
+            self._register_payload(token=long_token, platform='web'),
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(DeviceToken.objects.filter(token=long_token, platform='web').exists())
+
 
 class DeviceTokenQueryServiceTests(TestCase):
     def setUp(self):

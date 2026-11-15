@@ -556,7 +556,8 @@ class DeviceToken(models.Model):
         WEB = 'web', 'Web'
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='device_tokens')
-    token = models.CharField(max_length=255, unique=True)
+    # Web FCM tokens can exceed 255; keep headroom for Android/iOS too.
+    token = models.CharField(max_length=512, unique=True)
     platform = models.CharField(max_length=20, choices=Platform.choices, blank=True)
     device_name = models.CharField(max_length=100, blank=True)
     app_version = models.CharField(max_length=50, blank=True)
