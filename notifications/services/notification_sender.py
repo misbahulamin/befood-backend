@@ -11,7 +11,12 @@ from django.utils import timezone
 
 from notifications.models import PushCampaign, PushCampaignRecipient
 from notifications.services.device_service import deactivate_device_token_by_value
-from notifications.services.fcm_service import FCMNotConfiguredError, send_to_tokens
+from notifications.services.fcm_service import (
+    FCMNotConfiguredError,
+    FCMSendError,
+    SendResult,
+    send_to_tokens,
+)
 from notifications.services.inbox_service import create_inbox_notification
 from notifications.services.notification_filter import (
     TARGET_TYPE_MAP,
@@ -36,6 +41,8 @@ _DEFAULT_SCREEN_BY_TYPE = {
     'promotion': 'offer',
     'system': 'home',
 }
+
+_SAFE_DISPATCH_ERROR = 'Push delivery failed unexpectedly'
 
 
 def _with_navigable_data(data: dict | None, notification_type: str) -> dict:
@@ -102,6 +109,105 @@ def _ensure_broadcast_confirmed(target: dict) -> None:
     eligible = count_eligible_users(target)
     if eligible > BROADCAST_CONFIRMATION_THRESHOLD and not target.get('confirm_broadcast'):
         raise BroadcastConfirmationRequiredError(eligible)
+
+
+def _apply_send_results(
+    *,
+    token_map: dict[str, PushCampaignRecipient],
+    results: list[SendResult],
+    sent: int,
+    failed: int,
+) -> tuple[int, int]:
+    now = timezone.now()
+    for result in results:
+        recipient = token_map.get(result.token)
+        if recipient is None:
+            continue
+        if result.success:
+            recipient.status = PushCampaignRecipient.Status.SENT
+            recipient.firebase_message_id = result.message_id
+            recipient.sent_at = now
+            recipient.error_message = ''
+            sent += 1
+        else:
+            recipient.status = PushCampaignRecipient.Status.FAILED
+            recipient.error_message = result.error
+            failed += 1
+            if result.is_invalid_token:
+                deactivate_device_token_by_value(result.token)
+        recipient.save(
+            update_fields=['status', 'firebase_message_id', 'error_message', 'sent_at']
+        )
+    return sent, failed
+
+
+def _fail_remaining_pending(campaign: PushCampaign, error_message: str) -> int:
+    """Mark still-pending recipients failed. Returns how many were updated."""
+    pending_qs = PushCampaignRecipient.objects.filter(
+        campaign=campaign,
+        status=PushCampaignRecipient.Status.PENDING,
+    )
+    count = pending_qs.count()
+    if count:
+        pending_qs.update(
+            status=PushCampaignRecipient.Status.FAILED,
+            error_message=error_message[:500],
+        )
+    return count
+
+
+def _finalize_campaign(
+    campaign: PushCampaign,
+    *,
+    sent: int,
+    failed: int,
+    skipped: int,
+    status: str,
+    error_summary: str = '',
+) -> None:
+    campaign.status = status
+    campaign.total_sent = sent
+    campaign.total_failed = failed
+    campaign.total_skipped = skipped
+    update_fields = [
+        'status',
+        'total_sent',
+        'total_failed',
+        'total_skipped',
+        'updated_at',
+    ]
+    if error_summary:
+        campaign.error_summary = error_summary[:1000]
+        update_fields.append('error_summary')
+    campaign.save(update_fields=update_fields)
+
+
+def _create_campaign_inbox_rows(campaign: PushCampaign) -> None:
+    """
+    One inbox row per distinct non-skipped target user.
+
+    Independent of FCM success. Re-dispatch is deduped inside
+    ``create_inbox_notification`` via user + campaign GFK.
+    """
+    campaign_data = campaign.data if isinstance(campaign.data, dict) else {}
+    inbox_user_ids = (
+        PushCampaignRecipient.objects.filter(campaign=campaign)
+        .exclude(status=PushCampaignRecipient.Status.SKIPPED)
+        .values_list('user_id', flat=True)
+        .distinct()
+    )
+    from django.contrib.auth import get_user_model
+
+    for user in get_user_model().objects.filter(id__in=inbox_user_ids):
+        create_inbox_notification(
+            user,
+            title=campaign.title,
+            body=campaign.body,
+            notification_type=campaign.notification_type or campaign_data.get('type', ''),
+            screen=str(campaign_data.get('screen') or ''),
+            data=campaign_data,
+            content_object=campaign,
+        )
 
 
 @transaction.atomic
@@ -209,6 +315,7 @@ def dispatch_push_campaign(campaign_id: int) -> None:
 
     token_map: dict[str, PushCampaignRecipient] = {}
     tokens: list[str] = []
+    token_platforms: dict[str, str] = {}
     for recipient in pending_recipients:
         token = recipient.device.token
         if not token:
@@ -218,88 +325,108 @@ def dispatch_push_campaign(campaign_id: int) -> None:
             continue
         token_map[token] = recipient
         tokens.append(token)
+        token_platforms[token] = recipient.device.platform or 'android'
 
     sent = 0
     failed = campaign.total_failed
     skipped = campaign.total_skipped
 
-    # One inbox row per unique targeted user — including no-device / failed rows
-    # so inbox is independent of browser permission or active FCM tokens.
-    # Multi-device customers still get a single inbox entry (dedupe by user_id).
-    # Must run before the no-token early return.
-    campaign_data = campaign.data if isinstance(campaign.data, dict) else {}
-    inbox_user_ids = (
-        PushCampaignRecipient.objects.filter(campaign=campaign)
-        .exclude(status=PushCampaignRecipient.Status.SKIPPED)
-        .values_list('user_id', flat=True)
-        .distinct()
-    )
-    from django.contrib.auth import get_user_model
-
-    for user in get_user_model().objects.filter(id__in=inbox_user_ids):
-        create_inbox_notification(
-            user,
-            title=campaign.title,
-            body=campaign.body,
-            notification_type=campaign.notification_type or campaign_data.get('type', ''),
-            screen=str(campaign_data.get('screen') or ''),
-            data=campaign_data,
-            content_object=campaign,
+    # Inbox before FCM (and before no-token early return) so web inbox works
+    # even when every FCM attempt fails or no devices exist.
+    try:
+        _create_campaign_inbox_rows(campaign)
+    except Exception:
+        logger.exception(
+            'Inbox creation failed for campaign_id=%s; continuing FCM dispatch',
+            campaign_id,
         )
 
     if not tokens and not pending_recipients:
-        campaign.status = PushCampaign.Status.COMPLETED
-        campaign.total_sent = 0
-        campaign.total_failed = failed
-        campaign.total_skipped = skipped
-        campaign.save(
-            update_fields=['status', 'total_sent', 'total_failed', 'total_skipped', 'updated_at']
+        _finalize_campaign(
+            campaign,
+            sent=0,
+            failed=failed,
+            skipped=skipped,
+            status=PushCampaign.Status.COMPLETED,
         )
         return
 
     try:
-        results = send_to_tokens(tokens, campaign.title, campaign.body, campaign.data)
+        results = send_to_tokens(
+            tokens,
+            campaign.title,
+            campaign.body,
+            campaign.data,
+            token_platforms=token_platforms,
+        )
+        sent, failed = _apply_send_results(
+            token_map=token_map,
+            results=results,
+            sent=sent,
+            failed=failed,
+        )
+        extra_failed = _fail_remaining_pending(
+            campaign,
+            'No FCM result for recipient',
+        )
+        _finalize_campaign(
+            campaign,
+            sent=sent,
+            failed=failed + extra_failed,
+            skipped=skipped,
+            status=PushCampaign.Status.COMPLETED,
+        )
     except FCMNotConfiguredError as exc:
-        campaign.status = PushCampaign.Status.FAILED
-        campaign.error_summary = str(exc)
-        campaign.save(update_fields=['status', 'error_summary', 'updated_at'])
-        PushCampaignRecipient.objects.filter(
-            campaign=campaign,
-            status=PushCampaignRecipient.Status.PENDING,
-        ).update(
-            status=PushCampaignRecipient.Status.FAILED,
-            error_message=str(exc),
+        extra_failed = _fail_remaining_pending(campaign, str(exc))
+        _finalize_campaign(
+            campaign,
+            sent=sent,
+            failed=failed + extra_failed,
+            skipped=skipped,
+            status=PushCampaign.Status.FAILED,
+            error_summary=str(exc),
         )
-        return
-
-    now = timezone.now()
-    for result in results:
-        recipient = token_map.get(result.token)
-        if recipient is None:
-            continue
-        if result.success:
-            recipient.status = PushCampaignRecipient.Status.SENT
-            recipient.firebase_message_id = result.message_id
-            recipient.sent_at = now
-            recipient.error_message = ''
-            sent += 1
-        else:
-            recipient.status = PushCampaignRecipient.Status.FAILED
-            recipient.error_message = result.error
-            failed += 1
-            if result.is_invalid_token:
-                deactivate_device_token_by_value(result.token)
-        recipient.save(
-            update_fields=['status', 'firebase_message_id', 'error_message', 'sent_at']
+    except FCMSendError as exc:
+        logger.exception('Controlled FCM send error campaign_id=%s', campaign_id)
+        if exc.results:
+            sent, failed = _apply_send_results(
+                token_map=token_map,
+                results=exc.results,
+                sent=sent,
+                failed=failed,
+            )
+        extra_failed = _fail_remaining_pending(campaign, str(exc) or _SAFE_DISPATCH_ERROR)
+        terminal = (
+            PushCampaign.Status.COMPLETED
+            if sent > 0
+            else PushCampaign.Status.FAILED
         )
-
-    campaign.status = PushCampaign.Status.COMPLETED
-    campaign.total_sent = sent
-    campaign.total_failed = failed
-    campaign.total_skipped = skipped
-    campaign.save(
-        update_fields=['status', 'total_sent', 'total_failed', 'total_skipped', 'updated_at']
-    )
+        _finalize_campaign(
+            campaign,
+            sent=sent,
+            failed=failed + extra_failed,
+            skipped=skipped,
+            status=terminal,
+            error_summary=str(exc) or _SAFE_DISPATCH_ERROR,
+        )
+    except Exception as exc:
+        # Never leave the campaign stuck in processing after an unexpected error.
+        logger.exception('Unexpected dispatch failure campaign_id=%s', campaign_id)
+        safe_message = _SAFE_DISPATCH_ERROR
+        extra_failed = _fail_remaining_pending(campaign, safe_message)
+        terminal = (
+            PushCampaign.Status.COMPLETED
+            if sent > 0
+            else PushCampaign.Status.FAILED
+        )
+        _finalize_campaign(
+            campaign,
+            sent=sent,
+            failed=failed + extra_failed,
+            skipped=skipped,
+            status=terminal,
+            error_summary=f'{safe_message}: {exc.__class__.__name__}',
+        )
 
 
 def get_stuck_campaign_ids() -> list[int]:

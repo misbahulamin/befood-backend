@@ -169,6 +169,8 @@ Columns:
 
 **Partial failure UI:** when `status=completed` and `total_failed > 0`, show failed count prominently (amber/warning), not as full failure.
 
+**Inbox vs Sent:** `total_sent` counts **FCM successes only**. Customers may still see the message in the Flutter web/app inbox (`app.befood.com.bd`) when `total_sent` is `0` (no active token or all FCM attempts failed). Do not treat inbox visibility as proof of push delivery. Poll until `status` is `completed` or `failed` — never leave the UI stuck on `processing` indefinitely; if it does, ops can run `dispatch_push_campaign --stuck-only`.
+
 Filters: `status`, `notification_type`, `created_from`, `created_to`
 
 ---

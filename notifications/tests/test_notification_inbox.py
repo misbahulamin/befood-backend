@@ -60,6 +60,38 @@ class InboxServiceTests(TestCase):
         self.assertEqual(row.object_id, campaign.pk)
         self.assertEqual(row.content_object, campaign)
 
+    def test_create_inbox_notification_dedupes_by_user_and_campaign(self):
+        from notifications.models import PushCampaign
+
+        campaign = PushCampaign.objects.create(
+            title='Campaign',
+            body='Body',
+            notification_type='system',
+            target_type=PushCampaign.TargetType.SINGLE_USER,
+            target_config={'type': 'user', 'user_id': self.user.id},
+            created_by=self.user,
+            status=PushCampaign.Status.PROCESSING,
+        )
+        first = create_inbox_notification(
+            self.user,
+            title='Linked',
+            body='Body',
+            notification_type='system',
+            content_object=campaign,
+        )
+        second = create_inbox_notification(
+            self.user,
+            title='Linked again',
+            body='Should not create',
+            notification_type='system',
+            content_object=campaign,
+        )
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(
+            Notification.objects.filter(user=self.user, object_id=campaign.pk).count(),
+            1,
+        )
+
     def test_android_channel_mapping(self):
         self.assertEqual(_android_channel_id({'type': 'wallet_low_balance'}), 'befood_wallet')
         self.assertEqual(_android_channel_id({'type': 'meal_delivered'}), 'befood_order')
