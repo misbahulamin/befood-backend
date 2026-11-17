@@ -90,20 +90,38 @@ class GuestMealPreviewView(APIView):
         summary='Preview guest meal pricing and eligibility',
         description=(
             'Read-only quote for a guest meal. Does not debit the wallet or create a record. '
-            'Create always revalidates; never treat preview as authorization.'
+            'Create always revalidates; never treat preview as authorization. '
+            'Rejected with PERSONAL_MEAL_OFF (422) when the regular meal for that date/period '
+            'is customer Meal-OFF.'
         ),
         request=GuestMealRequestSerializer,
         responses={
             200: GuestMealPreviewResponseSerializer,
             401: OpenApiResponse(description='Authentication required'),
             403: OpenApiResponse(description='Verified customer required'),
-            422: OpenApiResponse(description='Not eligible / validation / quota / wallet floor'),
+            422: OpenApiResponse(
+                description=(
+                    'Not eligible / validation / quota / wallet floor / PERSONAL_MEAL_OFF'
+                )
+            ),
         },
         examples=[
             OpenApiExample(
                 'Preview request',
                 value={'date': '2026-09-30', 'meal_period': 'lunch', 'quantity': 2},
                 request_only=True,
+            ),
+            OpenApiExample(
+                'Personal meal off',
+                value={
+                    'detail': (
+                        'Guest Meal cannot be ordered because your regular meal '
+                        'is OFF for this date.'
+                    ),
+                    'error_code': 'PERSONAL_MEAL_OFF',
+                },
+                response_only=True,
+                status_codes=['422'],
             ),
         ],
     )
@@ -150,9 +168,11 @@ class GuestMealListCreateView(APIView):
         tags=[GUEST_MEAL_TAG],
         summary='Create a prepaid guest meal order',
         description=(
-            'Validates eligibility, enforces monthly quota and meal-stop recharge floor, '
+            'Validates eligibility (including personal Meal-OFF), enforces monthly quota '
+            'and meal-stop recharge floor, requires a resolvable subscription delivery stop, '
             'debits the wallet (PAYMENT / commission_first), and creates a GuestMealOrder. '
-            'Optional Idempotency-Key header replays the original result for the same payload.'
+            'Optional Idempotency-Key header replays the original result for the same payload. '
+            'Create revalidates Meal-OFF under row locks; do not trust a prior preview.'
         ),
         request=GuestMealRequestSerializer,
         parameters=[
@@ -169,13 +189,30 @@ class GuestMealListCreateView(APIView):
             401: OpenApiResponse(description='Authentication required'),
             403: OpenApiResponse(description='Verified customer required'),
             409: OpenApiResponse(description='Idempotency key conflict'),
-            422: OpenApiResponse(description='Not eligible / validation / quota / wallet'),
+            422: OpenApiResponse(
+                description=(
+                    'Not eligible / validation / quota / wallet / PERSONAL_MEAL_OFF / '
+                    'DELIVERY_UNAVAILABLE'
+                )
+            ),
         },
         examples=[
             OpenApiExample(
                 'Create request',
                 value={'date': '2026-09-30', 'meal_period': 'lunch', 'quantity': 1},
                 request_only=True,
+            ),
+            OpenApiExample(
+                'Personal meal off',
+                value={
+                    'detail': (
+                        'Guest Meal cannot be ordered because your regular meal '
+                        'is OFF for this date.'
+                    ),
+                    'error_code': 'PERSONAL_MEAL_OFF',
+                },
+                response_only=True,
+                status_codes=['422'],
             ),
         ],
     )

@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db.models import Sum
+from django.db.models import Exists, OuterRef, Sum
 
 from admin_wallet.models import MealProfitTransaction
 from admin_wallet.services.profit import meal_profit_recognized
@@ -56,10 +56,17 @@ class Command(BaseCommand):
         dry_run = options['dry_run']
         validate = options['validate']
 
+        has_regular_profit = MealProfitTransaction.objects.filter(
+            order_delivery_id=OuterRef('pk'),
+            meal_kind=MealProfitTransaction.MealKind.REGULAR,
+        )
         qs = OrderDelivery.objects.filter(
             payment_status=OrderDelivery.PaymentStatus.CHARGED,
             charged_amount__isnull=False,
-            meal_profit_transaction__isnull=True,
+        ).annotate(
+            _has_regular_profit=Exists(has_regular_profit),
+        ).filter(
+            _has_regular_profit=False,
         ).select_related(
             'order',
             'order__customer',
@@ -126,10 +133,17 @@ class Command(BaseCommand):
         self.stdout.write(f'Legacy live profit (lifetime updated_at): {live_total}')
         delta = (ledger_total - live_total).quantize(_MONEY)
         self.stdout.write(f'Delta (ledger - live lifetime): {delta}')
+        has_regular_profit = MealProfitTransaction.objects.filter(
+            order_delivery_id=OuterRef('pk'),
+            meal_kind=MealProfitTransaction.MealKind.REGULAR,
+        )
         missing = OrderDelivery.objects.filter(
             payment_status=OrderDelivery.PaymentStatus.CHARGED,
             charged_amount__isnull=False,
-            meal_profit_transaction__isnull=True,
+        ).annotate(
+            _has_regular_profit=Exists(has_regular_profit),
+        ).filter(
+            _has_regular_profit=False,
         ).count()
         self.stdout.write(f'Charged deliveries still missing profit rows: {missing}')
 

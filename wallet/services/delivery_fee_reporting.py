@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.db.models import CharField, Count, F, QuerySet, Sum, Value
+from django.db.models import CharField, Count, DecimalField, F, QuerySet, Sum, Value
 from django.db.models.functions import Coalesce, Concat, Lower, Trim
 
 from orders.models import CustomerSubscription
@@ -16,6 +16,13 @@ from wallet.services.delivery_fee import DeliveryFeePeriodError, _admin_display,
 COHORT_PAID = 'paid'
 COHORT_PENDING = 'pending'
 VALID_COHORTS = frozenset({COHORT_PAID, COHORT_PENDING})
+
+ORDERING_WALLET_BALANCE_ASC = 'wallet_balance'
+ORDERING_WALLET_BALANCE_DESC = '-wallet_balance'
+DEFAULT_PENDING_ORDERING = ORDERING_WALLET_BALANCE_DESC
+VALID_PENDING_ORDERINGS = frozenset(
+    {ORDERING_WALLET_BALANCE_ASC, ORDERING_WALLET_BALANCE_DESC}
+)
 
 
 def paid_payments_qs(*, year: int, month: int) -> QuerySet[DeliveryFeePayment]:
@@ -98,6 +105,23 @@ def parse_cohort(value) -> str:
     return cohort
 
 
+def parse_pending_ordering(value) -> str:
+    """
+    Parse pending-cohort wallet-balance ordering.
+
+    Default is high→low (`-wallet_balance`). Empty/missing uses the default.
+    """
+    raw = (value or '').strip()
+    if not raw:
+        return DEFAULT_PENDING_ORDERING
+    if raw not in VALID_PENDING_ORDERINGS:
+        raise DeliveryFeePeriodError(
+            'ordering must be one of: '
+            f'{", ".join(sorted(VALID_PENDING_ORDERINGS))}.'
+        )
+    return raw
+
+
 def _customer_sort_name_annotation(*, customer_prefix: str = 'customer__') -> Lower:
     first = f'{customer_prefix}user__first_name'
     last = f'{customer_prefix}user__last_name'
@@ -126,17 +150,21 @@ def list_monthly_delivery_fee_customers(
     month: int,
     cohort: str,
     q: str | None = None,
+    ordering: str | None = None,
 ) -> QuerySet:
     """
     Ordered queryset for paid (DeliveryFeePayment) or pending (CustomerSubscription) cohorts.
 
     Optional `q` narrows by customer name/phone (allowlisted people search).
+    Pending cohort supports `ordering=wallet_balance` / `-wallet_balance`
+    (default high→low). Paid cohort ignores wallet ordering and keeps paid-at order.
     """
     month, year = _validate_period(month, year)
     cohort = parse_cohort(cohort)
     search = (q or '').strip()
 
     if cohort == COHORT_PAID:
+        # Paid cohort keeps paid-at ordering; wallet ordering applies to pending only.
         qs = (
             paid_payments_qs(year=year, month=month)
             .select_related(
@@ -149,14 +177,36 @@ def list_monthly_delivery_fee_customers(
             qs = qs.filter(build_customer_people_q(search, customer_prefix='customer__'))
         return qs.order_by('-created_at', 'sort_name', 'id')
 
+    pending_ordering = parse_pending_ordering(ordering)
+    decimal_field = DecimalField(max_digits=12, decimal_places=2)
     qs = (
         pending_active_subscriber_qs(year=year, month=month)
         .select_related('customer__user', 'customer__wallet', 'meal')
-        .annotate(sort_name=_customer_sort_name_annotation())
+        .annotate(
+            sort_name=_customer_sort_name_annotation(),
+            wallet_balance_sort=Coalesce(
+                F('customer__wallet__balance'),
+                Value(Decimal('0.00'), output_field=decimal_field),
+                output_field=decimal_field,
+            ),
+        )
     )
     if search:
         qs = qs.filter(build_customer_people_q(search, customer_prefix='customer__'))
-    return qs.order_by(F('sort_name').asc(nulls_last=True), 'customer__phone', 'id')
+
+    if pending_ordering == ORDERING_WALLET_BALANCE_ASC:
+        return qs.order_by(
+            F('wallet_balance_sort').asc(nulls_last=True),
+            F('sort_name').asc(nulls_last=True),
+            'customer__phone',
+            'id',
+        )
+    return qs.order_by(
+        F('wallet_balance_sort').desc(nulls_last=True),
+        F('sort_name').asc(nulls_last=True),
+        'customer__phone',
+        'id',
+    )
 
 
 def serialize_paid_cohort_row(payment: DeliveryFeePayment) -> dict:

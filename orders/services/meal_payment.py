@@ -219,12 +219,18 @@ def charge_delivered_meal(delivery: OrderDelivery) -> OrderDelivery | None:
             'order__customer',
             'subscription',
             'subscription__customer',
+            'test_meal_order',
+            'test_meal_order__customer',
             'wallet_transaction',
         )
         .get(pk=delivery.pk)
     )
 
     if locked.status != OrderDelivery.DeliveryStatus.DELIVERED:
+        return locked
+
+    # Test Meal fulfillment: never debit wallet / recognize subscription meal profit.
+    if locked.test_meal_order_id:
         return locked
 
     from admin_wallet.services.profit_ledger import recognize_meal_profit

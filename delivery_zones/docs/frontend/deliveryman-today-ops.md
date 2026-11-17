@@ -53,7 +53,19 @@ When `status` is omitted, `include_delivered=true` still returns scheduled + del
 | `package_public_id` | Meal category UUID when available; may be null |
 | `menu_items_label` | Daily menu ingredients (separate from package) |
 | `status` | `scheduled` / `delivered` / … — UI may translate `scheduled` → “নির্ধারিত”; de-emphasize in new UI |
-| `meal_period`, `meal_quantity`, address / phone / location | Unchanged |
+| `meal_period`, address / phone / location | Unchanged |
+| `meal_quantity` | **Regular** subscription/order meal boxes for the stop (does **not** include guests). Legacy field — keep for older apps. |
+| `regular_meal_quantity` | Additive alias equal to `meal_quantity` (same regular-box semantics). Prefer this name in new clients. |
+| `guest_quantity` | Aggregated countable Guest Meal boxes linked to **this** `OrderDelivery` only (`scheduled` + `delivered`; **cancelled excluded**) |
+| `total_meal_quantity` | `regular_meal_quantity + guest_quantity` (prefer this for “boxes to deliver”). Never add guest on top of this total again. |
+
+**Quantity rules**
+
+- Arithmetic invariant: `total_meal_quantity == regular_meal_quantity + guest_quantity`.
+- Subscription stops count **1 regular box** per board row. `CustomerSubscription.quantity` is person/serving count for fee display — not rider food-box count. Extra boxes are Guest Meals.
+- Multiple `GuestMealOrder` rows on the same stop are summed; cancelled rows are omitted.
+- Guest rows for another customer or another stop never mix into this stop’s totals.
+- Scheduled and delivered boards use the same field semantics; after Mark Delivered, linked scheduled guests sync to `delivered` without recharging guest wallets.
 | `full_address`, `area`, `city` | Street / area / city snapshots (unchanged) |
 | `building_name`, `floor`, `flat_number` | Structured door-level parts; always present; `""` means unknown — do not invent values |
 | `delivered_at` | Present when delivered (logistics `delivered_at` or `marked_at`) |
@@ -75,6 +87,9 @@ Do **not** remove `meal_name` or `status` — current mobile DTOs depend on them
   "package_public_id": "...",
   "menu_items_label": "Beef + dhal",
   "meal_quantity": 1,
+  "regular_meal_quantity": 1,
+  "guest_quantity": 3,
+  "total_meal_quantity": 4,
   "full_address": "Mcs tower,muradpur Chittagong",
   "area": "Muradpur",
   "city": "Chittagong",
@@ -93,7 +108,10 @@ Do **not** remove `meal_name` or `status` — current mobile DTOs depend on them
 GET /user_management/deliveryman/deliveries/today-summary/
 ```
 
-Same zone / active meal / low-balance exclusion as the board. Counts are **stop counts** (`OrderDelivery` rows), not meal quantity.
+Same zone / active meal / low-balance exclusion as the board.
+
+- `total` / `delivered` / `pending` remain **stop counts** (`OrderDelivery` rows).
+- Additive box metrics: `regular_meal_quantity`, `guest_meal_quantity`, `total_meal_quantity`, `delivered_meal_quantity`, `pending_meal_quantity` (meal boxes; guest included in totals, not in package stop `count`).
 
 ```json
 {
@@ -104,6 +122,11 @@ Same zone / active meal / low-balance exclusion as the board. Counts are **stop 
   "total": 25,
   "delivered": 17,
   "pending": 8,
+  "regular_meal_quantity": 25,
+  "guest_meal_quantity": 15,
+  "total_meal_quantity": 40,
+  "delivered_meal_quantity": 28,
+  "pending_meal_quantity": 12,
   "packages": [
     { "package_public_id": "...", "package_name": "Student Package", "count": 12 },
     { "package_public_id": "...", "package_name": "Regular Package", "count": 8 }

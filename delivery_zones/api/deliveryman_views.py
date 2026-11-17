@@ -100,7 +100,10 @@ class DeliverymanTodaySummaryView(APIView):
         description=(
             'Stop-based total / delivered / pending for the active meal window, plus '
             'dynamic package counts from subscription/order meal snapshots. Same zone '
-            'and meal-off timezone scope as today-board. Client date/period ignored.'
+            'and meal-off timezone scope as today-board. Client date/period ignored. '
+            'Additive box metrics: regular_meal_quantity, guest_meal_quantity, '
+            'total_meal_quantity, delivered_meal_quantity, pending_meal_quantity '
+            '(meal boxes; distinct from stop counts).'
         ),
         parameters=[
             OpenApiParameter(

@@ -16,6 +16,7 @@ On **current subscription** (preferred) or historical order detail, for each del
 2. Show **Meal On** only if `can_meal_on === true` (customer-skipped, before deadline).
 3. Optionally show countdown using `meal_off_deadline_at` (applies to both).
 4. After deadline: both flags false — do not offer Off or On; refresh if needed.
+5. If scheduled Guest Meals exist for that date/period, `can_meal_off` is false and Meal-OFF is rejected (v1 has no Guest Meal cancel/refund).
 
 ## Default vs off (UI copy)
 

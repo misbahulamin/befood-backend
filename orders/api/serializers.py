@@ -178,6 +178,8 @@ class OrderWalletSettingsSerializer(serializers.ModelSerializer):
             'minimum_recharge_amount',
             'guest_meal_box_price',
             'guest_meal_monthly_limit',
+            'test_meal_box_price',
+            'test_meal_lifetime_quota',
             'updated_at',
         )
         read_only_fields = ('updated_at',)
@@ -212,6 +214,18 @@ class OrderWalletSettingsSerializer(serializers.ModelSerializer):
         return self._validate_amount(value)
 
     def validate_guest_meal_monthly_limit(self, value):
+        try:
+            limit = int(value)
+        except (TypeError, ValueError) as exc:
+            raise serializers.ValidationError('Must be a positive integer.') from exc
+        if limit < 1:
+            raise serializers.ValidationError('Must be a positive integer.')
+        return limit
+
+    def validate_test_meal_box_price(self, value):
+        return self._validate_amount(value)
+
+    def validate_test_meal_lifetime_quota(self, value):
         try:
             limit = int(value)
         except (TypeError, ValueError) as exc:
@@ -371,6 +385,8 @@ class TodayBoardDeliverySerializer(serializers.ModelSerializer):
     meal_type_snapshot = serializers.SerializerMethodField()
     order_status = serializers.SerializerMethodField()
     guest_quantity = serializers.SerializerMethodField()
+    meal_quantity = serializers.SerializerMethodField()
+    total_meal_quantity = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderDelivery
@@ -392,7 +408,9 @@ class TodayBoardDeliverySerializer(serializers.ModelSerializer):
             'delivery_full_address_snapshot',
             'delivery_area_snapshot',
             'delivery_city_snapshot',
+            'meal_quantity',
             'guest_quantity',
+            'total_meal_quantity',
         )
         read_only_fields = fields
 
@@ -427,10 +445,21 @@ class TodayBoardDeliverySerializer(serializers.ModelSerializer):
             return obj.subscription.status
         return None
 
+    def get_meal_quantity(self, obj):
+        # Subscription slots are 1 meal; historical order items may carry quantity.
+        if obj.order_id:
+            items = list(obj.order.items.all())
+            if items and items[0].quantity:
+                return int(items[0].quantity)
+        return 1
+
     def get_guest_quantity(self, obj):
         from orders.services.guest_meal import guest_quantity_for_delivery
 
         return guest_quantity_for_delivery(obj)
+
+    def get_total_meal_quantity(self, obj):
+        return self.get_meal_quantity(obj) + self.get_guest_quantity(obj)
 
 
 class MealDemandPackageSerializer(serializers.Serializer):
@@ -438,10 +467,13 @@ class MealDemandPackageSerializer(serializers.Serializer):
     package_name = serializers.CharField()
     total_customers = serializers.IntegerField()
     expected_meal_count = serializers.IntegerField()
+    subscription_expected_meal_count = serializers.IntegerField(required=False)
     meal_off_count = serializers.IntegerField()
     customer_meal_off_count = serializers.IntegerField(required=False)
     low_balance_blocked_count = serializers.IntegerField(required=False)
     final_cooking_count = serializers.IntegerField()
+    subscription_final_cooking_count = serializers.IntegerField(required=False)
+    guest_meal_count = serializers.IntegerField(required=False)
 
 
 class PackageContributionSerializer(serializers.Serializer):
@@ -457,10 +489,13 @@ class MealDemandPeriodSerializer(serializers.Serializer):
     meal_off_deadline_at = serializers.DateTimeField()
     total_customers = serializers.IntegerField()
     expected_meal_count = serializers.IntegerField()
+    subscription_expected_meal_count = serializers.IntegerField(required=False)
     meal_off_count = serializers.IntegerField()
     customer_meal_off_count = serializers.IntegerField(required=False)
     low_balance_blocked_count = serializers.IntegerField(required=False)
     final_cooking_count = serializers.IntegerField()
+    subscription_final_cooking_count = serializers.IntegerField(required=False)
+    guest_meal_count = serializers.IntegerField(required=False)
     remaining_meal_count = serializers.IntegerField()
     packages = MealDemandPackageSerializer(many=True)
 
@@ -486,6 +521,10 @@ class KitchenTodayRequirementSerializer(serializers.Serializer):
     meal_period = serializers.ChoiceField(choices=['lunch', 'dinner'])
     confirmation_status = serializers.ChoiceField(choices=['estimated', 'confirmed'])
     expected_meal_count = serializers.IntegerField()
+    subscription_expected_meal_count = serializers.IntegerField(
+        required=False,
+        help_text='Subscription boxes before guest; expected_meal_count stays guest-inclusive.',
+    )
     meal_off_count = serializers.IntegerField()
     customer_meal_off_count = serializers.IntegerField(required=False)
     low_balance_blocked_count = serializers.IntegerField(required=False)
@@ -495,7 +534,17 @@ class KitchenTodayRequirementSerializer(serializers.Serializer):
             'this slot (diagnostic; does not alter expected/cook counts).'
         ),
     )
-    final_cooking_count = serializers.IntegerField()
+    final_cooking_count = serializers.IntegerField(
+        help_text='Guest-inclusive meals to prepare (subscription + guest boxes).',
+    )
+    subscription_final_cooking_count = serializers.IntegerField(
+        required=False,
+        help_text='Subscription cooking boxes only; do not add onto final_cooking_count.',
+    )
+    guest_meal_count = serializers.IntegerField(
+        required=False,
+        help_text='Guest meal boxes in COOKING_STATUSES for this slot.',
+    )
     total_customers = serializers.IntegerField()
     packages = MealDemandPackageSerializer(many=True)
     ingredients_incomplete = serializers.BooleanField()

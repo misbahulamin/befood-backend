@@ -35,6 +35,9 @@ from wallet.services.ledger import (
 MONEY = Decimal('0.01')
 GUEST_MEAL_PURPOSE = 'guest_meal'
 MAX_PER_REQUEST_QUANTITY = 10
+PERSONAL_MEAL_OFF_MESSAGE = (
+    'Guest Meal cannot be ordered because your regular meal is OFF for this date.'
+)
 COUNTABLE_STATUSES = (
     GuestMealOrder.Status.SCHEDULED,
     GuestMealOrder.Status.DELIVERED,
@@ -262,6 +265,54 @@ def resolve_guest_pricing(
     return base, box, unit, total
 
 
+def is_personal_meal_off(
+    customer,
+    *,
+    service_date: date,
+    meal_period: str,
+    subscription=None,
+) -> bool:
+    """
+    True when the regular slot is customer-requested Meal-OFF.
+
+    Authoritative shape: OrderDelivery skipped with skip_source=customer.
+    Admin/system skips are intentionally excluded.
+    """
+    qs = OrderDelivery.objects.filter(
+        service_date=service_date,
+        meal_period=meal_period,
+        status=OrderDelivery.DeliveryStatus.SKIPPED,
+        skip_source=OrderDelivery.SkipSource.CUSTOMER,
+    )
+    if subscription is not None:
+        qs = qs.filter(subscription_id=subscription.pk)
+    else:
+        qs = qs.filter(subscription__customer=customer)
+    return qs.exists()
+
+
+def delivery_is_personal_meal_off(delivery: OrderDelivery) -> bool:
+    return (
+        delivery.status == OrderDelivery.DeliveryStatus.SKIPPED
+        and delivery.skip_source == OrderDelivery.SkipSource.CUSTOMER
+    )
+
+
+def has_scheduled_guest_meals_for_slot(
+    *,
+    customer,
+    service_date: date,
+    meal_period: str,
+) -> bool:
+    """True when countable (scheduled) Guest Meals exist for this slot."""
+    return GuestMealOrder.objects.filter(
+        customer=customer,
+        service_date=service_date,
+        meal_period=meal_period,
+        status=GuestMealOrder.Status.SCHEDULED,
+    ).exists()
+
+
 def _resolve_linked_delivery(subscription, service_date: date, meal_period: str):
     ensure_subscription_deliveries(subscription)
     return (
@@ -272,6 +323,14 @@ def _resolve_linked_delivery(subscription, service_date: date, meal_period: str)
         )
         .order_by('id')
         .first()
+    )
+
+
+def _lock_delivery_for_guest_create(delivery_pk: int) -> OrderDelivery:
+    return (
+        OrderDelivery.objects.select_for_update(of=('self',))
+        .select_related('subscription')
+        .get(pk=delivery_pk)
     )
 
 
@@ -311,6 +370,19 @@ def build_guest_meal_quote(
         raise GuestMealNotEligibleError(
             'Ordering cutoff for this meal has already passed.',
             code='CUTOFF_PASSED',
+        )
+
+    # Ensure slots exist so personal Meal-OFF is evaluated against real rows.
+    ensure_subscription_deliveries(subscription)
+    if is_personal_meal_off(
+        customer,
+        service_date=service_date,
+        meal_period=meal_period,
+        subscription=subscription,
+    ):
+        raise GuestMealNotEligibleError(
+            PERSONAL_MEAL_OFF_MESSAGE,
+            code='PERSONAL_MEAL_OFF',
         )
 
     base, box, unit, total = resolve_guest_pricing(
@@ -422,6 +494,127 @@ def serialize_guest_meal_order(order: GuestMealOrder) -> dict:
     }
 
 
+def _admin_customer_display_name(customer) -> str:
+    if customer is None:
+        return ''
+    user = getattr(customer, 'user', None)
+    if user is not None:
+        full = f'{user.first_name} {user.last_name}'.strip()
+        if full:
+            return full
+        email = (user.email or '').strip()
+        if email:
+            return email
+        username = (user.username or '').strip()
+        if username:
+            return username
+    return ''
+
+
+def serialize_admin_guest_meal_order(order: GuestMealOrder) -> dict:
+    """Cross-customer admin list/detail payload (verified admin only)."""
+    from user_management.validators import format_bd_phone_e164
+
+    customer = order.customer
+    meal = getattr(order.subscription, 'meal', None)
+    delivery = order.delivery
+    zone = getattr(delivery, 'logistics_zone', None) if delivery is not None else None
+    return {
+        'public_id': str(order.public_id),
+        'customer_public_id': str(customer.public_id),
+        'customer_name': _admin_customer_display_name(customer),
+        'customer_phone': format_bd_phone_e164(customer.phone) if customer.phone else None,
+        'service_date': order.service_date.isoformat(),
+        'meal_period': order.meal_period,
+        'quantity': order.quantity,
+        'package_public_id': str(meal.public_id) if meal is not None else None,
+        'package_name': meal.meal_name if meal is not None else '',
+        'subscription_public_id': str(order.subscription.public_id),
+        'delivery_public_id': (
+            str(delivery.public_id) if delivery is not None else None
+        ),
+        'zone_public_id': str(zone.public_id) if zone is not None else None,
+        'zone_name': zone.name if zone is not None else None,
+        'base_meal_price': f'{order.base_meal_price:.2f}',
+        'box_price': f'{order.box_price:.2f}',
+        'unit_price': f'{order.unit_price:.2f}',
+        'total_amount': f'{order.total_amount:.2f}',
+        'status': order.status,
+        'wallet_transaction_public_id': (
+            str(order.wallet_transaction.public_id)
+            if order.wallet_transaction_id
+            else None
+        ),
+        'created_at': order.created_at.isoformat().replace('+00:00', 'Z'),
+    }
+
+
+def admin_guest_meal_queryset():
+    return (
+        GuestMealOrder.objects.select_related(
+            'customer__user',
+            'subscription__meal',
+            'delivery__logistics_zone',
+            'wallet_transaction',
+        )
+        .all()
+        .order_by('-service_date', '-created_at')
+    )
+
+
+def summarize_admin_guest_meals(qs) -> dict:
+    from django.db.models import Count, Q, Sum
+
+    from admin_wallet.models import MealProfitTransaction
+
+    aggregates = qs.aggregate(
+        order_count=Count('id'),
+        box_quantity=Sum('quantity'),
+        revenue=Sum('total_amount'),
+        scheduled_box_quantity=Sum(
+            'quantity',
+            filter=Q(status=GuestMealOrder.Status.SCHEDULED),
+        ),
+        delivered_box_quantity=Sum(
+            'quantity',
+            filter=Q(status=GuestMealOrder.Status.DELIVERED),
+        ),
+        cancelled_box_quantity=Sum(
+            'quantity',
+            filter=Q(status=GuestMealOrder.Status.CANCELLED),
+        ),
+        delivered_order_value=Sum(
+            'total_amount',
+            filter=Q(status=GuestMealOrder.Status.DELIVERED),
+        ),
+    )
+    revenue = aggregates['revenue']
+    prepaid = f'{(revenue or 0):.2f}'
+    delivered_recognized = f'{(aggregates["delivered_order_value"] or 0):.2f}'
+
+    guest_ids = list(qs.values_list('id', flat=True))
+    realized_profit = (
+        MealProfitTransaction.objects.filter(
+            meal_kind=MealProfitTransaction.MealKind.GUEST,
+            guest_meal_order_id__in=guest_ids,
+        ).aggregate(total=Sum('profit_amount'))['total']
+        if guest_ids
+        else None
+    )
+    return {
+        'order_count': int(aggregates['order_count'] or 0),
+        'box_quantity': int(aggregates['box_quantity'] or 0),
+        # Legacy key: prepaid order value across all statuses in the filter.
+        'revenue': prepaid,
+        'prepaid_order_value': prepaid,
+        'delivered_recognized_revenue': delivered_recognized,
+        'realized_guest_profit': f'{(realized_profit or 0):.2f}',
+        'scheduled_box_quantity': int(aggregates['scheduled_box_quantity'] or 0),
+        'delivered_box_quantity': int(aggregates['delivered_box_quantity'] or 0),
+        'cancelled_box_quantity': int(aggregates['cancelled_box_quantity'] or 0),
+    }
+
+
 def _find_idempotent_order(customer, idempotency_key: str | None):
     if not idempotency_key:
         return None
@@ -525,6 +718,24 @@ def create_guest_meal_order(
         )
 
     delivery = _resolve_linked_delivery(subscription, service_date, meal_period)
+    if delivery is None:
+        raise GuestMealNotEligibleError(
+            'A delivery stop is not available for this date and meal period.',
+            code='DELIVERY_UNAVAILABLE',
+        )
+
+    # Lock order: wallet → month guest rows → delivery (see design D3).
+    locked_delivery = _lock_delivery_for_guest_create(delivery.pk)
+    if delivery_is_personal_meal_off(locked_delivery):
+        raise GuestMealNotEligibleError(
+            PERSONAL_MEAL_OFF_MESSAGE,
+            code='PERSONAL_MEAL_OFF',
+        )
+    if locked_delivery.status != OrderDelivery.DeliveryStatus.SCHEDULED:
+        raise GuestMealNotEligibleError(
+            'A delivery stop is not available for this date and meal period.',
+            code='DELIVERY_UNAVAILABLE',
+        )
 
     metadata = {
         'purpose': GUEST_MEAL_PURPOSE,
@@ -594,7 +805,7 @@ def create_guest_meal_order(
         order = GuestMealOrder.objects.create(
             customer=customer,
             subscription=subscription,
-            delivery=delivery,
+            delivery=locked_delivery,
             service_date=service_date,
             meal_period=meal_period,
             quantity=quantity,
@@ -646,12 +857,30 @@ def create_guest_meal_order(
 
 
 def sync_guest_meals_for_delivered_delivery(delivery: OrderDelivery) -> int:
-    """Mark linked scheduled guest meals as delivered when the parent stop is delivered."""
+    """
+    Mark linked scheduled guest meals as delivered when the parent stop is delivered.
+
+    Also idempotently recognizes Guest Meal profit for all delivered guest orders
+    on this stop (no second wallet debit).
+    """
     if delivery.status != OrderDelivery.DeliveryStatus.DELIVERED:
         return 0
-    return (
+    updated = (
         GuestMealOrder.objects.filter(
             delivery=delivery,
             status=GuestMealOrder.Status.SCHEDULED,
         ).update(status=GuestMealOrder.Status.DELIVERED)
     )
+    from admin_wallet.services.profit_ledger import recognize_guest_meal_profit
+
+    delivered_guests = (
+        GuestMealOrder.objects.filter(
+            delivery=delivery,
+            status=GuestMealOrder.Status.DELIVERED,
+        )
+        .select_related('subscription__meal', 'customer', 'subscription')
+    )
+    for guest_order in delivered_guests:
+        recognize_guest_meal_profit(guest_order)
+    return updated
+

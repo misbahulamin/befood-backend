@@ -46,6 +46,15 @@ Wallet dashboard remains cash/custody only. See [`admin-wallet.md`](./admin-wall
   "range_revenue": "52000.00",
   "range_food_cost": "38000.00",
   "range_deliveries": 800,
+  "regular_revenue": "50000.00",
+  "guest_revenue": "2000.00",
+  "regular_food_cost": "37000.00",
+  "guest_food_cost": "1000.00",
+  "regular_profit": "11500.00",
+  "guest_profit": "500.00",
+  "regular_meals_served": 780,
+  "guest_meals_served": 40,
+  "total_meals_served": 820,
   "profit_by_package": [
     {
       "package_public_id": "uuid",
@@ -95,11 +104,14 @@ Wallet dashboard remains cash/custody only. See [`admin-wallet.md`](./admin-wall
 | `lifetime_profit` | Sum of all ledger `profit_amount` (optionally scoped by package/customer/meal_period filters) |
 | `month_profit` | Current calendar month by **`service_date`** |
 | `today_profit` | Today by **`service_date`** (project timezone) |
-| `range_*` | Aggregates for `start_date`–`end_date` window (defaults to current month) |
+| `range_*` | Aggregates for `start_date`–`end_date` window (defaults to current month); totals include realized Guest Meals |
+| `regular_*` / `guest_*` | Additive breakdown of range revenue, food cost, profit, and meals served |
+| `total_meals_served` | Sum of ledger `quantity` in range (regular + guest food boxes) |
+| `range_deliveries` | Ledger **row** count (not delivery stops) |
 | `profit_by_package` | Package rows in the active range |
 | `profit_by_meal_period` | Lunch vs dinner in the active range (+ share %) |
 | `profit_by_customer` | Top customers by profit in the active range |
-| `daily_profit_chart` | Daily series for graphs (`date` ascending) |
+| `daily_profit_chart` | Daily series for graphs (`date` ascending); includes guest realization |
 
 ### Dashboard query params
 
@@ -120,7 +132,7 @@ GET /api/v1/web/admin-profit/history/?start_date=2026-09-01&end_date=2026-09-13&
 
 Allowlisted filters only (`start_date`, `end_date`, `package`, `customer`, `meal_period`, `page`, `page_size`). Others → **400**.
 
-Paginated (`results`, `count`, …). Each row includes `public_id`, delivery/customer/package ids, `meal_period`, `service_date`, `meal_price`, `food_cost`, `operational_cost`, `profit_amount`, `profit_percentage`, `source`, timestamps.
+Paginated (`results`, `count`, …). Each row includes `public_id`, `meal_kind` (`regular`|`guest`), `quantity`, `delivery_public_id`, `guest_meal_public_id` (nullable), customer/package ids, `meal_period`, `service_date`, `meal_price`, `food_cost`, `operational_cost`, `profit_amount`, `profit_percentage`, `source`, timestamps.
 
 ## Suggested UI
 

@@ -17,9 +17,9 @@
 | 3 | Pricing | `unit = published slot final_meal_price + box_price`, `total = unit × quantity`. All snapshots frozen at purchase. Never accept price from client |
 | 4 | Payment | Wallet debit at create time (`PAYMENT`, `commission_first`, metadata `purpose=guest_meal`). Floor rule: `recharge_balance − total >= meal_stop_threshold` (inclusive pass) |
 | 5 | Monthly quota | `SUM(quantity)` of countable statuses (scheduled/delivered) in Asia/Dhaka calendar month of `created_at`. Enforced atomically with `select_for_update` |
-| 6 | Eligibility | Active subscription required; `date >= business_today`; period must be in subscription preference; meal-off cutoff (`is_past_meal_cutoff`); published slot with price; qty 1–10 per request + remaining quota; wallet not frozen + sufficient funds |
+| 6 | Eligibility | Active subscription required; `date >= business_today`; period must be in subscription preference; meal-off cutoff (`is_past_meal_cutoff`); **personal Meal-OFF blocks Guest Meal** (`PERSONAL_MEAL_OFF`); resolvable scheduled delivery stop (`DELIVERY_UNAVAILABLE` if missing); published slot with price; qty 1–10 per request + remaining quota; wallet not frozen + sufficient funds |
 | 7 | Atomic create + idempotency | `transaction.atomic()`: replay on same key+payload → `200 + idempotent_replay:true`; same key+different payload → `409 IDEMPOTENCY_CONFLICT` |
-| 8 | Delivery/kitchen wiring | Linked to subscription `OrderDelivery` stop; rider board `guest_quantity` additive; kitchen `get_demand` includes guest units in `expected/final_cooking_count`; parent deliver flips scheduled guests → delivered; no re-charge of guest total on deliver |
+| 8 | Delivery/kitchen wiring | Linked to subscription `OrderDelivery` stop (create rejects null delivery); rider board `meal_quantity` + `guest_quantity` + `total_meal_quantity`; kitchen `get_demand` includes guest units; Meal-OFF blocked while scheduled Guest Meals exist; parent deliver flips scheduled guests → delivered; no re-charge of guest total on deliver |
 | 9 | History | Admin Customer-360 activity event `guest_meal_ordered`; customer list/detail APIs |
 | 10 | Docs + tests | Backend/frontend/wallet docs, OpenAPI tags `Guest Meals`, `orders/tests/test_guest_meal.py` |
 
@@ -91,7 +91,7 @@ Response `200`:
 }
 ```
 
-> Preview is NOT a reservation. Cutoff can pass between preview and create. Always handle `422` on create even after successful preview.
+> Preview is NOT a reservation. Cutoff or personal Meal-OFF can change between preview and create. Always handle `422` on create even after successful preview (`PERSONAL_MEAL_OFF`, `CUTOFF_PASSED`, etc.).
 
 ### 2.3 POST create (charges wallet)
 
@@ -248,7 +248,9 @@ const res = await fetch('/api/v1/guest-meals/', {
 
 ## 7. Rider / Kitchen / Admin notes (for awareness, no action)
 
-- Rider today-board rows now include `guest_quantity` (add to `meal_quantity` for box count).
+- Rider today-board rows include `meal_quantity`, `guest_quantity`, and `total_meal_quantity` (prefer server total).
+- Rider today-summary adds box metrics (`regular_meal_quantity`, `guest_meal_quantity`, `total_meal_quantity`, …) while keeping stop counts.
+- Personal Meal-OFF blocks Guest Meal (`PERSONAL_MEAL_OFF`). Meal-OFF is blocked while scheduled Guest Meals exist for that slot.
 - Kitchen demand `expected_meal_count` / `final_cooking_count` already include guest units.
 - Admin: box price + monthly limit at `GET/PATCH /api/v1/web/orders/order-wallet-settings/` → `{ guest_meal_box_price, guest_meal_monthly_limit }`.
 - No cancel/refund in v1. No guest order for non-subscribers. No push notification in v1.

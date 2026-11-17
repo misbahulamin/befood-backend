@@ -354,6 +354,18 @@ class OrderDelivery(PublicIdMixin, models.Model):
         blank=True,
         help_text='Active (or cancelled) subscription owning this slot.',
     )
+    test_meal_order = models.ForeignKey(
+        'TestMealOrder',
+        on_delete=models.CASCADE,
+        related_name='deliveries',
+        null=True,
+        blank=True,
+        help_text=(
+            'Standalone Test Meal fulfillment parent. Parent exclusivity: new rows must '
+            'have exactly one of (order, subscription, test_meal_order) non-null. '
+            'Legacy rows may have both order and subscription.'
+        ),
+    )
     service_date = models.DateField()
     meal_period = models.CharField(max_length=20, choices=MealPeriod.choices)
     status = models.CharField(
@@ -492,11 +504,26 @@ class OrderDelivery(PublicIdMixin, models.Model):
                 condition=Q(subscription__isnull=False),
                 name='unique_subscription_delivery_slot',
             ),
+            models.UniqueConstraint(
+                fields=['test_meal_order'],
+                condition=Q(test_meal_order__isnull=False),
+                name='unique_test_meal_order_delivery',
+            ),
             models.CheckConstraint(
                 check=(
-                    Q(order__isnull=False, subscription__isnull=True)
-                    | Q(order__isnull=True, subscription__isnull=False)
-                    | Q(order__isnull=False, subscription__isnull=False)
+                    (
+                        Q(test_meal_order__isnull=True)
+                        & (
+                            Q(order__isnull=False, subscription__isnull=True)
+                            | Q(order__isnull=True, subscription__isnull=False)
+                            | Q(order__isnull=False, subscription__isnull=False)
+                        )
+                    )
+                    | Q(
+                        test_meal_order__isnull=False,
+                        order__isnull=True,
+                        subscription__isnull=True,
+                    )
                 ),
                 name='order_delivery_requires_order_or_subscription',
             ),
@@ -505,6 +532,7 @@ class OrderDelivery(PublicIdMixin, models.Model):
             models.Index(fields=['service_date', 'status']),
             models.Index(fields=['order', 'status']),
             models.Index(fields=['subscription', 'status']),
+            models.Index(fields=['test_meal_order', 'status']),
             models.Index(
                 fields=['delivered_by_rider', 'service_date', 'meal_period', 'status']
             ),
@@ -512,11 +540,12 @@ class OrderDelivery(PublicIdMixin, models.Model):
         ]
 
     def __str__(self):
-        parent = (
-            f'sub={self.subscription_id}'
-            if self.subscription_id
-            else f'order={self.order_id}'
-        )
+        if self.test_meal_order_id:
+            parent = f'test_meal={self.test_meal_order_id}'
+        elif self.subscription_id:
+            parent = f'sub={self.subscription_id}'
+        else:
+            parent = f'order={self.order_id}'
         return f'Delivery #{self.pk} {parent} {self.service_date} {self.meal_period}'
 
 
@@ -674,6 +703,18 @@ class OrderWalletSettings(models.Model):
         validators=[MinValueValidator(1)],
         help_text='Maximum guest meal quantity per Asia/Dhaka calendar month.',
     )
+    test_meal_box_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('10.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='One-time Test Meal box price (BDT) added to published slot meal price.',
+    )
+    test_meal_lifetime_quota = models.PositiveIntegerField(
+        default=2,
+        validators=[MinValueValidator(1)],
+        help_text='Maximum accepted Test Meal orders per customer lifetime.',
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -792,6 +833,224 @@ class GuestMealOrder(PublicIdMixin, models.Model):
             f'GuestMeal #{self.pk} {self.service_date} {self.meal_period} '
             f'qty={self.quantity} ({self.status})'
         )
+
+
+class TestMealOrder(PublicIdMixin, models.Model):
+    """Lifetime Test Meal trial order for non-subscribers (no wallet debit)."""
+
+    class MealPeriod(models.TextChoices):
+        LUNCH = 'lunch', 'Lunch'
+        DINNER = 'dinner', 'Dinner'
+
+    class OrderStatus(models.TextChoices):
+        CONFIRMED = 'confirmed', 'Confirmed'
+        PREPARING = 'preparing', 'Preparing'
+        OUT_FOR_DELIVERY = 'out_for_delivery', 'Out for delivery'
+        DELIVERED = 'delivered', 'Delivered'
+        CANCELLED = 'cancelled', 'Cancelled'
+        FAILED = 'failed', 'Failed'
+
+    class PaymentStatus(models.TextChoices):
+        UNPAID = 'unpaid', 'Unpaid'
+        PAID = 'paid', 'Paid'
+        REFUNDED = 'refunded', 'Refunded'
+
+    class PaymentMethod(models.TextChoices):
+        MANUAL = 'manual', 'Manual'
+
+    customer = models.ForeignKey(
+        'user_management.CustomerProfile',
+        on_delete=models.CASCADE,
+        related_name='test_meal_orders',
+    )
+    package = models.ForeignKey(
+        'meals.MealCategory',
+        on_delete=models.PROTECT,
+        related_name='test_meal_orders',
+    )
+    package_name_snapshot = models.CharField(max_length=255, blank=True, default='')
+    service_date = models.DateField()
+    meal_period = models.CharField(max_length=20, choices=MealPeriod.choices)
+    special_instructions = models.TextField(blank=True, default='')
+    meal_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text='Published slot final meal price snapshot at confirmation.',
+    )
+    box_charge = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text='Test Meal box charge snapshot at confirmation.',
+    )
+    total_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text='meal_price + box_charge at confirmation.',
+    )
+    currency = models.CharField(max_length=3, default='BDT')
+    address = models.ForeignKey(
+        'user_management.CustomerDeliveryPlace',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='test_meal_orders',
+    )
+    address_label_snapshot = models.CharField(max_length=100, blank=True, default='')
+    address_full_snapshot = models.TextField(blank=True, default='')
+    address_area_snapshot = models.CharField(max_length=100, blank=True, default='')
+    address_city_snapshot = models.CharField(max_length=100, blank=True, default='')
+    address_building_name_snapshot = models.CharField(max_length=255, blank=True, default='')
+    address_floor_snapshot = models.CharField(max_length=50, blank=True, default='')
+    address_flat_number_snapshot = models.CharField(max_length=50, blank=True, default='')
+    address_latitude_snapshot = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    address_longitude_snapshot = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    delivery_window_start = models.TimeField()
+    delivery_window_end = models.TimeField()
+    order_status = models.CharField(
+        max_length=32,
+        choices=OrderStatus.choices,
+        default=OrderStatus.CONFIRMED,
+        db_index=True,
+    )
+    payment_status = models.CharField(
+        max_length=20,
+        choices=PaymentStatus.choices,
+        default=PaymentStatus.UNPAID,
+        db_index=True,
+    )
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PaymentMethod.choices,
+        default=PaymentMethod.MANUAL,
+    )
+    amount_collected = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    paid_at = models.DateTimeField(null=True, blank=True)
+    payment_notes = models.TextField(blank=True, default='')
+    payment_recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='recorded_test_meal_payments',
+    )
+    source_channel = models.CharField(max_length=64, blank=True, default='')
+    idempotency_key = models.CharField(max_length=64, null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancellation_reason = models.TextField(blank=True, default='')
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['customer', 'idempotency_key'],
+                condition=Q(idempotency_key__isnull=False),
+                name='test_meal_unique_idempotency_per_customer',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['customer', 'created_at']),
+            models.Index(fields=['service_date', 'meal_period', 'order_status']),
+            models.Index(fields=['payment_status', 'service_date']),
+            models.Index(fields=['package', 'service_date', 'meal_period']),
+        ]
+
+    def __str__(self):
+        return (
+            f'TestMeal #{self.pk} {self.service_date} {self.meal_period} '
+            f'({self.order_status}/{self.payment_status})'
+        )
+
+
+class TestMealPaymentEvent(models.Model):
+    """Audit trail for Test Meal manual payment record/correct/refund actions."""
+
+    class Action(models.TextChoices):
+        RECORD = 'record', 'Record'
+        CORRECT = 'correct', 'Correct'
+        REFUND = 'refund', 'Refund'
+
+    order = models.ForeignKey(
+        TestMealOrder,
+        on_delete=models.CASCADE,
+        related_name='payment_events',
+    )
+    action = models.CharField(max_length=20, choices=Action.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='test_meal_payment_events',
+    )
+    before_payment_status = models.CharField(max_length=20, blank=True, default='')
+    after_payment_status = models.CharField(max_length=20, blank=True, default='')
+    before_amount_collected = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    after_amount_collected = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    notes = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['order', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f'TestMealPaymentEvent #{self.pk} {self.action} order={self.order_id}'
+
+
+class TestMealFunnelEvent(models.Model):
+    """Deduped client instrumentation for Test Meal funnel analytics."""
+
+    event_name = models.CharField(max_length=64, db_index=True)
+    customer = models.ForeignKey(
+        'user_management.CustomerProfile',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='test_meal_funnel_events',
+    )
+    correlation_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    client_event_id = models.CharField(max_length=64)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['event_name', 'client_event_id', 'customer'],
+                condition=Q(customer__isnull=False),
+                name='test_meal_funnel_unique_customer_event',
+            ),
+            models.UniqueConstraint(
+                fields=['event_name', 'client_event_id', 'correlation_id'],
+                condition=Q(customer__isnull=True),
+                name='test_meal_funnel_unique_anon_event',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['event_name', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f'TestMealFunnelEvent #{self.pk} {self.event_name}'
 
 
 class MealDemandSnapshot(models.Model):

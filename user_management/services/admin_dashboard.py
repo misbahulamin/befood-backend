@@ -6,7 +6,9 @@ from calendar import month_name
 from datetime import time
 from typing import Any
 
-from orders.models import CustomerSubscription, OrderDelivery
+from django.db.models import Sum
+
+from orders.models import CustomerSubscription, GuestMealOrder, OrderDelivery, TestMealOrder
 from orders.services.meal_off import get_meal_off_settings, meal_off_business_now
 from support.models import SupportConversation
 from user_management.models import CustomerProfile
@@ -17,6 +19,43 @@ from wallet.models import WalletTransaction
 ADMIN_MEAL_STATUS_CUTOFF = time(14, 0)
 
 
+def _sum_delivered_guest_boxes(*, service_date_gte=None, service_date_lte=None, service_date=None) -> int:
+    qs = GuestMealOrder.objects.filter(status=GuestMealOrder.Status.DELIVERED)
+    if service_date is not None:
+        qs = qs.filter(service_date=service_date)
+    if service_date_gte is not None:
+        qs = qs.filter(service_date__gte=service_date_gte)
+    if service_date_lte is not None:
+        qs = qs.filter(service_date__lte=service_date_lte)
+    return int(qs.aggregate(total=Sum('quantity'))['total'] or 0)
+
+
+def _sum_delivered_test_boxes(*, service_date_gte=None, service_date_lte=None, service_date=None) -> int:
+    qs = TestMealOrder.objects.filter(order_status=TestMealOrder.OrderStatus.DELIVERED)
+    if service_date is not None:
+        qs = qs.filter(service_date=service_date)
+    if service_date_gte is not None:
+        qs = qs.filter(service_date__gte=service_date_gte)
+    if service_date_lte is not None:
+        qs = qs.filter(service_date__lte=service_date_lte)
+    return qs.count()
+
+
+def _delivered_regular_stops(*, service_date_gte=None, service_date_lte=None, service_date=None) -> int:
+    """Delivered non-Test-Meal stops (one regular box each)."""
+    qs = OrderDelivery.objects.filter(
+        status=OrderDelivery.DeliveryStatus.DELIVERED,
+        test_meal_order_id__isnull=True,
+    )
+    if service_date is not None:
+        qs = qs.filter(service_date=service_date)
+    if service_date_gte is not None:
+        qs = qs.filter(service_date__gte=service_date_gte)
+    if service_date_lte is not None:
+        qs = qs.filter(service_date__lte=service_date_lte)
+    return qs.count()
+
+
 def build_dashboard_summary() -> dict[str, Any]:
     """Return ops KPIs for the admin home dashboard in one round-trip."""
     settings_obj = get_meal_off_settings()
@@ -25,8 +64,9 @@ def build_dashboard_summary() -> dict[str, Any]:
     month_start = today.replace(day=1)
     delivered = OrderDelivery.DeliveryStatus.DELIVERED
 
-    total_meals_served = OrderDelivery.objects.filter(status=delivered).count()
-    monthly_meals_served = OrderDelivery.objects.filter(
+    # Delivery stops (unchanged semantics for today_delivery / stop totals).
+    total_delivery_stops = OrderDelivery.objects.filter(status=delivered).count()
+    monthly_delivery_stops = OrderDelivery.objects.filter(
         status=delivered,
         service_date__gte=month_start,
         service_date__lte=today,
@@ -35,6 +75,35 @@ def build_dashboard_summary() -> dict[str, Any]:
         status=delivered,
         service_date=today,
     ).count()
+
+    # Food boxes: regular (non-test stops) + guest + test.
+    regular_meals_served = _delivered_regular_stops()
+    guest_meals_served = _sum_delivered_guest_boxes()
+    test_meals_served = _sum_delivered_test_boxes()
+    total_meals_served = regular_meals_served + guest_meals_served + test_meals_served
+
+    monthly_regular_meals_served = _delivered_regular_stops(
+        service_date_gte=month_start,
+        service_date_lte=today,
+    )
+    monthly_guest_meals_served = _sum_delivered_guest_boxes(
+        service_date_gte=month_start,
+        service_date_lte=today,
+    )
+    monthly_test_meals_served = _sum_delivered_test_boxes(
+        service_date_gte=month_start,
+        service_date_lte=today,
+    )
+    monthly_meals_served = (
+        monthly_regular_meals_served + monthly_guest_meals_served + monthly_test_meals_served
+    )
+
+    today_regular_meals_served = _delivered_regular_stops(service_date=today)
+    today_guest_meals_served = _sum_delivered_guest_boxes(service_date=today)
+    today_test_meals_served = _sum_delivered_test_boxes(service_date=today)
+    today_meals_served = (
+        today_regular_meals_served + today_guest_meals_served + today_test_meals_served
+    )
 
     unread_support_count = SupportConversation.objects.filter(admin_unread_count__gt=0).count()
     pending_wallet_requests = WalletTransaction.objects.filter(
@@ -48,10 +117,24 @@ def build_dashboard_summary() -> dict[str, Any]:
 
     return {
         'total_customers': CustomerProfile.objects.count(),
+        # Food-box served totals (regular + guest + test).
         'total_meals_served': total_meals_served,
+        'regular_meals_served': regular_meals_served,
+        'guest_meals_served': guest_meals_served,
+        'test_meals_served': test_meals_served,
         'monthly_meals_served': monthly_meals_served,
+        'monthly_regular_meals_served': monthly_regular_meals_served,
+        'monthly_guest_meals_served': monthly_guest_meals_served,
+        'monthly_test_meals_served': monthly_test_meals_served,
         'monthly_meals_label': f'{month_name[today.month]} Meals Served',
+        'today_meals_served': today_meals_served,
+        'today_regular_meals_served': today_regular_meals_served,
+        'today_guest_meals_served': today_guest_meals_served,
+        'today_test_meals_served': today_test_meals_served,
+        # Delivery stops (not food boxes).
         'today_delivery': today_delivery,
+        'total_delivery_stops': total_delivery_stops,
+        'monthly_delivery_stops': monthly_delivery_stops,
         'active_subscribers': CustomerSubscription.objects.filter(
             status=CustomerSubscription.Status.ACTIVE,
         ).count(),

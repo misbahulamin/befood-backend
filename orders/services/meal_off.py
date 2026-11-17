@@ -193,10 +193,23 @@ def can_meal_off(
 ) -> bool:
     if delivery.status != OrderDelivery.DeliveryStatus.SCHEDULED:
         return False
-    from orders.services.subscription_parent import delivery_parent_is_cancelled
+    from orders.services.subscription_parent import (
+        delivery_customer,
+        delivery_parent_is_cancelled,
+    )
 
     if delivery_parent_is_cancelled(delivery):
         return False
+    customer = delivery_customer(delivery)
+    if customer is not None:
+        from orders.services.guest_meal import has_scheduled_guest_meals_for_slot
+
+        if has_scheduled_guest_meals_for_slot(
+            customer=customer,
+            service_date=delivery.service_date,
+            meal_period=delivery.meal_period,
+        ):
+            return False
     return _before_or_at_deadline(delivery, now=now, settings_obj=settings_obj)
 
 
@@ -259,6 +272,18 @@ def customer_meal_off(delivery: OrderDelivery, user, note: str = '') -> OrderDel
     if locked.status != OrderDelivery.DeliveryStatus.SCHEDULED:
         raise MealOffError(
             f'Delivery is already {locked.status} and cannot be meal-offed.'
+        )
+
+    from orders.services.guest_meal import has_scheduled_guest_meals_for_slot
+
+    if has_scheduled_guest_meals_for_slot(
+        customer=owner,
+        service_date=locked.service_date,
+        meal_period=locked.meal_period,
+    ):
+        raise MealOffError(
+            'Cannot turn meal OFF while scheduled Guest Meals exist for this date '
+            'and meal period.'
         )
 
     settings_obj = get_meal_off_settings()

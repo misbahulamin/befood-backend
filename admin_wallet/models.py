@@ -296,17 +296,44 @@ class AdminWalletAuditLog(models.Model):
 
 
 class MealProfitTransaction(PublicIdMixin, TimeStampedModel):
-    """Immutable realized meal margin for one successfully charged delivery."""
+    """Immutable realized meal margin for a charged delivery or delivered guest order."""
+
+    class MealKind(models.TextChoices):
+        REGULAR = 'regular', 'Regular'
+        GUEST = 'guest', 'Guest'
 
     class Source(models.TextChoices):
         AUTO_DELIVERY = 'auto_delivery', 'Auto delivery'
         MANUAL_DELIVERY = 'manual_delivery', 'Manual delivery'
         BACKFILL = 'backfill', 'Historical backfill'
+        GUEST_DELIVERY = 'guest_delivery', 'Guest delivery'
+        GUEST_BACKFILL = 'guest_backfill', 'Guest historical backfill'
 
-    order_delivery = models.OneToOneField(
+    order_delivery = models.ForeignKey(
         'orders.OrderDelivery',
         on_delete=models.PROTECT,
+        related_name='meal_profit_transactions',
+        null=True,
+        blank=True,
+        help_text='Parent delivery stop. Required for regular rows; set for guest when linked.',
+    )
+    guest_meal_order = models.OneToOneField(
+        'orders.GuestMealOrder',
+        on_delete=models.PROTECT,
         related_name='meal_profit_transaction',
+        null=True,
+        blank=True,
+        help_text='Set for guest realization rows; unique idempotency key for guest profit.',
+    )
+    meal_kind = models.CharField(
+        max_length=16,
+        choices=MealKind.choices,
+        default=MealKind.REGULAR,
+        db_index=True,
+    )
+    quantity = models.PositiveIntegerField(
+        default=1,
+        help_text='Food boxes represented by this ledger row (1 for regular; guest order qty).',
     )
     customer = models.ForeignKey(
         CustomerProfile,
@@ -324,26 +351,29 @@ class MealProfitTransaction(PublicIdMixin, TimeStampedModel):
         max_digits=14,
         decimal_places=2,
         validators=[MinValueValidator(Decimal('0.00'))],
-        help_text='Customer charged amount (revenue) frozen at recognition.',
+        help_text='Recognized revenue frozen at recognition (charged amount or guest total).',
     )
     food_cost = models.DecimalField(
         max_digits=14,
         decimal_places=2,
         validators=[MinValueValidator(Decimal('0.00'))],
-        help_text='Published slot ingredient_cost_snapshot frozen at recognition.',
+        help_text='Published slot ingredient_cost_snapshot (× quantity for guest) frozen at recognition.',
     )
     operational_cost = models.DecimalField(
         max_digits=14,
         decimal_places=2,
         default=Decimal('0.00'),
         validators=[MinValueValidator(Decimal('0.00'))],
-        help_text='Published slot operational_cost_snapshot frozen at recognition.',
+        help_text='Published slot operational_cost_snapshot (× quantity for guest) frozen at recognition.',
     )
     profit_amount = models.DecimalField(
         max_digits=14,
         decimal_places=2,
         validators=[MinValueValidator(Decimal('0.00'))],
-        help_text='Published slot profit_snapshot frozen at recognition.',
+        help_text=(
+            'Regular: published slot profit_snapshot. '
+            'Guest: recognized revenue minus attributable food and operational cost.'
+        ),
     )
     profit_percentage = models.DecimalField(
         max_digits=8,
@@ -363,11 +393,26 @@ class MealProfitTransaction(PublicIdMixin, TimeStampedModel):
             models.Index(fields=['package', 'service_date']),
             models.Index(fields=['customer', 'service_date']),
             models.Index(fields=['meal_period', 'service_date']),
+            models.Index(fields=['meal_kind', 'service_date']),
             models.Index(fields=['-service_date', '-id']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['order_delivery'],
+                condition=models.Q(meal_kind='regular', order_delivery__isnull=False),
+                name='meal_profit_unique_regular_per_delivery',
+            ),
+            models.CheckConstraint(
+                check=(
+                    models.Q(meal_kind='regular', guest_meal_order__isnull=True)
+                    | models.Q(meal_kind='guest', guest_meal_order__isnull=False)
+                ),
+                name='meal_profit_kind_guest_order_consistency',
+            ),
         ]
 
     def __str__(self):
         return (
-            f'MealProfit {self.profit_amount} '
+            f'MealProfit {self.meal_kind} {self.profit_amount} '
             f'{self.service_date} {self.meal_period} ({self.public_id})'
         )

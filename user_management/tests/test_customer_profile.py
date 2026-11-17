@@ -429,6 +429,35 @@ class ProgressiveOnboardingProfileTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('gender', response.data)
 
+    def test_partial_patch_gender_keeps_existing_birth_date(self):
+        self.profile.birth_date = date(2000, 5, 15)
+        self.profile.gender = None
+        self.profile.save(update_fields=['birth_date', 'gender', 'updated_at'])
+        response = self.client.patch(
+            self.profile_url,
+            {'gender': 'female'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.gender, 'female')
+        self.assertEqual(str(self.profile.birth_date), '2000-05-15')
+
+    def test_invalid_gender_does_not_clear_existing_demographics(self):
+        self.profile.birth_date = date(1999, 1, 2)
+        self.profile.gender = 'male'
+        self.profile.save(update_fields=['birth_date', 'gender', 'updated_at'])
+        response = self.client.patch(
+            self.profile_url,
+            {'gender': 'not-a-gender'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('gender', response.data)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.gender, 'male')
+        self.assertEqual(str(self.profile.birth_date), '1999-01-02')
+
     def test_duplicate_phone_rejected(self):
         other = User.objects.create_user(username='other', email='other@example.com', password='StrongPassword123')
         CustomerProfile.objects.create(

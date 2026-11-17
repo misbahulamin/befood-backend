@@ -14,6 +14,8 @@ from admin_wallet.models import MealProfitTransaction
 
 _MONEY = Decimal('0.01')
 _ZERO = Decimal('0.00')
+_REGULAR = MealProfitTransaction.MealKind.REGULAR
+_GUEST = MealProfitTransaction.MealKind.GUEST
 
 ALLOWED_HISTORY_FILTERS = frozenset(
     {
@@ -75,6 +77,7 @@ def ledger_qs(
         'package',
         'customer__user',
         'order_delivery',
+        'guest_meal_order',
     )
     if start_date is not None:
         qs = qs.filter(service_date__gte=start_date)
@@ -99,6 +102,29 @@ def sum_revenue(qs) -> Decimal:
 
 def sum_food_cost(qs) -> Decimal:
     return _quantize(qs.aggregate(total=Sum('food_cost'))['total'])
+
+
+def sum_quantity(qs) -> int:
+    return int(qs.aggregate(total=Sum('quantity'))['total'] or 0)
+
+
+def kind_breakdown(qs) -> dict:
+    """Additive regular vs guest totals for a ledger queryset."""
+    regular_qs = qs.filter(meal_kind=_REGULAR)
+    guest_qs = qs.filter(meal_kind=_GUEST)
+    return {
+        'regular_revenue': sum_revenue(regular_qs),
+        'guest_revenue': sum_revenue(guest_qs),
+        'regular_food_cost': sum_food_cost(regular_qs),
+        'guest_food_cost': sum_food_cost(guest_qs),
+        'regular_profit': sum_profit(regular_qs),
+        'guest_profit': sum_profit(guest_qs),
+        'regular_meals_served': sum_quantity(regular_qs),
+        'guest_meals_served': sum_quantity(guest_qs),
+        'total_meals_served': sum_quantity(qs),
+        'regular_ledger_rows': regular_qs.count(),
+        'guest_ledger_rows': guest_qs.count(),
+    }
 
 
 def package_breakdown(qs) -> list[dict]:
@@ -243,6 +269,7 @@ def dashboard_payload(
     chart_end = end_date or month_end
     range_qs = base.filter(service_date__gte=chart_start, service_date__lte=chart_end)
 
+    range_kinds = kind_breakdown(range_qs)
     payload = {
         'lifetime_profit': sum_profit(lifetime_qs),
         'month_profit': sum_profit(month_qs),
@@ -252,7 +279,17 @@ def dashboard_payload(
         'range_profit': sum_profit(range_qs),
         'range_revenue': sum_revenue(range_qs),
         'range_food_cost': sum_food_cost(range_qs),
+        # Legacy: ledger row count (regular + guest). Prefer range_*_meals_served for boxes.
         'range_deliveries': range_qs.count(),
+        'regular_revenue': range_kinds['regular_revenue'],
+        'guest_revenue': range_kinds['guest_revenue'],
+        'regular_food_cost': range_kinds['regular_food_cost'],
+        'guest_food_cost': range_kinds['guest_food_cost'],
+        'regular_profit': range_kinds['regular_profit'],
+        'guest_profit': range_kinds['guest_profit'],
+        'regular_meals_served': range_kinds['regular_meals_served'],
+        'guest_meals_served': range_kinds['guest_meals_served'],
+        'total_meals_served': range_kinds['total_meals_served'],
         'profit_by_package': package_breakdown(range_qs),
         'profit_by_meal_period': meal_period_breakdown(range_qs),
         'profit_by_customer': customer_breakdown(range_qs),

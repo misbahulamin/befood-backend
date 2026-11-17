@@ -20,7 +20,12 @@ from admin_wallet.services.ledger import (
     get_or_create_platform_wallet,
 )
 from admin_wallet.services.operations import manual_deposit, post_expense, withdraw
-from admin_wallet.services.queries import dashboard_payload, reconcile_balance, wallet_summary, wallet_summary
+from admin_wallet.services.queries import (
+    dashboard_payload,
+    reconcile_balance,
+    total_customer_wallet_balance,
+    wallet_summary,
+)
 from meals.models import MealCategory, MealCycle, MealCyclePlan, MonthlyMenuSchedule, MonthlyMenuSlot
 from orders.models import OrderDelivery, OrderWalletSettings
 from orders.services.order_delivery import DeliveryError, mark_delivery
@@ -200,6 +205,55 @@ class AdminWalletServiceTests(APITestCase):
         self.assertEqual(exp.type, AdminWalletTransaction.Type.RIDER_PAYMENT)
         wallet = get_or_create_platform_wallet()
         self.assertEqual(wallet.balance, Decimal('700.00'))
+
+    def test_total_customer_wallet_balance_sums_seeded_wallets(self):
+        customer_group, _ = Group.objects.get_or_create(name='CUSTOMER')
+        user_a = User.objects.create_user(
+            username='aw_bal_a',
+            email='aw_bal_a@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        user_a.groups.add(customer_group)
+        profile_a = CustomerProfile.objects.create(
+            user=user_a,
+            phone='1713333101',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=True,
+        )
+        user_b = User.objects.create_user(
+            username='aw_bal_b',
+            email='aw_bal_b@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        user_b.groups.add(customer_group)
+        profile_b = CustomerProfile.objects.create(
+            user=user_b,
+            phone='1713333102',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=True,
+        )
+        wallet_a = get_or_create_wallet(profile_a)
+        wallet_b = get_or_create_wallet(profile_b)
+        credit_wallet(wallet_a, Decimal('100.00'))
+        credit_wallet(wallet_b, Decimal('50.00'))
+        from wallet.models import Wallet as CustomerWallet
+
+        wallet_b.status = CustomerWallet.Status.FROZEN
+        wallet_b.save(update_fields=['status', 'updated_at'])
+
+        self.assertEqual(total_customer_wallet_balance(), Decimal('150.00'))
+        summary = wallet_summary()
+        payload = dashboard_payload()
+        self.assertEqual(summary['total_customer_wallet_balance'], Decimal('150.00'))
+        self.assertEqual(payload['total_customer_wallet_balance'], Decimal('150.00'))
+        self.assertEqual(
+            payload['wallet']['total_customer_wallet_balance'],
+            Decimal('150.00'),
+        )
 
 
 @override_settings(
@@ -466,6 +520,41 @@ class AdminWalletIngestionTests(APITestCase):
         )
 
     @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
+    def test_liability_drops_after_meal_spend_net_funding_unchanged(self, _mock_date):
+        _approved_recharge(
+            self.customer_profile,
+            Decimal('1000.00'),
+            self.admin_user,
+            trx_suffix='liability-fund',
+        )
+        before = dashboard_payload()
+        net_before = before['net_customer_funding']
+        liability_before = before['total_customer_wallet_balance']
+        self.assertEqual(liability_before, get_or_create_wallet(self.customer_profile).balance)
+        self.assertGreaterEqual(liability_before, Decimal('1000.00'))
+
+        order = create_meal_order(self.customer_profile, self.daily_meal)
+        delivery = order.deliveries.get()
+        self._prepare_chargeable(delivery, price=Decimal('400.00'), profit=Decimal('10.00'))
+        with patch('orders.services.order_delivery.timezone.localdate', return_value=date(2026, 8, 5)):
+            mark_delivery(delivery, 'delivered', marked_by=self.admin_user)
+
+        remaining = get_or_create_wallet(self.customer_profile).balance
+        after = dashboard_payload()
+        summary = wallet_summary()
+        self.assertEqual(after['net_customer_funding'], net_before)
+        self.assertLess(after['total_customer_wallet_balance'], liability_before)
+        self.assertEqual(after['total_customer_wallet_balance'], remaining)
+        self.assertEqual(
+            summary['total_customer_wallet_balance'],
+            after['total_customer_wallet_balance'],
+        )
+        self.assertEqual(
+            after['wallet']['total_customer_wallet_balance'],
+            after['total_customer_wallet_balance'],
+        )
+
+    @patch('orders.services.order_duration.timezone.localdate', return_value=date(2026, 8, 5))
     def test_failed_charge_does_not_credit_admin_wallet(self, _mock_date):
         order = create_meal_order(self.customer_profile, self.daily_meal)
         delivery = order.deliveries.get()
@@ -686,6 +775,8 @@ class AdminWalletAPITests(APITestCase):
         self.assertIn('total_customer_funding', res.data)
         self.assertIn('total_customer_withdrawals', res.data)
         self.assertIn('net_customer_funding', res.data)
+        self.assertIn('total_customer_wallet_balance', res.data)
+        self.assertEqual(Decimal(res.data['total_customer_wallet_balance']), Decimal('0.00'))
 
         dash = self.client.get(reverse('web_admin_wallet:dashboard'))
         self.assertEqual(dash.status_code, status.HTTP_200_OK)
@@ -694,6 +785,49 @@ class AdminWalletAPITests(APITestCase):
         self.assertNotIn('profit_by_package', dash.data)
         self.assertIn('net_customer_funding', dash.data)
         self.assertIn('month_revenue', dash.data)
+        self.assertIn('total_customer_wallet_balance', dash.data)
+        self.assertEqual(Decimal(dash.data['total_customer_wallet_balance']), Decimal('0.00'))
+        self.assertEqual(
+            Decimal(dash.data['wallet']['total_customer_wallet_balance']),
+            Decimal('0.00'),
+        )
+
+    def test_dashboard_total_customer_wallet_balance_sum(self):
+        customer_group, _ = Group.objects.get_or_create(name='CUSTOMER')
+        user = User.objects.create_user(
+            username='aw_api_liability',
+            email='aw_api_liability@example.com',
+            password='StrongPassword123',
+            is_active=True,
+        )
+        user.groups.add(customer_group)
+        profile = CustomerProfile.objects.create(
+            user=user,
+            phone='1713333009',
+            occupation=CustomerProfile.Occupation.STUDENT,
+            is_bachelor=True,
+            is_email_verified=True,
+        )
+        wallet = get_or_create_wallet(profile)
+        credit_wallet(wallet, Decimal('275.50'))
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        summary = self.client.get(reverse('web_admin_wallet:summary'))
+        dash = self.client.get(reverse('web_admin_wallet:dashboard'))
+        self.assertEqual(summary.status_code, status.HTTP_200_OK)
+        self.assertEqual(dash.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            Decimal(summary.data['total_customer_wallet_balance']),
+            Decimal('275.50'),
+        )
+        self.assertEqual(
+            Decimal(dash.data['total_customer_wallet_balance']),
+            Decimal('275.50'),
+        )
+        self.assertEqual(
+            Decimal(dash.data['wallet']['total_customer_wallet_balance']),
+            Decimal(summary.data['total_customer_wallet_balance']),
+        )
 
     def test_dashboard_deposit_filter_search(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
