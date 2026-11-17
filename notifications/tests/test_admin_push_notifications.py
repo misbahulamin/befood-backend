@@ -287,6 +287,103 @@ class AdminPushNotificationAPITests(APITestCase):
         device = DeviceToken.objects.get(token=self.device_token)
         self.assertFalse(device.is_active)
 
+    def test_non_invalid_fcm_error_keeps_device_active(self):
+        """Transient / payload errors must not soft-deactivate healthy tokens."""
+        self._auth_admin()
+        results = [
+            SendResult(
+                token=self.device_token,
+                success=False,
+                error='Invalid argument: bad webpush config',
+                is_invalid_token=False,
+            ),
+        ]
+        with self._sync_dispatch(), patch(
+            'notifications.api.admin_notification_views.enqueue_dispatch',
+            side_effect=lambda campaign_id: __import__(
+                'notifications.services.notification_sender', fromlist=['dispatch_push_campaign']
+            ).dispatch_push_campaign(campaign_id),
+        ), patch(
+            'notifications.services.notification_sender.send_to_tokens',
+            return_value=results,
+        ):
+            self.client.post(self.send_url, self._unique_payload(), format='json')
+        device = DeviceToken.objects.get(token=self.device_token)
+        self.assertTrue(device.is_active)
+
+    def test_fcm_exception_after_inbox_leaves_terminal_status(self):
+        """Inbox can succeed while FCM raises — campaign must not stay processing."""
+        from notifications.models import Notification
+
+        self._auth_admin()
+        with self._sync_dispatch(), patch(
+            'notifications.api.admin_notification_views.enqueue_dispatch',
+            side_effect=lambda campaign_id: __import__(
+                'notifications.services.notification_sender', fromlist=['dispatch_push_campaign']
+            ).dispatch_push_campaign(campaign_id),
+        ), patch(
+            'notifications.services.notification_sender.send_to_tokens',
+            side_effect=RuntimeError('simulated firebase sdk crash'),
+        ):
+            response = self.client.post(self.send_url, self._unique_payload(), format='json')
+        campaign = PushCampaign.objects.get(public_id=response.data['public_id'])
+        campaign.refresh_from_db()
+        self.assertNotEqual(campaign.status, PushCampaign.Status.PROCESSING)
+        self.assertIn(
+            campaign.status,
+            {PushCampaign.Status.FAILED, PushCampaign.Status.COMPLETED},
+        )
+        self.assertEqual(campaign.total_sent, 0)
+        self.assertGreaterEqual(campaign.total_failed, 1)
+        self.assertEqual(
+            Notification.objects.filter(user=self.customer, object_id=campaign.pk).count(),
+            1,
+        )
+        recipient = campaign.recipients.get(user=self.customer)
+        self.assertEqual(recipient.status, PushCampaignRecipient.Status.FAILED)
+        self.assertTrue(recipient.error_message)
+
+    def test_total_sent_counts_only_fcm_success_not_inbox(self):
+        from notifications.models import Notification
+
+        self._auth_admin()
+        with self._sync_dispatch(), patch(
+            'notifications.api.admin_notification_views.enqueue_dispatch',
+            side_effect=lambda campaign_id: __import__(
+                'notifications.services.notification_sender', fromlist=['dispatch_push_campaign']
+            ).dispatch_push_campaign(campaign_id),
+        ), patch(
+            'notifications.services.notification_sender.send_to_tokens',
+            return_value=[
+                SendResult(token=self.device_token, success=False, error='quota exceeded'),
+            ],
+        ):
+            response = self.client.post(self.send_url, self._unique_payload(), format='json')
+        campaign = PushCampaign.objects.get(public_id=response.data['public_id'])
+        campaign.refresh_from_db()
+        self.assertEqual(campaign.status, PushCampaign.Status.COMPLETED)
+        self.assertEqual(campaign.total_sent, 0)
+        self.assertEqual(campaign.total_failed, 1)
+        self.assertEqual(
+            Notification.objects.filter(user=self.customer, object_id=campaign.pk).count(),
+            1,
+        )
+
+        detail_url = reverse(
+            'web_notifications:admin-push-campaign-detail',
+            kwargs={'public_id': campaign.public_id},
+        )
+        detail = self.client.get(detail_url)
+        self.assertEqual(detail.data['total_sent'], 0)
+        self.assertEqual(detail.data['status'], PushCampaign.Status.COMPLETED)
+
+        list_response = self.client.get(self.list_url)
+        match = next(
+            item for item in list_response.data['results']
+            if item['public_id'] == str(campaign.public_id)
+        )
+        self.assertEqual(match['total_sent'], 0)
+
     def test_audit_fields_populated(self):
         self._auth_admin()
         with patch('notifications.api.admin_notification_views.enqueue_dispatch'):
@@ -405,10 +502,96 @@ class AdminPushNotificationAPITests(APITestCase):
         tokens = [f'token-{index:04d}' for index in range(600)]
         from notifications.services.fcm_service import send_to_tokens
 
-        send_to_tokens(tokens, 'Title', 'Body', {'screen': 'home'})
+        send_to_tokens(
+            tokens,
+            'Title',
+            'Body',
+            {'screen': 'home'},
+            token_platforms={token: 'android' for token in tokens},
+        )
         self.assertEqual(mock_multicast.call_count, 2)
         batch_sizes = [len(call.args[0].tokens) for call in mock_multicast.call_args_list]
         self.assertEqual(batch_sizes, [500, 100])
+
+    @patch('notifications.services.fcm_service._get_firebase_app')
+    @patch('firebase_admin.messaging.send_each_for_multicast')
+    def test_fcm_platform_split_native_vs_web(self, mock_multicast, _mock_app):
+        class _FakeSendResponse:
+            def __init__(self, success=True, error=None):
+                self.success = success
+                self.message_id = 'msg-1' if success else ''
+                self.exception = error
+
+        class _FakeBatchResponse:
+            def __init__(self, responses):
+                self.responses = responses
+
+        android_token = 'a' * 140
+        web_token = 'w' * 160
+
+        def _side_effect(message, **kwargs):
+            # Web batch: fail; native batch: succeed — proves isolation.
+            if getattr(message, 'webpush', None) is not None:
+                return _FakeBatchResponse(
+                    [_FakeSendResponse(success=False, error=Exception('web push rejected'))]
+                )
+            return _FakeBatchResponse([_FakeSendResponse(success=True)])
+
+        mock_multicast.side_effect = _side_effect
+        from notifications.services.fcm_service import send_to_tokens
+
+        results = send_to_tokens(
+            [android_token, web_token],
+            'Title',
+            'Body',
+            {'screen': 'home'},
+            token_platforms={android_token: 'android', web_token: 'web'},
+        )
+        self.assertEqual(mock_multicast.call_count, 2)
+        by_token = {r.token: r for r in results}
+        self.assertTrue(by_token[android_token].success)
+        self.assertFalse(by_token[web_token].success)
+
+        # Native message must not attach WebpushConfig; web must not need AndroidConfig.
+        native_msg = next(
+            call.args[0]
+            for call in mock_multicast.call_args_list
+            if android_token in call.args[0].tokens
+        )
+        web_msg = next(
+            call.args[0]
+            for call in mock_multicast.call_args_list
+            if web_token in call.args[0].tokens
+        )
+        self.assertIsNotNone(native_msg.android)
+        self.assertIsNone(getattr(native_msg, 'webpush', None))
+        self.assertIsNotNone(web_msg.webpush)
+
+    def test_classify_error_narrow_invalid_markers(self):
+        from notifications.services.fcm_service import _classify_error
+
+        _, is_invalid_unreg = _classify_error(Exception('Requested entity was not found.'))
+        self.assertTrue(is_invalid_unreg)
+        _, is_invalid_arg = _classify_error(Exception('Invalid argument: bad payload'))
+        self.assertFalse(is_invalid_arg)
+
+    @patch('notifications.services.fcm_service._get_firebase_app')
+    @patch('firebase_admin.messaging.send_each_for_multicast')
+    def test_fcm_batch_exception_returns_controlled_failures(self, mock_multicast, _mock_app):
+        mock_multicast.side_effect = RuntimeError('firebase internal boom')
+        from notifications.services.fcm_service import send_to_tokens
+
+        token = 'z' * 140
+        results = send_to_tokens(
+            [token],
+            'Title',
+            'Body',
+            token_platforms={token: 'android'},
+        )
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].success)
+        self.assertIn('FCM send error', results[0].error)
+        self.assertFalse(results[0].is_invalid_token)
 
 
 class AdminPushWebTokenDeliveryTests(APITestCase):
@@ -444,8 +627,9 @@ class AdminPushWebTokenDeliveryTests(APITestCase):
     def test_campaign_includes_android_and_web_tokens(self):
         captured = {}
 
-        def _capture(tokens, title, body, data=None):
+        def _capture(tokens, title, body, data=None, **kwargs):
             captured['tokens'] = list(tokens)
+            captured['token_platforms'] = kwargs.get('token_platforms')
             return [
                 SendResult(token=t, success=True, message_id=f'm-{t[:4]}') for t in tokens
             ]
@@ -539,6 +723,93 @@ class AdminPushWebTokenDeliveryTests(APITestCase):
             1,
         )
 
+    def test_redispatch_does_not_duplicate_inbox(self):
+        from notifications.models import Notification
+        from notifications.services.notification_sender import dispatch_push_campaign
+
+        payload = {
+            'title': 'Dedupe inbox',
+            'body': 'Stuck recovery',
+            'notification_type': 'system',
+            'data': {'screen': 'home'},
+            'target': {'type': 'user', 'user_id': self.customer.id},
+            'idempotency_key': 'redispatch-inbox-1',
+        }
+        with patch(
+            'notifications.api.admin_notification_views.transaction.on_commit',
+            side_effect=lambda func: func(),
+        ), patch(
+            'notifications.api.admin_notification_views.enqueue_dispatch',
+            side_effect=lambda campaign_id: __import__(
+                'notifications.services.notification_sender', fromlist=['dispatch_push_campaign']
+            ).dispatch_push_campaign(campaign_id),
+        ), patch(
+            'notifications.services.notification_sender.send_to_tokens',
+            return_value=[
+                SendResult(token=self.android_token, success=True, message_id='m1'),
+                SendResult(token=self.web_token, success=True, message_id='m2'),
+            ],
+        ):
+            response = self.client.post(self.send_url, payload, format='json')
+        campaign = PushCampaign.objects.get(public_id=response.data['public_id'])
+        self.assertEqual(
+            Notification.objects.filter(user=self.customer, object_id=campaign.pk).count(),
+            1,
+        )
+
+        # Simulate stuck recovery: reset still-pending-style re-entry by forcing
+        # processing and re-running dispatch (inbox must stay one row).
+        campaign.status = PushCampaign.Status.PROCESSING
+        campaign.save(update_fields=['status', 'updated_at'])
+        with patch(
+            'notifications.services.notification_sender.send_to_tokens',
+            return_value=[],
+        ):
+            dispatch_push_campaign(campaign.id)
+        self.assertEqual(
+            Notification.objects.filter(user=self.customer, object_id=campaign.pk).count(),
+            1,
+        )
+
+    def test_mixed_android_success_web_failure_counters(self):
+        payload = {
+            'title': 'Mixed platforms',
+            'body': 'Native ok web fail',
+            'notification_type': 'system',
+            'data': {'screen': 'home'},
+            'target': {'type': 'user', 'user_id': self.customer.id},
+            'idempotency_key': 'mixed-platform-1',
+        }
+        with patch(
+            'notifications.api.admin_notification_views.transaction.on_commit',
+            side_effect=lambda func: func(),
+        ), patch(
+            'notifications.api.admin_notification_views.enqueue_dispatch',
+            side_effect=lambda campaign_id: __import__(
+                'notifications.services.notification_sender', fromlist=['dispatch_push_campaign']
+            ).dispatch_push_campaign(campaign_id),
+        ), patch(
+            'notifications.services.notification_sender.send_to_tokens',
+            return_value=[
+                SendResult(token=self.android_token, success=True, message_id='m-android'),
+                SendResult(token=self.web_token, success=False, error='web rejected'),
+            ],
+        ):
+            response = self.client.post(self.send_url, payload, format='json')
+        campaign = PushCampaign.objects.get(public_id=response.data['public_id'])
+        campaign.refresh_from_db()
+        self.assertEqual(campaign.status, PushCampaign.Status.COMPLETED)
+        self.assertEqual(campaign.total_sent, 1)
+        self.assertEqual(campaign.total_failed, 1)
+        self.assertEqual(
+            campaign.recipients.get(device__token=self.android_token).status,
+            PushCampaignRecipient.Status.SENT,
+        )
+        self.assertEqual(
+            campaign.recipients.get(device__token=self.web_token).status,
+            PushCampaignRecipient.Status.FAILED,
+        )
+
 
 class DispatchPushCampaignCommandTests(APITestCase):
     def setUp(self):
@@ -568,3 +839,40 @@ class DispatchPushCampaignCommandTests(APITestCase):
         ):
             call_command('dispatch_push_campaign', '--stuck-only')
         mock_dispatch.assert_called_once_with(self.campaign.id)
+
+    def test_stuck_only_resumes_pending_recipients_with_hardened_dispatcher(self):
+        """End-to-end: --stuck-only re-enters dispatch and finalizes pending FCM rows."""
+        from django.core.management import call_command
+        from django.utils import timezone
+        from datetime import timedelta
+
+        customer = _make_customer('stuckcust', 'stuckcust@example.com')
+        device_token = 's' * 140
+        device = DeviceToken.objects.create(
+            user=customer,
+            token=device_token,
+            platform='android',
+            is_active=True,
+        )
+        # Bypass auto_now so the campaign qualifies as stuck.
+        PushCampaign.objects.filter(pk=self.campaign.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=60),
+        )
+        PushCampaignRecipient.objects.create(
+            campaign=self.campaign,
+            user=customer,
+            device=device,
+            status=PushCampaignRecipient.Status.PENDING,
+        )
+
+        with patch(
+            'notifications.services.notification_sender.send_to_tokens',
+            return_value=[SendResult(token=device_token, success=True, message_id='stuck-1')],
+        ):
+            call_command('dispatch_push_campaign', '--stuck-only')
+
+        self.campaign.refresh_from_db()
+        self.assertEqual(self.campaign.status, PushCampaign.Status.COMPLETED)
+        self.assertEqual(self.campaign.total_sent, 1)
+        recipient = self.campaign.recipients.get(user=customer)
+        self.assertEqual(recipient.status, PushCampaignRecipient.Status.SENT)

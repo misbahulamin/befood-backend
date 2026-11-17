@@ -172,6 +172,30 @@ class DeviceTokenAPITests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(DeviceToken.objects.filter(token=long_token, platform='web').exists())
 
+    def test_register_exact_512_char_token_persists(self):
+        self._auth()
+        exact = 'y' * 512
+        response = self.client.post(
+            self.register_url,
+            self._register_payload(token=exact, platform='web'),
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        device = DeviceToken.objects.get(token=exact)
+        self.assertEqual(len(device.token), 512)
+        self.assertEqual(DeviceToken._meta.get_field('token').max_length, 512)
+
+    def test_register_token_longer_than_512_rejected(self):
+        self._auth()
+        response = self.client.post(
+            self.register_url,
+            self._register_payload(token='z' * 513, platform='web'),
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('token', response.data)
+        self.assertFalse(DeviceToken.objects.filter(token__startswith='z' * 20).exists())
+
 
 class DeviceTokenQueryServiceTests(TestCase):
     def setUp(self):
