@@ -54,6 +54,7 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
     "total_customer_funding": "500.00",
     "total_customer_withdrawals": "0.00",
     "net_customer_funding": "500.00",
+    "total_customer_wallet_balance": "500.00",
     "created_at": "…",
     "updated_at": "…"
   },
@@ -67,6 +68,7 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
   "total_customer_funding": "500.00",
   "total_customer_withdrawals": "0.00",
   "net_customer_funding": "500.00",
+  "total_customer_wallet_balance": "500.00",
   "total_withdrawn": "0.00",
   "recent_transactions": [ /* same shape as history rows */ ]
 }
@@ -80,13 +82,25 @@ Admin Panel **Wallet** section for BeFood platform cash: balance cards, transact
 | `today_customer_withdrawals` / `month_customer_withdrawals` | Period custody outflows (`customer_withdraw`) — show separately from Expense cards |
 | `total_customer_funding` | Lifetime customer recharge custody **in** (does **not** fall on withdraw) |
 | `total_customer_withdrawals` | Lifetime customer withdraw custody **out** |
-| `net_customer_funding` | Remaining customer custody liability: `max(0, funding − withdrawals)` — use this as “funding left” |
+| `net_customer_funding` | Remaining customer **custody** liability: `max(0, funding − withdrawals)` — platform cash still owed as lifetime funding left after withdraws. **Does not fall when customers spend wallets on meals.** |
+| `total_customer_wallet_balance` | **Prepaid / unconsumed customer credit:** `SUM(Wallet.balance)` across all customer wallets (active + frozen). Use this for “money still sitting in customer wallets”. Same value on summary and top-level dashboard. |
 | `total_customer_payments` | **Meal revenue recognized** (charged deliveries), not cash-in from recharge |
 | `total_withdrawn` | Admin-initiated withdrawals |
 
 **Removed (BREAKING):** `total_profit`, `month_profit`, `profit_by_package` — migrate to [`admin-profit.md`](./admin-profit.md).
 
-Suggested cards: **Current Balance**, **Today’s Income**, **Today’s Expense** (business only), **Today’s Customer Withdrawals**, **This Month’s Cash In**, **This Month’s Expense**, **This Month’s Customer Withdrawals**, **Meal Revenue (recognized)**, **Customer Funding (lifetime)**, **Net Customer Funding**, **Total Withdrawn**.
+Suggested cards: **Current Balance**, **Today’s Income**, **Today’s Expense** (business only), **Today’s Customer Withdrawals**, **This Month’s Cash In**, **This Month’s Expense**, **This Month’s Customer Withdrawals**, **Meal Revenue (recognized)**, **Customer Funding (lifetime)**, **Net Customer Funding**, **Customer wallet balances** (`total_customer_wallet_balance`), **Total Withdrawn**.
+
+### Customer wallet balances card (`/admin/wallet` overview)
+
+| Bind from | Field |
+|-----------|--------|
+| `GET …/dashboard/` (preferred) | top-level `total_customer_wallet_balance` (or `wallet.total_customer_wallet_balance`) |
+| `GET …/` summary | `total_customer_wallet_balance` |
+
+- **Label suggestion:** “Customer wallet balances” / “Prepaid customer liability”
+- **Meaning:** live sum of customer prepaid balances (recharge + commission) that have not yet been spent
+- **Must NOT use `net_customer_funding` for this card** — that custody counter is lifetime funding minus withdrawals and **does not decrease when meals are charged**, so it overstates unconsumed prepaid credit after customers eat
 
 Do **not** map customer withdraw approve to an Expense card — it reduces balance as custody settlement (`customer_withdraw`). Do **not** expect the lifetime Customer Funding counter to drop on withdraw; bind “funding remaining” to `net_customer_funding`.
 

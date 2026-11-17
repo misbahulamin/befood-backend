@@ -641,6 +641,119 @@ class DeliveryFeeApiTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data['error_code'], 'UNSUPPORTED_FILTER')
 
+    def _seed_two_pending_with_balances(self):
+        meal = _make_meal(name='Pending Sort Package')
+        # self.customer starts with 1250.00 from setUp and is unpaid for month 10.
+        CustomerSubscription.objects.create(
+            customer=self.customer,
+            meal=meal,
+            meal_name_snapshot=meal.meal_name,
+            meal_period_snapshot=meal.meal_period,
+            status=CustomerSubscription.Status.ACTIVE,
+            started_on=date(2026, 1, 1),
+        )
+        _, low = _make_customer(username='fee_pending_low', phone='1811111199')
+        low_wallet = get_or_create_wallet(low)
+        credit_wallet(
+            low_wallet,
+            Decimal('100.50'),
+            type=WalletTransaction.Type.RECHARGE,
+            status=WalletTransaction.Status.COMPLETED,
+        )
+        CustomerSubscription.objects.create(
+            customer=low,
+            meal=meal,
+            meal_name_snapshot=meal.meal_name,
+            meal_period_snapshot=meal.meal_period,
+            status=CustomerSubscription.Status.ACTIVE,
+            started_on=date(2026, 1, 1),
+        )
+        return self.customer, low
+
+    def test_pending_cohort_defaults_to_wallet_balance_desc(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        high, low = self._seed_two_pending_with_balances()
+
+        pending = self.client.get(
+            self.cohort_url,
+            {'year': 2026, 'month': 10, 'cohort': 'pending', 'page_size': 1},
+        )
+        self.assertEqual(pending.status_code, 200)
+        self.assertEqual(pending.data['count'], 2)
+        self.assertEqual(
+            str(pending.data['results'][0]['customer_public_id']),
+            str(high.public_id),
+        )
+        self.assertEqual(pending.data['results'][0]['wallet_balance'], '1250.00')
+
+        page2 = self.client.get(
+            self.cohort_url,
+            {
+                'year': 2026,
+                'month': 10,
+                'cohort': 'pending',
+                'page_size': 1,
+                'page': 2,
+            },
+        )
+        self.assertEqual(page2.status_code, 200)
+        self.assertEqual(
+            str(page2.data['results'][0]['customer_public_id']),
+            str(low.public_id),
+        )
+        self.assertEqual(page2.data['results'][0]['wallet_balance'], '100.50')
+
+    def test_pending_cohort_ordering_asc_across_pages(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        high, low = self._seed_two_pending_with_balances()
+
+        pending = self.client.get(
+            self.cohort_url,
+            {
+                'year': 2026,
+                'month': 10,
+                'cohort': 'pending',
+                'ordering': 'wallet_balance',
+                'page_size': 1,
+            },
+        )
+        self.assertEqual(pending.status_code, 200)
+        self.assertEqual(
+            str(pending.data['results'][0]['customer_public_id']),
+            str(low.public_id),
+        )
+
+        page2 = self.client.get(
+            self.cohort_url,
+            {
+                'year': 2026,
+                'month': 10,
+                'cohort': 'pending',
+                'ordering': 'wallet_balance',
+                'page_size': 1,
+                'page': 2,
+            },
+        )
+        self.assertEqual(page2.status_code, 200)
+        self.assertEqual(
+            str(page2.data['results'][0]['customer_public_id']),
+            str(high.public_id),
+        )
+
+    def test_pending_cohort_invalid_ordering(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+        response = self.client.get(
+            self.cohort_url,
+            {
+                'year': 2026,
+                'month': 10,
+                'cohort': 'pending',
+                'ordering': 'name',
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('ordering', str(response.data.get('detail', '')).lower())
+
     def test_monthly_cohort_invalid_period_and_cohort(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
         missing = self.client.get(self.cohort_url, {'cohort': 'paid'})

@@ -34,7 +34,18 @@ class AdminWalletSummarySerializer(serializers.Serializer):
         decimal_places=2,
         help_text=(
             'Remaining customer custody liability: '
-            'max(0, total_customer_funding - total_customer_withdrawals).'
+            'max(0, total_customer_funding - total_customer_withdrawals). '
+            'Does not fall when customers spend wallets on meals — '
+            'use total_customer_wallet_balance for unconsumed prepaid credit.'
+        ),
+    )
+    total_customer_wallet_balance = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text=(
+            'Sum of all customer Wallet.balance values (active + frozen). '
+            'Live prepaid / unconsumed customer credit; distinct from '
+            'net_customer_funding (lifetime funding − withdrawals).'
         ),
     )
     created_at = serializers.DateTimeField()
@@ -163,7 +174,18 @@ class AdminWalletDashboardSerializer(serializers.Serializer):
         decimal_places=2,
         help_text=(
             'Remaining customer custody liability: '
-            'max(0, total_customer_funding - total_customer_withdrawals).'
+            'max(0, total_customer_funding - total_customer_withdrawals). '
+            'Does not fall when customers spend wallets on meals — '
+            'use total_customer_wallet_balance for unconsumed prepaid credit.'
+        ),
+    )
+    total_customer_wallet_balance = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text=(
+            'Sum of all customer Wallet.balance values (active + frozen). '
+            'Live prepaid / unconsumed customer credit; distinct from '
+            'net_customer_funding (lifetime funding − withdrawals).'
         ),
     )
     total_withdrawn = serializers.DecimalField(max_digits=14, decimal_places=2)

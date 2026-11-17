@@ -102,6 +102,8 @@ class AdminWalletAuditLogAdmin(admin.ModelAdmin):
 class MealProfitTransactionAdmin(admin.ModelAdmin):
     list_display = (
         'public_id',
+        'meal_kind',
+        'quantity',
         'service_date',
         'meal_period',
         'package_name_snapshot',
@@ -111,11 +113,14 @@ class MealProfitTransactionAdmin(admin.ModelAdmin):
         'source',
         'created_at',
     )
-    list_filter = ('meal_period', 'source', 'service_date')
+    list_filter = ('meal_kind', 'meal_period', 'source', 'service_date')
     search_fields = ('public_id', 'package_name_snapshot')
     readonly_fields = (
         'public_id',
         'order_delivery',
+        'guest_meal_order',
+        'meal_kind',
+        'quantity',
         'customer',
         'package',
         'meal_period',

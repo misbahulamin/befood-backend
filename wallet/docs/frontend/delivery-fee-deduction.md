@@ -122,7 +122,13 @@ Unsupported query keys → **`400`** with `error_code: UNSUPPORTED_FILTER`.
 
 `GET /api/v1/web/delivery-fees/reports/monthly/customers/?year=2026&month=9&cohort=pending`
 
-Required: `year`, `month`, `cohort` (`paid` \| `pending`). Optional: `q`, `page`, `page_size`.
+Required: `year`, `month`, `cohort` (`paid` \| `pending`). Optional: `q`, `ordering`, `page`, `page_size`.
+
+Pending `ordering`:
+- `-wallet_balance` (default) — wallet balance high → low
+- `wallet_balance` — wallet balance low → high
+
+Sorting is applied server-side before pagination. Invalid `ordering` → **`400`**.
 
 When `q` is unset, list `count` MUST match the monthly card (`customers_paid` or `pending_customers`) for the same period.
 

@@ -35,7 +35,7 @@ ALLOWED_PAYMENT_FILTERS = frozenset(
     {'year', 'month', 'customer', 'status', 'q', 'page', 'page_size'}
 )
 ALLOWED_COHORT_FILTERS = frozenset(
-    {'year', 'month', 'cohort', 'q', 'page', 'page_size'}
+    {'year', 'month', 'cohort', 'q', 'page', 'page_size', 'ordering'}
 )
 
 
@@ -216,6 +216,15 @@ class DeliveryFeeMonthlyCustomersView(APIView):
                 description='paid | pending',
             ),
             OpenApiParameter(name='q', type=str, location=OpenApiParameter.QUERY),
+            OpenApiParameter(
+                name='ordering',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                description=(
+                    'Pending cohort only: wallet_balance (asc) or -wallet_balance (desc). '
+                    'Default for pending is -wallet_balance.'
+                ),
+            ),
             OpenApiParameter(name='page', type=int, location=OpenApiParameter.QUERY),
             OpenApiParameter(name='page_size', type=int, location=OpenApiParameter.QUERY),
         ],
@@ -241,6 +250,7 @@ class DeliveryFeeMonthlyCustomersView(APIView):
                 month=month,
                 cohort=cohort,
                 q=request.query_params.get('q'),
+                ordering=request.query_params.get('ordering'),
             )
         except (DeliveryFeePeriodError, DeliveryFeeError) as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)

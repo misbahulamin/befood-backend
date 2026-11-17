@@ -5,9 +5,6 @@ from rest_framework import serializers
 from ..models import CustomerProfile, DeviceToken, PendingCustomerRegistration
 from ..services.identity_normalization import normalize_email, normalize_phone_number, PhoneNormalizationError
 from ..services.pending_registration import email_owned_by_verified_customer
-from ..validators import format_bd_phone_e164
-
-
 class CustomerProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerProfile
@@ -240,6 +237,7 @@ class CurrentUserSerializer(serializers.Serializer):
     verification_status = serializers.SerializerMethodField()
     has_password = serializers.SerializerMethodField()
     onboarding_completion = serializers.SerializerMethodField()
+    product_profile_completion = serializers.SerializerMethodField()
     location_confirmation = serializers.SerializerMethodField()
     is_authenticated = serializers.SerializerMethodField()
 
@@ -254,17 +252,9 @@ class CurrentUserSerializer(serializers.Serializer):
         return list(obj.groups.values_list('name', flat=True))
 
     def get_customer_profile(self, obj):
-        profile = obj.customer_profile
-        return {
-            'phone': format_bd_phone_e164(profile.phone),
-            'occupation': profile.occupation,
-            'is_bachelor': profile.is_bachelor,
-            'is_email_verified': profile.is_email_verified,
-            'is_phone_verified': profile.is_phone_verified,
-            'gender': profile.gender,
-            'profile_completion_percentage': profile.profile_completion_percentage,
-            'profile_completed': profile.profile_completed,
-        }
+        from user_management.services.auth_session import build_customer_profile_session_dict
+
+        return build_customer_profile_session_dict(obj.customer_profile)
 
     def get_phone_verification_required(self, obj):
         from user_management.services.auth_session import is_phone_verification_required
@@ -280,6 +270,11 @@ class CurrentUserSerializer(serializers.Serializer):
         from ..services.profile_onboarding import get_onboarding_completion
 
         return get_onboarding_completion(obj)
+
+    def get_product_profile_completion(self, obj):
+        from ..services.profile_onboarding import get_product_profile_completion
+
+        return get_product_profile_completion(obj)
 
     def get_location_confirmation(self, obj):
         from user_management.services.location_preference import get_location_confirmation_summary

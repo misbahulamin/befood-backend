@@ -184,6 +184,32 @@ class CustomerProfilePictureAPITests(APITestCase):
         self.profile.refresh_from_db()
         self.assertFalse(self.profile.profile_picture)
 
+    def test_demographics_patch_without_image_leaves_picture_unchanged(self):
+        upload = self.client.post(
+            self.upload_url,
+            {'image': make_test_image('keep.jpg', color='blue')},
+            format='multipart',
+        )
+        self.assertEqual(upload.status_code, status.HTTP_200_OK)
+        self.profile.refresh_from_db()
+        original_name = self.profile.profile_picture.name
+        self.assertTrue(original_name)
+
+        response = self.client.patch(
+            self.profile_url,
+            {
+                'first_name': 'Abdul',
+                'birth_date': '2000-05-15',
+                'gender': 'male',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.profile_picture.name, original_name)
+        self.assertEqual(self.profile.gender, 'male')
+        self.assertEqual(str(self.profile.birth_date), '2000-05-15')
+
 
 @override_settings(
     MEDIA_ROOT='test_media_profile_pictures',

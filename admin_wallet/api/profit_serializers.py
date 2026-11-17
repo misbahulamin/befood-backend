@@ -50,6 +50,15 @@ class AdminProfitDashboardSerializer(serializers.Serializer):
     range_revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
     range_food_cost = serializers.DecimalField(max_digits=14, decimal_places=2)
     range_deliveries = serializers.IntegerField()
+    regular_revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
+    guest_revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
+    regular_food_cost = serializers.DecimalField(max_digits=14, decimal_places=2)
+    guest_food_cost = serializers.DecimalField(max_digits=14, decimal_places=2)
+    regular_profit = serializers.DecimalField(max_digits=14, decimal_places=2)
+    guest_profit = serializers.DecimalField(max_digits=14, decimal_places=2)
+    regular_meals_served = serializers.IntegerField()
+    guest_meals_served = serializers.IntegerField()
+    total_meals_served = serializers.IntegerField()
     profit_by_package = ProfitByPackageRowSerializer(many=True)
     profit_by_meal_period = ProfitByMealPeriodRowSerializer(many=True)
     profit_by_customer = ProfitByCustomerRowSerializer(many=True)
@@ -61,16 +70,17 @@ class MealProfitTransactionSerializer(serializers.ModelSerializer):
     package_name = serializers.SerializerMethodField()
     customer_public_id = serializers.UUIDField(source='customer.public_id', read_only=True)
     customer_email = serializers.SerializerMethodField()
-    delivery_public_id = serializers.UUIDField(
-        source='order_delivery.public_id',
-        read_only=True,
-    )
+    delivery_public_id = serializers.SerializerMethodField()
+    guest_meal_public_id = serializers.SerializerMethodField()
 
     class Meta:
         model = MealProfitTransaction
         fields = (
             'public_id',
+            'meal_kind',
+            'quantity',
             'delivery_public_id',
+            'guest_meal_public_id',
             'customer_public_id',
             'customer_email',
             'package_public_id',
@@ -95,3 +105,13 @@ class MealProfitTransactionSerializer(serializers.ModelSerializer):
         if obj.customer_id and obj.customer.user_id:
             return obj.customer.user.email
         return ''
+
+    def get_delivery_public_id(self, obj):
+        if obj.order_delivery_id:
+            return obj.order_delivery.public_id
+        return None
+
+    def get_guest_meal_public_id(self, obj):
+        if obj.guest_meal_order_id:
+            return obj.guest_meal_order.public_id
+        return None

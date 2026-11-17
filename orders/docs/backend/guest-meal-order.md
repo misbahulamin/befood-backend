@@ -84,12 +84,20 @@ Snapshots on `GuestMealOrder`: `base_meal_price`, `box_price`, `unit_price`, `to
 2. `date >= business_today` (Asia/Dhaka)
 3. `meal_period` covered by subscription preference
 4. Not past meal-off cutoff (`is_past_meal_cutoff`)
-5. Published slot with non-null final price
-6. Quantity ≥ 1 and ≤ per-request max (10); remaining monthly capacity
-7. Recharge floor after purchase
-8. Wallet not frozen / sufficient spendable funds for debit
+5. Regular meal for that date/period is **not** personal Meal-OFF (`OrderDelivery` `skipped` + `skip_source=customer`). Lunch/dinner are independent. Admin/system skips are **not** `PERSONAL_MEAL_OFF` (create still requires a `scheduled` stop → `DELIVERY_UNAVAILABLE` when the stop is not scheduled).
+6. Published slot with non-null final price
+7. Quantity ≥ 1 and ≤ per-request max (10); remaining monthly capacity
+8. Recharge floor after purchase
+9. Wallet not frozen / sufficient spendable funds for debit
+10. Resolvable subscription `OrderDelivery` stop (create rejects before debit if missing → `DELIVERY_UNAVAILABLE`; successful creates never persist `delivery=null`)
 
-Meal-OFF (personal slot skipped) does **not** block guest purchase. Guest units still count toward kitchen cooking.
+**Meal-OFF interaction (v1, no cancel/refund):** customer Meal-OFF is blocked while scheduled Guest Meals exist for the same slot (`can_meal_off=false` / Meal-OFF API error). Do not silently cancel or refund Guest Meals.
+
+### Wallet debit vs floor (policy note)
+
+- Floor check uses **`recharge_balance − total >= meal_stop_threshold`** (inclusive pass).
+- Debit uses wallet ledger default for `PAYMENT`: **`commission_first`** (commission bucket then recharge).
+- These are intentional and unchanged in this revision; floor is recharge-gated even though debit may consume commission first.
 
 ### Errors
 
@@ -97,7 +105,7 @@ Domain failures return `{ "detail": "...", "error_code": "..." }` with:
 
 | HTTP | Typical codes |
 |------|----------------|
-| `422` | `NO_ACTIVE_SUBSCRIPTION`, `UNSUPPORTED_MEAL_PERIOD`, `CUTOFF_PASSED`, `PRICE_UNAVAILABLE`, `MONTHLY_LIMIT_EXCEEDED`, `MEAL_STOP_FLOOR`, `INSUFFICIENT_FUNDS`, `WALLET_FROZEN`, `INVALID_*` |
+| `422` | `NO_ACTIVE_SUBSCRIPTION`, `UNSUPPORTED_MEAL_PERIOD`, `CUTOFF_PASSED`, `PERSONAL_MEAL_OFF`, `DELIVERY_UNAVAILABLE`, `PRICE_UNAVAILABLE`, `MONTHLY_LIMIT_EXCEEDED`, `MEAL_STOP_FLOOR`, `INSUFFICIENT_FUNDS`, `WALLET_FROZEN`, `INVALID_*` |
 | `409` | `IDEMPOTENCY_CONFLICT` |
 | `404` | Detail not found for this customer |
 
@@ -108,19 +116,24 @@ Domain failures return `{ "detail": "...", "error_code": "..." }` with:
 1. Replay short-circuit on existing guest row for idempotency key
 2. `select_for_update` wallet
 3. `select_for_update` current-month guest rows
-4. Revalidate quote / floor
-5. `debit_wallet` then persist `GuestMealOrder` linked to delivery + txn
+4. Revalidate quote / floor / personal Meal-OFF
+5. Resolve + `select_for_update(of=('self',))` delivery; require `scheduled`; reject null delivery before debit
+6. `debit_wallet` then persist `GuestMealOrder` linked to locked delivery + txn
 
-Failure of either debit or persist rolls back both. Concurrent creates cannot exceed monthly quota or double-spend without keys.
+Failure of either debit or persist rolls back both. Concurrent creates cannot exceed monthly quota or double-spend without keys. Create always revalidates Meal-OFF under the delivery row lock (do not trust preview).
 
 ## Delivery / kitchen / activity
 
-- `GuestMealOrder.delivery` links to the subscription slot (`ensure_subscription_deliveries`).
-- Deliveryman board and admin today-board expose `guest_quantity`.
+- `GuestMealOrder.delivery` links to the subscription slot (`ensure_subscription_deliveries`); create fails if no stop can be resolved.
+- Deliveryman board and admin today-board expose `meal_quantity`, `guest_quantity`, and `total_meal_quantity` (`meal + guest`).
+- Rider today-summary keeps stop counts (`total`/`delivered`/`pending`) and adds box metrics (`regular_meal_quantity`, `guest_meal_quantity`, `total_meal_quantity`, `delivered_meal_quantity`, `pending_meal_quantity`).
 - `get_demand` adds countable guest units to `expected_meal_count` and `final_cooking_count`.
 - `charge_delivered_meal` unchanged; guest prepaid only.
-- On parent deliver, scheduled guest rows → `delivered`.
+- On parent deliver, scheduled guest rows → `delivered`, and
+  `recognize_guest_meal_profit` writes an idempotent ledger row (no second wallet debit).
+  See `admin_wallet/docs/backend/admin-profit.md`.
 - Admin Customer 360 activity includes `guest_meal_ordered`.
+- Legacy rows with `delivery=null` (if any) are not auto-refunded; new creates reject missing stops.
 
 ## Key code
 

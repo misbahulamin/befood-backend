@@ -56,6 +56,7 @@ On successful **approved** customer withdraw (`approve_withdraw`):
 - Pending withdraw create reserves customer **recharge** balance only (meal-stop capped at request); custody debit happens on approve
 - Platform `balance` decreases; `total_customer_withdrawals` increases; **`total_customer_funding` is unchanged** (lifetime inflow counter)
 - Summary/dashboard expose `net_customer_funding` = `max(0, total_customer_funding − total_customer_withdrawals)`
+- Summary/dashboard also expose `total_customer_wallet_balance` = `SUM(wallet.Wallet.balance)` over all customer wallets (active + frozen), via `admin_wallet.services.queries.total_customer_wallet_balance()`. This is live prepaid liability and falls when customers spend wallets on meals; it is **not** the same as `net_customer_funding`
 - If Admin Wallet float is insufficient at approve → `PlatformFloatError` → admin API `409`; request stays pending; reservation untouched
 - Flag: same `ADMIN_WALLET_CUSTOMER_FUNDING_CREDIT_ENABLED` gates funding credit **and** withdraw debit (default `True` — keep on in production)
 
@@ -74,7 +75,7 @@ Meal charged ৳62         → Customer wallet −৳62; Admin cash unchanged
 Customer withdraws ৳100  → Admin Wallet −৳100 (customer_withdraw)
 ```
 
-Customer withdraw is **custody liability release**, not business expense. It increments `total_customer_withdrawals` and MUST NOT increment `total_expenses` or decrease `total_customer_funding`. Dashboard `today_expense` / `month_expense` sum only `EXPENSE_TYPES`; use `today_customer_withdrawals` / `month_customer_withdrawals` for period custody outflows and `net_customer_funding` for remaining liability.
+Customer withdraw is **custody liability release**, not business expense. It increments `total_customer_withdrawals` and MUST NOT increment `total_expenses` or decrease `total_customer_funding`. Dashboard `today_expense` / `month_expense` sum only `EXPENSE_TYPES`; use `today_customer_withdrawals` / `month_customer_withdrawals` for period custody outflows and `net_customer_funding` for remaining **custody** liability. For **unconsumed prepaid** still sitting on customer wallets, use `total_customer_wallet_balance` (`SUM(Wallet.balance)`), not `net_customer_funding`.
 
 ### Meal profit recognition
 

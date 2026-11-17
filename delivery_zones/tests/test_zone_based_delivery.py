@@ -40,7 +40,7 @@ from meals.models import (
     MonthlyMenuSlot,
     MonthlyMenuSlotItem,
 )
-from orders.models import CustomerSubscription, OrderDelivery
+from orders.models import CustomerSubscription, GuestMealOrder, OrderDelivery
 from user_management.models import (
     AdminProfile,
     CustomerDeliveryPlace,
@@ -1252,6 +1252,12 @@ class DeliverymanTodayOpsTests(APITestCase):
         self.assertEqual(summary.data['delivered'], 2)
         self.assertEqual(summary.data['pending'], 1)
         self.assertEqual(summary.data['active_meal_period'], 'lunch')
+        # Stop counts remain; additive box metrics are present (no guests seeded here).
+        self.assertEqual(summary.data['regular_meal_quantity'], 3)
+        self.assertEqual(summary.data['guest_meal_quantity'], 0)
+        self.assertEqual(summary.data['total_meal_quantity'], 3)
+        self.assertEqual(summary.data['delivered_meal_quantity'], 2)
+        self.assertEqual(summary.data['pending_meal_quantity'], 1)
         by_name = {p['package_name']: p['count'] for p in summary.data['packages']}
         self.assertEqual(by_name['Student Package'], 2)
         self.assertEqual(by_name['Regular Package'], 1)
@@ -1316,6 +1322,242 @@ class DeliverymanTodayOpsTests(APITestCase):
                 {'include_delivered': 'true'},
             )
         self.assertEqual(both.data['total_count'], 2)
+
+    def test_board_and_summary_guest_meal_box_totals(self):
+        zone1 = create_zone(name='Zone 1', code='ops-guest-z1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+        delivery = self._seed(self.customer, loc1, 'lunch', plan=self.plan)
+
+        GuestMealOrder.objects.create(
+            customer=self.customer,
+            subscription=delivery.subscription,
+            delivery=delivery,
+            service_date=self.service_date,
+            meal_period='lunch',
+            quantity=2,
+            base_meal_price=Decimal('60.00'),
+            box_price=Decimal('10.00'),
+            unit_price=Decimal('70.00'),
+            total_amount=Decimal('140.00'),
+            status=GuestMealOrder.Status.SCHEDULED,
+        )
+        GuestMealOrder.objects.create(
+            customer=self.customer,
+            subscription=delivery.subscription,
+            delivery=delivery,
+            service_date=self.service_date,
+            meal_period='lunch',
+            quantity=3,
+            base_meal_price=Decimal('60.00'),
+            box_price=Decimal('10.00'),
+            unit_price=Decimal('70.00'),
+            total_amount=Decimal('210.00'),
+            status=GuestMealOrder.Status.SCHEDULED,
+        )
+        GuestMealOrder.objects.create(
+            customer=self.customer,
+            subscription=delivery.subscription,
+            delivery=delivery,
+            service_date=self.service_date,
+            meal_period='lunch',
+            quantity=9,
+            base_meal_price=Decimal('60.00'),
+            box_price=Decimal('10.00'),
+            unit_price=Decimal('70.00'),
+            total_amount=Decimal('630.00'),
+            status=GuestMealOrder.Status.CANCELLED,
+        )
+
+        self._auth_rider()
+        with patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            board = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/',
+                {'status': 'scheduled'},
+            )
+        self.assertEqual(board.status_code, status.HTTP_200_OK)
+        row = board.data['periods']['lunch']['locations'][0]['sub_locations'][0][
+            'customers'
+        ][0]
+        self.assertEqual(row['meal_quantity'], 1)
+        self.assertEqual(row['regular_meal_quantity'], 1)
+        self.assertEqual(row['guest_quantity'], 5)
+        self.assertEqual(row['total_meal_quantity'], 6)
+        self.assertEqual(
+            row['total_meal_quantity'],
+            row['regular_meal_quantity'] + row['guest_quantity'],
+        )
+
+        with patch(
+            'delivery_zones.services.today_summary.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            summary = self.client.get(
+                '/user_management/deliveryman/deliveries/today-summary/',
+            )
+        self.assertEqual(summary.status_code, status.HTTP_200_OK)
+        # Stop counts unchanged.
+        self.assertEqual(summary.data['total'], 1)
+        self.assertEqual(summary.data['pending'], 1)
+        self.assertEqual(summary.data['delivered'], 0)
+        # Box metrics reconcile with board row.
+        self.assertEqual(summary.data['regular_meal_quantity'], 1)
+        self.assertEqual(summary.data['guest_meal_quantity'], 5)
+        self.assertEqual(summary.data['total_meal_quantity'], 6)
+        self.assertEqual(summary.data['pending_meal_quantity'], 6)
+        self.assertEqual(summary.data['delivered_meal_quantity'], 0)
+        self.assertEqual(summary.data['packages'][0]['count'], 1)
+
+    def test_board_guest_quantity_isolation_and_zero_guest(self):
+        zone1 = create_zone(name='Zone 1', code='ops-guest-iso-z1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+
+        customer_group, _ = Group.objects.get_or_create(name='CUSTOMER')
+        other_user = User.objects.create_user(
+            username='ops_cust_iso',
+            email='ops_cust_iso@example.com',
+            password='StrongPassword123',
+            first_name='Other',
+            is_active=True,
+        )
+        other_user.groups.add(customer_group)
+        other_customer = CustomerProfile.objects.create(
+            user=other_user,
+            phone='1714000099',
+            is_email_verified=True,
+        )
+
+        delivery_a = self._seed(self.customer, loc1, 'lunch', plan=self.plan)
+        delivery_b = self._seed(
+            other_customer, loc1, 'lunch', plan=self.plan_regular
+        )
+
+        GuestMealOrder.objects.create(
+            customer=self.customer,
+            subscription=delivery_a.subscription,
+            delivery=delivery_a,
+            service_date=self.service_date,
+            meal_period='lunch',
+            quantity=2,
+            base_meal_price=Decimal('60.00'),
+            box_price=Decimal('10.00'),
+            unit_price=Decimal('70.00'),
+            total_amount=Decimal('140.00'),
+            status=GuestMealOrder.Status.SCHEDULED,
+        )
+        # Guest on another stop must not leak into delivery_a totals.
+        GuestMealOrder.objects.create(
+            customer=other_customer,
+            subscription=delivery_b.subscription,
+            delivery=delivery_b,
+            service_date=self.service_date,
+            meal_period='lunch',
+            quantity=4,
+            base_meal_price=Decimal('60.00'),
+            box_price=Decimal('10.00'),
+            unit_price=Decimal('70.00'),
+            total_amount=Decimal('280.00'),
+            status=GuestMealOrder.Status.SCHEDULED,
+        )
+
+        self._auth_rider()
+        with patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            board = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/',
+                {'status': 'scheduled'},
+            )
+        self.assertEqual(board.status_code, status.HTTP_200_OK)
+        customers = board.data['periods']['lunch']['locations'][0]['sub_locations'][0][
+            'customers'
+        ]
+        by_id = {row['delivery_public_id']: row for row in customers}
+        row_a = by_id[str(delivery_a.public_id)]
+        row_b = by_id[str(delivery_b.public_id)]
+        self.assertEqual(row_a['regular_meal_quantity'], 1)
+        self.assertEqual(row_a['guest_quantity'], 2)
+        self.assertEqual(row_a['total_meal_quantity'], 3)
+        self.assertEqual(row_b['regular_meal_quantity'], 1)
+        self.assertEqual(row_b['guest_quantity'], 4)
+        self.assertEqual(row_b['total_meal_quantity'], 5)
+
+    def test_delivered_board_retains_guest_quantity_after_mark(self):
+        zone1 = create_zone(name='Zone 1', code='ops-guest-del-z1', priority=1)
+        loc1 = create_location(
+            name='Chawkbazar', zone_public_id=zone1.public_id, priority=1
+        )
+        assign_delivery_man(zone1, delivery_man_public_id=self.rider.public_id)
+        delivery = self._seed(self.customer, loc1, 'lunch', plan=self.plan)
+        GuestMealOrder.objects.create(
+            customer=self.customer,
+            subscription=delivery.subscription,
+            delivery=delivery,
+            service_date=self.service_date,
+            meal_period='lunch',
+            quantity=2,
+            base_meal_price=Decimal('60.00'),
+            box_price=Decimal('10.00'),
+            unit_price=Decimal('70.00'),
+            total_amount=Decimal('140.00'),
+            status=GuestMealOrder.Status.SCHEDULED,
+        )
+
+        self._auth_rider()
+        with patch(
+            'orders.services.order_delivery.charge_delivered_meal',
+            return_value=None,
+        ), patch(
+            'notifications.services.meal_delivery_notifications.notify_meal_delivered',
+            return_value=None,
+        ), patch(
+            'delivery_zones.services.board.get_current_delivery_period',
+            return_value=(self.service_date, OrderDelivery.MealPeriod.LUNCH),
+        ):
+            mark = self.client.post(
+                f'/user_management/deliveryman/deliveries/{delivery.public_id}/mark/',
+                {'status': 'delivered'},
+                format='json',
+            )
+            self.assertEqual(mark.status_code, status.HTTP_200_OK)
+            # Idempotent re-mark should not inflate guest totals.
+            mark_again = self.client.post(
+                f'/user_management/deliveryman/deliveries/{delivery.public_id}/mark/',
+                {'status': 'delivered'},
+                format='json',
+            )
+            self.assertIn(
+                mark_again.status_code,
+                (
+                    status.HTTP_200_OK,
+                    status.HTTP_409_CONFLICT,
+                    status.HTTP_400_BAD_REQUEST,
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                ),
+            )
+            delivered_board = self.client.get(
+                '/user_management/deliveryman/deliveries/today-board/',
+                {'status': 'delivered'},
+            )
+        self.assertEqual(delivered_board.status_code, status.HTTP_200_OK)
+        row = delivered_board.data['periods']['lunch']['locations'][0][
+            'sub_locations'
+        ][0]['customers'][0]
+        self.assertEqual(row['meal_quantity'], 1)
+        self.assertEqual(row['regular_meal_quantity'], 1)
+        self.assertEqual(row['guest_quantity'], 2)
+        self.assertEqual(row['total_meal_quantity'], 3)
+        guest = GuestMealOrder.objects.get(delivery=delivery)
+        self.assertEqual(guest.status, GuestMealOrder.Status.DELIVERED)
 
 
 class DeliverySubLocationServiceTests(TestCase):

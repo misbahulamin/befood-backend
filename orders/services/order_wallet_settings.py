@@ -49,6 +49,8 @@ def update_order_wallet_settings(
     minimum_recharge_amount: Decimal | None = None,
     guest_meal_box_price: Decimal | None = None,
     guest_meal_monthly_limit: int | None = None,
+    test_meal_box_price: Decimal | None = None,
+    test_meal_lifetime_quota: int | None = None,
 ) -> OrderWalletSettings:
     settings_obj = OrderWalletSettings.load()
     next_min = (
@@ -101,6 +103,27 @@ def update_order_wallet_settings(
         raise ValidationError(
             {'guest_meal_monthly_limit': 'Must be a positive integer.'}
         )
+    next_test_box = (
+        test_meal_box_price
+        if test_meal_box_price is not None
+        else settings_obj.test_meal_box_price
+    )
+    next_test_box = _quantize_non_negative(next_test_box, field='test_meal_box_price')
+    next_test_quota = (
+        test_meal_lifetime_quota
+        if test_meal_lifetime_quota is not None
+        else settings_obj.test_meal_lifetime_quota
+    )
+    try:
+        next_test_quota = int(next_test_quota)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            {'test_meal_lifetime_quota': 'Must be a positive integer.'}
+        ) from exc
+    if next_test_quota < 1:
+        raise ValidationError(
+            {'test_meal_lifetime_quota': 'Must be a positive integer.'}
+        )
     from wallet.services.ledger import MAX_FUNDING_AMOUNT
 
     if next_minimum_recharge > MAX_FUNDING_AMOUNT:
@@ -119,6 +142,8 @@ def update_order_wallet_settings(
     settings_obj.minimum_recharge_amount = next_minimum_recharge
     settings_obj.guest_meal_box_price = next_box
     settings_obj.guest_meal_monthly_limit = next_guest_limit
+    settings_obj.test_meal_box_price = next_test_box
+    settings_obj.test_meal_lifetime_quota = next_test_quota
     settings_obj.save()
     return settings_obj
 

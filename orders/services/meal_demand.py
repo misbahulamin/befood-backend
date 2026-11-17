@@ -52,6 +52,11 @@ class PackageDemandRow:
     meal_off_count: int
     low_balance_blocked_count: int
     final_cooking_count: int
+    # Additive breakdown: finals stay guest/test-inclusive; these never change cooking math.
+    subscription_expected_meal_count: int = 0
+    subscription_final_cooking_count: int = 0
+    guest_meal_count: int = 0
+    test_meal_count: int = 0
 
 
 @dataclass
@@ -66,6 +71,11 @@ class DemandResult:
     final_cooking_count: int
     total_customers: int
     packages: list[PackageDemandRow] = field(default_factory=list)
+    # Additive breakdown (subscription boxes; guest; test; inclusive totals above).
+    subscription_expected_meal_count: int = 0
+    subscription_final_cooking_count: int = 0
+    guest_meal_count: int = 0
+    test_meal_count: int = 0
 
 
 def low_balance_blocked_q() -> Q:
@@ -164,6 +174,9 @@ def _demand_queryset(
         OrderDelivery.objects.filter(
             service_date=service_date,
             meal_period=meal_period,
+            # Test Meal stops are counted additively (like Guest Meals), not as
+            # subscription/order baseline rows.
+            test_meal_order_id__isnull=True,
         )
         .filter(live_delivery_q(service_date))
         .select_related('order', 'order__meal', 'subscription', 'subscription__meal')
@@ -237,8 +250,13 @@ def get_demand(
     total_customers = int(overall['customers'] or 0)
 
     from orders.services.guest_meal import guest_cooking_quantities_by_package
+    from orders.services.test_meal import test_cooking_quantities_by_package
 
     guest_by_package = guest_cooking_quantities_by_package(
+        service_date=service_date,
+        meal_period=meal_period,
+    )
+    test_by_package = test_cooking_quantities_by_package(
         service_date=service_date,
         meal_period=meal_period,
     )
@@ -246,9 +264,12 @@ def get_demand(
         guest_by_package = {
             pid: qty for pid, qty in guest_by_package.items() if pid == package_id
         }
+        test_by_package = {
+            pid: qty for pid, qty in test_by_package.items() if pid == package_id
+        }
     elif package_public_id is not None:
         # Filter already applied on delivery qs; keep only packages present in rows
-        # plus any guest-only packages for the filtered public id via qs packages.
+        # plus any guest/test-only packages for the filtered public id via qs packages.
         allowed_ids = {
             row['demand_meal_id']
             for row in qs.values('demand_meal_id').distinct()
@@ -257,10 +278,16 @@ def get_demand(
         guest_by_package = {
             pid: qty for pid, qty in guest_by_package.items() if pid in allowed_ids
         }
+        test_by_package = {
+            pid: qty for pid, qty in test_by_package.items() if pid in allowed_ids
+        }
 
-    guest_total = sum(guest_by_package.values())
-    expected += guest_total
-    final += guest_total
+    guest_total = int(sum(guest_by_package.values()))
+    test_total = int(sum(test_by_package.values()))
+    subscription_expected = expected
+    subscription_final = final
+    expected += guest_total + test_total
+    final += guest_total + test_total
 
     package_rows: list[PackageDemandRow] = []
     package_agg = (
@@ -282,33 +309,40 @@ def get_demand(
     for row in package_agg:
         pkg_id = row['demand_meal_id']
         guest_qty = int(guest_by_package.get(pkg_id, 0)) if pkg_id is not None else 0
+        test_qty = int(test_by_package.get(pkg_id, 0)) if pkg_id is not None else 0
         if pkg_id is not None:
             seen_package_ids.add(pkg_id)
+        sub_expected = int(row['expected'] or 0)
+        sub_cooking = int(row['cooking'] or 0)
         package_rows.append(
             PackageDemandRow(
                 package_id=pkg_id,
                 package_public_id=str(row['demand_meal_public_id']),
                 package_name=row['demand_meal_name'],
                 total_customers=int(row['customers'] or 0),
-                expected_meal_count=int(row['expected'] or 0) + guest_qty,
+                expected_meal_count=sub_expected + guest_qty + test_qty,
                 meal_off_count=int(row['meal_off'] or 0),
                 low_balance_blocked_count=int(row['low_balance'] or 0),
-                final_cooking_count=int(row['cooking'] or 0) + guest_qty,
+                final_cooking_count=sub_cooking + guest_qty + test_qty,
+                subscription_expected_meal_count=sub_expected,
+                subscription_final_cooking_count=sub_cooking,
+                guest_meal_count=guest_qty,
+                test_meal_count=test_qty,
             )
         )
 
-    # Guest-only packages (linked deliveries may be excluded from live qs filters)
-    # are already counted in guest_total when their delivery is live; if a package
-    # has guest units but no live delivery row in this qs, add a package row.
-    orphan_guest_ids = set(guest_by_package.keys()) - seen_package_ids
-    if orphan_guest_ids:
+    # Guest/Test-only packages (no live subscription/order delivery row in this qs).
+    orphan_ids = (set(guest_by_package.keys()) | set(test_by_package.keys())) - seen_package_ids
+    if orphan_ids:
         from meals.models import MealCategory
 
-        for meal in MealCategory.objects.filter(pk__in=orphan_guest_ids).order_by(
+        for meal in MealCategory.objects.filter(pk__in=orphan_ids).order_by(
             'meal_name', 'id'
         ):
             guest_qty = int(guest_by_package.get(meal.pk, 0))
-            if guest_qty <= 0:
+            test_qty = int(test_by_package.get(meal.pk, 0))
+            additive = guest_qty + test_qty
+            if additive <= 0:
                 continue
             package_rows.append(
                 PackageDemandRow(
@@ -316,10 +350,14 @@ def get_demand(
                     package_public_id=str(meal.public_id),
                     package_name=meal.meal_name,
                     total_customers=0,
-                    expected_meal_count=guest_qty,
+                    expected_meal_count=additive,
                     meal_off_count=0,
                     low_balance_blocked_count=0,
-                    final_cooking_count=guest_qty,
+                    final_cooking_count=additive,
+                    subscription_expected_meal_count=0,
+                    subscription_final_cooking_count=0,
+                    guest_meal_count=guest_qty,
+                    test_meal_count=test_qty,
                 )
             )
         package_rows.sort(key=lambda r: (r.package_name or '', r.package_id or 0))
@@ -338,6 +376,10 @@ def get_demand(
         final_cooking_count=final,
         total_customers=total_customers,
         packages=package_rows,
+        subscription_expected_meal_count=subscription_expected,
+        subscription_final_cooking_count=subscription_final,
+        guest_meal_count=guest_total,
+        test_meal_count=test_total,
     )
 
 
@@ -441,24 +483,16 @@ def demand_to_dict(demand: DemandResult) -> dict[str, Any]:
         'meal_off_deadline_at': demand.meal_off_deadline_at.isoformat(),
         'total_customers': demand.total_customers,
         'expected_meal_count': demand.expected_meal_count,
+        'subscription_expected_meal_count': demand.subscription_expected_meal_count,
         'meal_off_count': demand.meal_off_count,
         'customer_meal_off_count': demand.meal_off_count,
         'low_balance_blocked_count': demand.low_balance_blocked_count,
         'final_cooking_count': demand.final_cooking_count,
+        'subscription_final_cooking_count': demand.subscription_final_cooking_count,
+        'guest_meal_count': demand.guest_meal_count,
+        'test_meal_count': demand.test_meal_count,
         'remaining_meal_count': demand.final_cooking_count,
-        'packages': [
-            {
-                'package_public_id': row.package_public_id,
-                'package_name': row.package_name,
-                'total_customers': row.total_customers,
-                'expected_meal_count': row.expected_meal_count,
-                'meal_off_count': row.meal_off_count,
-                'customer_meal_off_count': row.meal_off_count,
-                'low_balance_blocked_count': row.low_balance_blocked_count,
-                'final_cooking_count': row.final_cooking_count,
-            }
-            for row in demand.packages
-        ],
+        'packages': [_package_demand_dict(row) for row in demand.packages],
     }
 
 
@@ -496,10 +530,14 @@ def _package_demand_dict(row: PackageDemandRow) -> dict[str, Any]:
         'package_name': row.package_name,
         'total_customers': row.total_customers,
         'expected_meal_count': row.expected_meal_count,
+        'subscription_expected_meal_count': row.subscription_expected_meal_count,
         'meal_off_count': row.meal_off_count,
         'customer_meal_off_count': row.meal_off_count,
         'low_balance_blocked_count': row.low_balance_blocked_count,
         'final_cooking_count': row.final_cooking_count,
+        'subscription_final_cooking_count': row.subscription_final_cooking_count,
+        'guest_meal_count': row.guest_meal_count,
+        'test_meal_count': row.test_meal_count,
     }
 
 
@@ -542,6 +580,7 @@ def build_kitchen_requirement(
         'meal_period': demand.meal_period,
         'confirmation_status': demand.confirmation_status,
         'expected_meal_count': demand.expected_meal_count,
+        'subscription_expected_meal_count': demand.subscription_expected_meal_count,
         'meal_off_count': demand.meal_off_count,
         'customer_meal_off_count': demand.meal_off_count,
         'low_balance_blocked_count': demand.low_balance_blocked_count,
@@ -549,6 +588,9 @@ def build_kitchen_requirement(
             demand.meal_period
         ),
         'final_cooking_count': demand.final_cooking_count,
+        'subscription_final_cooking_count': demand.subscription_final_cooking_count,
+        'guest_meal_count': demand.guest_meal_count,
+        'test_meal_count': demand.test_meal_count,
         'total_customers': demand.total_customers,
         'packages': [_package_demand_dict(row) for row in demand.packages],
         'ingredients_incomplete': incomplete,

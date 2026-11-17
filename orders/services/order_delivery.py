@@ -302,6 +302,16 @@ def mark_delivery(
                 'Guest meal sync failed for delivery_id=%s', locked.pk
             )
         try:
+            from orders.services.test_meal import sync_test_meal_for_delivered_delivery
+
+            sync_test_meal_for_delivered_delivery(locked)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(
+                'Test meal sync failed for delivery_id=%s', locked.pk
+            )
+        try:
             from onahar.services.contribution import credit_for_delivery
 
             credit_for_delivery(locked, actor=marked_by)

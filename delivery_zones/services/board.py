@@ -60,6 +60,7 @@ def _zone_customer_q(zone: DeliveryZone) -> Q:
     return (
         Q(subscription__customer__delivery_sub_location__location__zone=zone)
         | Q(order__customer__delivery_sub_location__location__zone=zone)
+        | Q(test_meal_order__customer__delivery_sub_location__location__zone=zone)
         | (
             Q(subscription__customer__delivery_sub_location__isnull=True)
             & Q(subscription__customer__delivery_location__zone=zone)
@@ -67,6 +68,10 @@ def _zone_customer_q(zone: DeliveryZone) -> Q:
         | (
             Q(order__customer__delivery_sub_location__isnull=True)
             & Q(order__customer__delivery_location__zone=zone)
+        )
+        | (
+            Q(test_meal_order__customer__delivery_sub_location__isnull=True)
+            & Q(test_meal_order__customer__delivery_location__zone=zone)
         )
     )
 
@@ -80,6 +85,11 @@ def _active_hierarchy_q() -> Q:
     ) | (
         Q(order__customer__delivery_sub_location__status=active_sub)
         & Q(order__customer__delivery_sub_location__location__status=active_loc)
+    ) | (
+        Q(test_meal_order__customer__delivery_sub_location__status=active_sub)
+        & Q(
+            test_meal_order__customer__delivery_sub_location__location__status=active_loc
+        )
     )
     # Bridge fallback only when sub is still null.
     via_loc = (
@@ -88,6 +98,9 @@ def _active_hierarchy_q() -> Q:
     ) | (
         Q(order__customer__delivery_sub_location__isnull=True)
         & Q(order__customer__delivery_location__status=active_loc)
+    ) | (
+        Q(test_meal_order__customer__delivery_sub_location__isnull=True)
+        & Q(test_meal_order__customer__delivery_location__status=active_loc)
     )
     return via_sub | via_loc
 
@@ -125,6 +138,14 @@ def zone_scoped_deliveries(
             'subscription__customer__delivery_sub_location__location',
             'subscription__customer__delivery_sub_location__location__zone',
             'subscription__meal',
+            'test_meal_order',
+            'test_meal_order__customer__user',
+            'test_meal_order__customer__delivery_location',
+            'test_meal_order__customer__delivery_location__zone',
+            'test_meal_order__customer__delivery_sub_location',
+            'test_meal_order__customer__delivery_sub_location__location',
+            'test_meal_order__customer__delivery_sub_location__location__zone',
+            'test_meal_order__package',
             'delivery_place',
             'delivered_by_rider',
             'delivered_by_rider__user',
@@ -166,7 +187,17 @@ def _delivery_location(delivery: OrderDelivery) -> DeliveryLocation | None:
 
 
 def _meal_quantity(delivery: OrderDelivery) -> int:
-    """Subscription slots are 1 meal; historical order items may carry quantity."""
+    """Regular meal boxes for this stop (excludes Guest / Test Meals).
+
+    Subscription stops are one board row / cooking slot = 1 regular box.
+    ``CustomerSubscription.quantity`` is the person/serving count used for
+    subscription fee display, not rider food-box count; extra boxes are
+    GuestMealOrder rows aggregated into ``guest_quantity``.
+    Test Meal stops expose quantity via ``test_meal_quantity`` instead.
+    Historical order-item stops may carry ``OrderItem.quantity``.
+    """
+    if delivery.test_meal_order_id:
+        return 0
     if delivery.order_id:
         items = list(delivery.order.items.all())
         if items and items[0].quantity:
@@ -177,6 +208,8 @@ def _meal_quantity(delivery: OrderDelivery) -> int:
 def _special_notes(delivery: OrderDelivery) -> str:
     if delivery.note:
         return delivery.note
+    if delivery.test_meal_order_id and delivery.test_meal_order.special_instructions:
+        return delivery.test_meal_order.special_instructions
     if delivery.subscription_id and delivery.subscription.customer_note:
         return delivery.subscription.customer_note
     if delivery.order_id and delivery.order.customer_note:
@@ -233,7 +266,7 @@ def _menu_items_label(
 
 
 def _package_fields(delivery: OrderDelivery) -> tuple[str, str | None]:
-    """Return (package_name, package_public_id) from subscription/order snapshots."""
+    """Return (package_name, package_public_id) from subscription/order/test-meal snapshots."""
     meal_name = ''
     meal = None
     if delivery.subscription_id:
@@ -242,6 +275,10 @@ def _package_fields(delivery: OrderDelivery) -> tuple[str, str | None]:
     elif delivery.order_id:
         meal_name = delivery.order.meal_name_snapshot or ''
         meal = delivery.order.meal
+    elif delivery.test_meal_order_id:
+        test_meal = delivery.test_meal_order
+        meal_name = test_meal.package_name_snapshot or ''
+        meal = test_meal.package
     package_public_id = str(meal.public_id) if meal is not None else None
     return meal_name, package_public_id
 
@@ -382,8 +419,10 @@ def build_deliveryman_board(
     menu_cache: dict[int, list[str]] = {}
     listed_count = 0
     from orders.services.guest_meal import guest_quantities_by_delivery_ids
+    from orders.services.test_meal import test_meal_quantities_by_delivery_ids
 
     guest_by_delivery = guest_quantities_by_delivery_ids([d.pk for d in deliveries])
+    test_by_delivery = test_meal_quantities_by_delivery_ids([d.pk for d in deliveries])
     for delivery in deliveries:
         loc = _delivery_location(delivery)
         sub = _delivery_sub_location(delivery)
@@ -423,6 +462,11 @@ def build_deliveryman_board(
         listed_count += 1
         package_name, package_public_id = _package_fields(delivery)
         address_parts = _building_floor_flat(delivery)
+        meal_quantity = _meal_quantity(delivery)
+        guest_quantity = int(guest_by_delivery.get(delivery.pk, 0))
+        test_quantity = int(test_by_delivery.get(delivery.pk, 0))
+        if delivery.test_meal_order_id and test_quantity <= 0:
+            test_quantity = 1
         row = {
             'delivery_public_id': str(delivery.public_id),
             'customer_public_id': str(customer.public_id) if customer else None,
@@ -445,8 +489,12 @@ def build_deliveryman_board(
             'meal_name': package_name,
             'package_name': package_name,
             'package_public_id': package_public_id,
-            'meal_quantity': _meal_quantity(delivery),
-            'guest_quantity': int(guest_by_delivery.get(delivery.pk, 0)),
+            # meal_quantity remains the legacy regular-box field for older clients.
+            'meal_quantity': meal_quantity,
+            'regular_meal_quantity': meal_quantity,
+            'guest_quantity': guest_quantity,
+            'test_meal_quantity': test_quantity,
+            'total_meal_quantity': meal_quantity + guest_quantity + test_quantity,
             'notes': _special_notes(delivery),
             'menu_items_label': _menu_items_label(
                 delivery,

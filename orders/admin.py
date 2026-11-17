@@ -17,6 +17,9 @@ from .models import (
     OrderStatusHistory,
     OrderWalletSettings,
     SubscriptionCancellation,
+    TestMealFunnelEvent,
+    TestMealOrder,
+    TestMealPaymentEvent,
 )
 
 
@@ -230,6 +233,7 @@ class OrderDeliveryAdmin(admin.ModelAdmin):
         'wallet_transaction',
         'order',
         'subscription',
+        'test_meal_order',
         'delivered_by_rider',
         'logistics_zone',
         'logistics_location',
@@ -278,6 +282,8 @@ class OrderWalletSettingsAdmin(admin.ModelAdmin):
         'minimum_recharge_amount',
         'guest_meal_box_price',
         'guest_meal_monthly_limit',
+        'test_meal_box_price',
+        'test_meal_lifetime_quota',
         'updated_at',
     )
     readonly_fields = ('updated_at',)
@@ -322,6 +328,137 @@ class GuestMealOrderAdmin(admin.ModelAdmin):
         'updated_at',
     )
     date_hierarchy = 'service_date'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(TestMealOrder)
+class TestMealOrderAdmin(admin.ModelAdmin):
+    list_display = (
+        'public_id',
+        'customer',
+        'package',
+        'service_date',
+        'meal_period',
+        'total_price',
+        'order_status',
+        'payment_status',
+        'created_at',
+    )
+    list_filter = ('order_status', 'payment_status', 'meal_period', 'service_date')
+    search_fields = (
+        'public_id',
+        'customer__user__email',
+        'customer__phone',
+        'idempotency_key',
+        'package_name_snapshot',
+    )
+    raw_id_fields = ('customer', 'package', 'address', 'payment_recorded_by')
+    readonly_fields = (
+        'public_id',
+        'customer',
+        'package',
+        'package_name_snapshot',
+        'service_date',
+        'meal_period',
+        'special_instructions',
+        'meal_price',
+        'box_charge',
+        'total_price',
+        'currency',
+        'address',
+        'address_label_snapshot',
+        'address_full_snapshot',
+        'address_area_snapshot',
+        'address_city_snapshot',
+        'address_building_name_snapshot',
+        'address_floor_snapshot',
+        'address_flat_number_snapshot',
+        'address_latitude_snapshot',
+        'address_longitude_snapshot',
+        'delivery_window_start',
+        'delivery_window_end',
+        'order_status',
+        'payment_status',
+        'payment_method',
+        'amount_collected',
+        'paid_at',
+        'payment_notes',
+        'payment_recorded_by',
+        'source_channel',
+        'idempotency_key',
+        'cancelled_at',
+        'cancellation_reason',
+        'delivered_at',
+        'created_at',
+        'updated_at',
+    )
+    date_hierarchy = 'service_date'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(TestMealPaymentEvent)
+class TestMealPaymentEventAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'order',
+        'action',
+        'actor',
+        'after_payment_status',
+        'after_amount_collected',
+        'created_at',
+    )
+    list_filter = ('action', 'created_at')
+    raw_id_fields = ('order', 'actor')
+    readonly_fields = (
+        'order',
+        'action',
+        'actor',
+        'before_payment_status',
+        'after_payment_status',
+        'before_amount_collected',
+        'after_amount_collected',
+        'notes',
+        'created_at',
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(TestMealFunnelEvent)
+class TestMealFunnelEventAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'event_name',
+        'customer',
+        'correlation_id',
+        'client_event_id',
+        'created_at',
+    )
+    list_filter = ('event_name', 'created_at')
+    search_fields = ('client_event_id', 'correlation_id', 'event_name')
+    raw_id_fields = ('customer',)
+    readonly_fields = (
+        'event_name',
+        'customer',
+        'correlation_id',
+        'client_event_id',
+        'metadata',
+        'created_at',
+    )
 
     def has_add_permission(self, request):
         return False

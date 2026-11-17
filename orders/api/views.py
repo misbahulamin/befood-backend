@@ -819,7 +819,8 @@ class OrderWalletSettingsView(APIView):
         summary='Get order wallet balance threshold settings',
         description=(
             'Returns wallet thresholds (BDT): subscription minimum, low-balance reminder, '
-            'meal-stop, minimum recharge, guest meal box price, and guest meal monthly limit. '
+            'meal-stop, minimum recharge, guest meal box price, guest meal monthly limit, '
+            'Test Meal box price, and Test Meal lifetime quota. '
             'Subscription eligibility uses min_wallet_balance_to_order only (inclusive). '
             'Reminder and meal-stop drive twice-daily automation.'
         ),
@@ -837,6 +838,8 @@ class OrderWalletSettingsView(APIView):
                     'minimum_recharge_amount': '500.00',
                     'guest_meal_box_price': '10.00',
                     'guest_meal_monthly_limit': 10,
+                    'test_meal_box_price': '10.00',
+                    'test_meal_lifetime_quota': 2,
                     'updated_at': '2026-07-29T10:00:00Z',
                 },
                 response_only=True,
@@ -908,6 +911,10 @@ class OrderWalletSettingsView(APIView):
             minimum_recharge_amount=serializer.validated_data.get('minimum_recharge_amount'),
             guest_meal_box_price=serializer.validated_data.get('guest_meal_box_price'),
             guest_meal_monthly_limit=serializer.validated_data.get('guest_meal_monthly_limit'),
+            test_meal_box_price=serializer.validated_data.get('test_meal_box_price'),
+            test_meal_lifetime_quota=serializer.validated_data.get(
+                'test_meal_lifetime_quota'
+            ),
         )
         return Response(OrderWalletSettingsSerializer(updated).data)
 

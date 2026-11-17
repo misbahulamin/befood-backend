@@ -15,7 +15,10 @@ from user_management.services.identity_verification import (
     build_verification_status,
     safe_user_email,
 )
-from user_management.services.profile_onboarding import get_onboarding_completion
+from user_management.services.profile_onboarding import (
+    get_onboarding_completion,
+    get_product_profile_completion,
+)
 from user_management.validators import format_bd_phone_e164
 
 DEVICE_TOKEN_BOUND = 'bound'
@@ -27,6 +30,27 @@ DEVICE_TOKEN_FAILED = 'failed'
 def is_phone_verification_required(profile) -> bool:
     """True when the customer must complete phone OTP (soft FE gate)."""
     return not bool(getattr(profile, 'is_phone_verified', False))
+
+
+def build_customer_profile_session_dict(profile) -> dict[str, Any]:
+    """
+    Shared ``customer_profile`` payload for auth envelope and ``/me/``.
+
+    Includes product demographics (``gender``, ``birth_date``) so clients can
+    evaluate completeness without an extra profile GET.
+    """
+    birth_date = getattr(profile, 'birth_date', None)
+    return {
+        'phone': format_bd_phone_e164(profile.phone),
+        'occupation': profile.occupation,
+        'is_bachelor': profile.is_bachelor,
+        'is_email_verified': profile.is_email_verified,
+        'is_phone_verified': profile.is_phone_verified,
+        'gender': profile.gender,
+        'birth_date': birth_date.isoformat() if birth_date else None,
+        'profile_completed': profile.profile_completed,
+        'profile_completion_percentage': profile.profile_completion_percentage,
+    }
 
 
 def generate_session_key() -> str:
@@ -136,21 +160,14 @@ def build_customer_auth_response(
             'last_name': user.last_name,
         },
         'groups': list(user.groups.values_list('name', flat=True)),
-        'customer_profile': {
-            'phone': format_bd_phone_e164(profile.phone),
-            'occupation': profile.occupation,
-            'is_bachelor': profile.is_bachelor,
-            'is_email_verified': profile.is_email_verified,
-            'is_phone_verified': profile.is_phone_verified,
-            'profile_completed': profile.profile_completed,
-            'profile_completion_percentage': profile.profile_completion_percentage,
-        },
+        'customer_profile': build_customer_profile_session_dict(profile),
         'device_token_status': device_token_status,
         'auth_provider': auth_provider,
         'phone_verification_required': is_phone_verification_required(profile),
         'has_password': bool(user.has_usable_password()),
         'verification_status': build_verification_status(user),
         'onboarding_completion': get_onboarding_completion(user, profile),
+        'product_profile_completion': get_product_profile_completion(user, profile),
         'location_confirmation': get_location_confirmation_summary(profile),
     }
 

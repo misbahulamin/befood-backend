@@ -14,6 +14,8 @@ def delivery_customer(delivery: OrderDelivery):
         return delivery.subscription.customer
     if delivery.order_id:
         return delivery.order.customer
+    if delivery.test_meal_order_id:
+        return delivery.test_meal_order.customer
     return None
 
 
@@ -22,6 +24,8 @@ def delivery_meal(delivery: OrderDelivery):
         return delivery.subscription.meal
     if delivery.order_id:
         return delivery.order.meal
+    if delivery.test_meal_order_id:
+        return delivery.test_meal_order.package
     return None
 
 
@@ -30,6 +34,11 @@ def delivery_meal_name(delivery: OrderDelivery) -> str:
         return delivery.subscription.meal_name_snapshot
     if delivery.order_id:
         return delivery.order.meal_name_snapshot
+    if delivery.test_meal_order_id:
+        return (
+            delivery.test_meal_order.package_name_snapshot
+            or getattr(delivery.test_meal_order.package, 'meal_name', '')
+        )
     return ''
 
 
@@ -45,14 +54,24 @@ def delivery_parent_is_cancelled(delivery: OrderDelivery) -> bool:
     order = delivery.order
     if order is not None:
         return order.order_status == Order.OrderStatus.CANCELLED
+    test_meal = delivery.test_meal_order
+    if test_meal is not None:
+        from orders.models import TestMealOrder
+
+        return test_meal.order_status in (
+            TestMealOrder.OrderStatus.CANCELLED,
+            TestMealOrder.OrderStatus.FAILED,
+        )
     return True
 
 
 def live_delivery_q(service_date: date | None = None) -> Q:
     """
-    Include historical non-cancelled order slots and subscription slots
-    that are still in service.
+    Include historical non-cancelled order slots, subscription slots
+    that are still in service, and countable Test Meal stops.
     """
+    from orders.models import TestMealOrder
+
     historical = Q(order_id__isnull=False) & ~Q(
         order__order_status=Order.OrderStatus.CANCELLED
     )
@@ -69,4 +88,12 @@ def live_delivery_q(service_date: date | None = None) -> Q:
         cancelled_serving &= Q(subscription__cancel_effective_on__gte=service_date)
     else:
         cancelled_serving &= Q(service_date__lte=F('subscription__cancel_effective_on'))
-    return historical | active_sub | cancelled_serving
+    test_meal_live = Q(
+        test_meal_order_id__isnull=False,
+    ) & ~Q(
+        test_meal_order__order_status__in=(
+            TestMealOrder.OrderStatus.CANCELLED,
+            TestMealOrder.OrderStatus.FAILED,
+        )
+    )
+    return historical | active_sub | cancelled_serving | test_meal_live

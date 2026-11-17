@@ -33,6 +33,10 @@ Content-Type: application/json
 
 Show server `unit_price`, `total_price`, `monthly_remaining_after_order`, and `recharge_balance_after`. If `422`, surface `detail` / `error_code`.
 
+If the customer’s regular meal for that date/period is OFF, preview/create return `422` with `error_code=PERSONAL_MEAL_OFF`. Lunch and dinner are independent. Also handle `DELIVERY_UNAVAILABLE` when no scheduled delivery stop exists.
+
+While a scheduled Guest Meal exists for a slot, Meal-OFF for that slot is blocked (`can_meal_off=false`) until an explicit cancel/refund path exists.
+
 4. **Create** with a fresh `Idempotency-Key` per user attempt (UUID). Retry the **same** key on network failure; never reuse a key for a different date/period/qty.
 
 ```http
@@ -57,7 +61,8 @@ Content-Type: application/json
 
 ## Rider / kitchen surfaces
 
-- Deliveryman today-board customer rows include `guest_quantity` (additive to `meal_quantity`).
+- Deliveryman today-board rows include `meal_quantity` (regular), `guest_quantity`, and `total_meal_quantity` (`meal + guest`). Prefer the server total; do not double-count.
+- Today-summary exposes additive box metrics alongside existing stop counts.
 - Kitchen demand expected/cooking counts already include guest units; no separate kitchen create UI.
 
 ## Related docs

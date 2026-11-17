@@ -13,6 +13,7 @@ from django.utils import timezone
 from admin_wallet.models import AdminWallet, AdminWalletTransaction
 from admin_wallet.services.ledger import get_or_create_platform_wallet
 from orders.models import OrderDelivery
+from wallet.models import Wallet
 
 
 def _tz():
@@ -87,8 +88,20 @@ def _net_customer_funding(wallet: AdminWallet) -> Decimal:
     return net.quantize(Decimal('0.01'))
 
 
+def total_customer_wallet_balance() -> Decimal:
+    """
+    Live prepaid liability: SUM of all customer Wallet.balance values.
+
+    Includes active and frozen wallets. Distinct from net_customer_funding
+    (lifetime funding − withdrawals), which does not fall when meals are spent.
+    """
+    total = Wallet.objects.aggregate(total=Sum('balance'))['total'] or Decimal('0.00')
+    return Decimal(total).quantize(Decimal('0.01'))
+
+
 def wallet_summary(wallet: AdminWallet | None = None) -> dict:
     wallet = wallet or get_or_create_platform_wallet()
+    liability = total_customer_wallet_balance()
     return {
         'public_id': wallet.public_id,
         'balance': wallet.balance,
@@ -103,6 +116,7 @@ def wallet_summary(wallet: AdminWallet | None = None) -> dict:
         'total_customer_funding': wallet.total_customer_funding,
         'total_customer_withdrawals': wallet.total_customer_withdrawals,
         'net_customer_funding': _net_customer_funding(wallet),
+        'total_customer_wallet_balance': liability,
         'updated_at': wallet.updated_at,
         'created_at': wallet.created_at,
     }
@@ -145,8 +159,9 @@ def dashboard_payload(*, recent_limit: int = 10) -> dict:
         )
         .order_by('-created_at', '-id')[:recent_limit]
     )
+    summary = wallet_summary(wallet)
     return {
-        'wallet': wallet_summary(wallet),
+        'wallet': summary,
         'today_income': today['income'],
         'today_expense': today['expense'],
         'today_customer_withdrawals': today['customer_withdrawals'],
@@ -157,6 +172,7 @@ def dashboard_payload(*, recent_limit: int = 10) -> dict:
         'total_customer_funding': wallet.total_customer_funding,
         'total_customer_withdrawals': wallet.total_customer_withdrawals,
         'net_customer_funding': _net_customer_funding(wallet),
+        'total_customer_wallet_balance': summary['total_customer_wallet_balance'],
         'total_withdrawn': wallet.total_withdrawn,
         # Meal profit moved to GET /api/v1/web/admin-profit/dashboard/
         'recent_transactions': recent,

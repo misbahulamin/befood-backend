@@ -65,19 +65,20 @@ Shared helpers in `wallet.services.delivery_fee_reporting` (`paid_payments_qs`, 
 
 ## Monthly cohort list
 
-`GET /api/v1/web/delivery-fees/reports/monthly/customers/?year=&month=&cohort=paid|pending&q=&page=&page_size=`
+`GET /api/v1/web/delivery-fees/reports/monthly/customers/?year=&month=&cohort=paid|pending&q=&ordering=&page=&page_size=`
 
 | Query | Notes |
 |-------|--------|
 | `year`, `month` | Required; same period validation as monthly report |
 | `cohort` | Required: `paid` or `pending` |
 | `q` | Optional name/phone people search (narrows `count`) |
+| `ordering` | Pending only: `wallet_balance` (asc) or `-wallet_balance` (desc). Default for pending is `-wallet_balance`. Ignored for paid. Invalid values → `400`. |
 | `page`, `page_size` | Pagination (default 20, max 100) |
 
 Unsupported keys → `400` `UNSUPPORTED_FILTER`. Invalid/missing period or cohort → `400`.
 
 - **Paid rows:** `customer_public_id`, `customer_name`, `customer_phone`, `amount`, `paid_at`, `created_at`, `deducted_by_admin`, `payment_public_id` (sorted `-created_at`, then name).
-- **Pending rows:** `customer_public_id`, `customer_name`, `customer_phone`, `wallet_balance`, `wallet_status`, `package_name`, `subscription_status` (sorted name, then phone).
+- **Pending rows:** `customer_public_id`, `customer_name`, `customer_phone`, `wallet_balance`, `wallet_status`, `package_name`, `subscription_status` (sorted by wallet balance before pagination; default high→low).
 
 ## Reversal design (future)
 
