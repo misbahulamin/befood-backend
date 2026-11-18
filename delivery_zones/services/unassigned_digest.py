@@ -105,11 +105,6 @@ def build_unassigned_digest_rows(
 
 
 def _format_admin_plain(rows: list[UnassignedDigestRow]) -> str:
-    if not rows:
-        return (
-            'Unassigned delivery subscribers digest.\n\n'
-            'No unassigned active subscribers in this run.'
-        )
     lines = [
         'Unassigned delivery subscribers digest',
         f'Total: {len(rows)}',
@@ -131,34 +126,28 @@ def _format_admin_plain(rows: list[UnassignedDigestRow]) -> str:
 
 
 def _format_admin_html(rows: list[UnassignedDigestRow]) -> str:
-    if not rows:
-        body = (
-            '<p>Unassigned delivery subscribers digest.</p>'
-            '<p>No unassigned active subscribers in this run.</p>'
+    rows_html = []
+    for row in rows:
+        rows_html.append(
+            '<tr>'
+            f'<td style="border:1px solid #ccc;padding:8px;">{escape(row.name)}</td>'
+            f'<td style="border:1px solid #ccc;padding:8px;">{escape(row.phone)}</td>'
+            f'<td style="border:1px solid #ccc;padding:8px;">{escape(row.subscription_time)}</td>'
+            f'<td style="border:1px solid #ccc;padding:8px;">{escape(row.email)}</td>'
+            '</tr>'
         )
-    else:
-        rows_html = []
-        for row in rows:
-            rows_html.append(
-                '<tr>'
-                f'<td style="border:1px solid #ccc;padding:8px;">{escape(row.name)}</td>'
-                f'<td style="border:1px solid #ccc;padding:8px;">{escape(row.phone)}</td>'
-                f'<td style="border:1px solid #ccc;padding:8px;">{escape(row.subscription_time)}</td>'
-                f'<td style="border:1px solid #ccc;padding:8px;">{escape(row.email)}</td>'
-                '</tr>'
-            )
-        body = (
-            f'<p>Unassigned delivery subscribers digest ({len(rows)} customers).</p>'
-            '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-            'style="border-collapse:collapse;width:100%;font-size:13px;">'
-            '<thead><tr>'
-            '<th style="border:1px solid #ccc;padding:8px;background:#f5f5f5;text-align:left;">Name</th>'
-            '<th style="border:1px solid #ccc;padding:8px;background:#f5f5f5;text-align:left;">Phone</th>'
-            '<th style="border:1px solid #ccc;padding:8px;background:#f5f5f5;text-align:left;">Subscription Time</th>'
-            '<th style="border:1px solid #ccc;padding:8px;background:#f5f5f5;text-align:left;">Email</th>'
-            '</tr></thead>'
-            f'<tbody>{"".join(rows_html)}</tbody></table>'
-        )
+    body = (
+        f'<p>Unassigned delivery subscribers digest ({len(rows)} customers).</p>'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;width:100%;font-size:13px;">'
+        '<thead><tr>'
+        '<th style="border:1px solid #ccc;padding:8px;background:#f5f5f5;text-align:left;">Name</th>'
+        '<th style="border:1px solid #ccc;padding:8px;background:#f5f5f5;text-align:left;">Phone</th>'
+        '<th style="border:1px solid #ccc;padding:8px;background:#f5f5f5;text-align:left;">Subscription Time</th>'
+        '<th style="border:1px solid #ccc;padding:8px;background:#f5f5f5;text-align:left;">Email</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(rows_html)}</tbody></table>'
+    )
     return (
         f'<div style="font-family:Arial,sans-serif;color:{BRAND_DEEP_INK};'
         f'background:{BRAND_WARM_WHITE};padding:16px;">'
@@ -177,7 +166,7 @@ def notify_admins_unassigned_delivery_digest(
     """
     Email verified admins the unassigned-delivery digest.
 
-    Empty runs still send a short summary. Dry-run skips send.
+    Empty candidate lists skip send (no inbox heartbeat). Dry-run skips send.
     Returns True when an email was sent.
     """
     if dry_run:
@@ -187,17 +176,19 @@ def notify_admins_unassigned_delivery_digest(
         )
         return False
 
+    if not rows:
+        logger.info(
+            'Skipping unassigned delivery digest email candidate_count=0 (none pending)'
+        )
+        return False
+
     recipients = resolve_funding_admin_emails()
     if not recipients:
         logger.warning('No admin recipients for unassigned delivery digest; skipping.')
         return False
 
     count = len(rows)
-    if count:
-        subject = f'[BeFood] Unassigned delivery subscribers ({count})'
-    else:
-        subject = '[BeFood] Unassigned delivery subscribers (0) — none pending'
-
+    subject = f'[BeFood] Unassigned delivery subscribers ({count})'
     text_body = _format_admin_plain(rows)
     html_body = _format_admin_html(rows)
     message = EmailMultiAlternatives(
