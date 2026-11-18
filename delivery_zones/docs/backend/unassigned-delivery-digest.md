@@ -21,8 +21,8 @@ python manage.py send_unassigned_delivery_digest [--dry-run] [--slot evening|nig
 | `--dry-run` | Report `candidate_count` only; **no** email |
 | `--slot evening\|night` | Log label only; does not filter candidates |
 
-Empty candidate lists still send a short “no unassigned subscribers” summary
-(unless `--dry-run`).
+Empty candidate lists do **not** send email. Confirm empty runs via cron /
+command logs (`candidate_count=0`, `email_sent=false`), not the inbox.
 
 ## Schedules (managed cron)
 
@@ -40,15 +40,15 @@ Host cron is UTC. **`CRON_TZ` is not used.** Installer:
 | Shared env | `scripts/cron/_cron_env.sh` (absolute venv `PYTHON_BIN`) |
 | Log | `logs/cron-unassigned-delivery-digest.log` |
 
-Each run emails the **full current backlog** (not a since-last-run delta).
+Each non-empty run emails the **full current backlog** (not a since-last-run
+delta). Empty runs still execute and log; they simply skip SMTP.
 
 ## Email
 
 - Recipients: `resolve_funding_admin_emails()` (verified ADMIN + active superusers)
 - Columns: Name, Phone, Subscription Time (`created_at` Asia/Dhaka), Email (or `N/A`)
-- Subject examples:
+- Subject example (only when `candidate_count >= 1`):
   - `[BeFood] Unassigned delivery subscribers (N)`
-  - `[BeFood] Unassigned delivery subscribers (0) — none pending`
 
 ## Service
 
@@ -65,5 +65,5 @@ tail -n 50 logs/cron-unassigned-delivery-digest.log
 ## How to verify
 
 - `delivery_zones.tests.test_unassigned_digest` — query membership, email columns,
-  empty/dry-run, command paths, installer UTC schedule smoke
+  empty skip / dry-run, command paths, installer UTC schedule smoke
 - `bash -n scripts/cron/run_unassigned_delivery_digest.sh scripts/cron/install_managed_cron.sh`

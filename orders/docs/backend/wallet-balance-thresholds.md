@@ -36,14 +36,15 @@ Guest meal purchase additionally requires `recharge_balance - guest_total >= mea
 ## Business rules
 
 1. Subscribe gate unchanged: inclusive compare against `min_wallet_balance_to_order`.
-2. Cron priority per customer: meal-stop → resume → reminder.
-3. Reminder at most once per Asia/Dhaka business day (`last_low_balance_reminder_on`).
-4. Meal-stop **block** when `balance < meal_stop_threshold` (unchanged).
-5. **Post-meal-charge meal-stop (immediate):** after a **successful** meal-delivery wallet debit (`charge_delivered_meal` — auto-deliver or admin mark-delivered), `evaluate_meal_stop_after_debit` compares post-debit spendable balance to `meal_stop_threshold` and applies `meal_service_blocked_low_balance` when strictly below. Idempotent re-attach / charge-disabled paths do **not** re-evaluate. Newly blocked customers get meal-stop notify on `transaction.on_commit` (notify failure must not undo charge or block). This path does **not** resume, remind, or send the admin summary.
-6. Meal-stop-band **push** (“Low Wallet Balance Alert”) on **every** non-dry-run cron evaluation while still below meal-stop — including already-blocked customers. **Not** gated by `last_low_balance_reminder_on` (with the twice-daily cron, about 2 pushes/day while under threshold).
-7. Meal-stop **email** remains primarily on transition to newly blocked (push carries the every-run warning).
-8. Auto-delivery eligibility excludes blocked customers; **admin mark-delivery still works**.
-9. Auto-resume when `balance ≥ meal_stop_threshold`:
+2. **Cron eligibility (active subscribers only):** `candidate_customers_queryset` includes verified, active users who currently have an **ACTIVE** `CustomerSubscription`. Cancelled or never-subscribed customers are **not** evaluated for reminder, meal-stop notify, or admin-report rows — even if a leftover `meal_service_blocked_low_balance` flag remains.
+3. Cron priority per eligible customer: meal-stop → resume → reminder.
+4. Reminder at most once per Asia/Dhaka business day (`last_low_balance_reminder_on`).
+5. Meal-stop **block** when `balance < meal_stop_threshold` (unchanged) for active subscribers.
+6. **Post-meal-charge meal-stop (immediate):** after a **successful** meal-delivery wallet debit (`charge_delivered_meal` — auto-deliver or admin mark-delivered), `evaluate_meal_stop_after_debit` compares post-debit spendable balance to `meal_stop_threshold` and applies `meal_service_blocked_low_balance` when strictly below. Idempotent re-attach / charge-disabled paths do **not** re-evaluate. Newly blocked customers get meal-stop notify on `transaction.on_commit` (notify failure must not undo charge or block). This path does **not** resume, remind, or send the admin summary.
+7. Meal-stop-band **push** (“Low Wallet Balance Alert”) on **every** non-dry-run cron evaluation while still below meal-stop — including already-blocked **active** subscribers. **Not** gated by `last_low_balance_reminder_on` (with the twice-daily cron, about 2 pushes/day while under threshold).
+8. Meal-stop **email** remains primarily on transition to newly blocked (push carries the every-run warning).
+9. Auto-delivery eligibility excludes blocked customers; **admin mark-delivery still works**.
+10. Auto-resume when `balance ≥ meal_stop_threshold` (active-subscriber cron cohort, or credit paths):
    - threshold cron
    - successful `credit_wallet` (`transaction.on_commit`)
    - admin `approve_recharge` (sync inside the same atomic; API field `meal_service_restored`)
@@ -51,9 +52,11 @@ Guest meal purchase additionally requires `recharge_balance - guest_total >= mea
    - Resume clears `meal_service_blocked_low_balance` only (`True` = blocked). It does **not** permanently change meal preferences.
    - After a successful resume, today’s lunch/dinner slots whose meal-off cutoff **already passed** (per live `MealOffSettings` timezone and times) are system-skipped on the existing `OrderDelivery` (`skip_source=system`, `note=cutoff_passed`). Cutoff-not-yet-passed slots keep their current ON/OFF state; customer manual meal-off is never forced back on.
    - Kitchen demand may show the customer moving from `low_balance_blocked_count` to meal-off/skipped for that slot while `final_cooking_count` stays unchanged for an already-cutoff-passed period.
-10. Admin summary always runs after non-dry-run (including empty “no low-balance users” mail).
-11. **08:00 / 20:00 Asia/Dhaka cron remains required** for reminders, resume, admin summary, and customers who fall below threshold without a meal debit. Post-charge evaluation does **not** replace crontab schedules (no 15:05/23:05 cron required for this fix).
-12. **No migration** for post-charge meal-stop, resume-on-approve, or every-run meal-stop push — existing profile fields only.
+11. **Subscription cancel** clears `meal_service_blocked_low_balance` / `meal_service_blocked_at` when set, so cancelled customers leave the low-balance cohort immediately.
+12. **Orphan block cleanup:** each non-dry-run threshold cron silently clears `meal_service_blocked_low_balance` for profiles with no ACTIVE subscription (no customer notify; not listed in the admin report). Dry-run does not clear orphans.
+13. Admin summary always runs after non-dry-run (including empty “no low-balance users” mail). Report rows and counts include **only** active subscribers who met reminder/meal-stop rules; Package is the active subscription name (not `N/A` from missing subscription).
+14. **08:00 / 20:00 Asia/Dhaka cron remains required** for reminders, resume, admin summary, and customers who fall below threshold without a meal debit. Post-charge evaluation does **not** replace crontab schedules (no 15:05/23:05 cron required for this fix).
+15. **No migration** for post-charge meal-stop, resume-on-approve, or every-run meal-stop push — existing profile fields only. Orphan flags are cleared by cancel + cron hygiene above.
 
 ## Admin API
 
@@ -140,8 +143,11 @@ Admin report recipients: same resolution as wallet funding (`resolve_funding_adm
 | Concern | Module |
 |---------|--------|
 | Cron batch | `orders.services.wallet_balance_thresholds.run_wallet_threshold_check` |
+| Cron candidates | `candidate_customers_queryset` — ACTIVE subscription only |
+| Orphan block clear | `clear_orphan_low_balance_blocks` (non-dry-run cron hygiene) |
 | Post-debit stop-only | `orders.services.wallet_balance_thresholds.evaluate_meal_stop_after_debit` |
 | Block / clear | `apply_meal_service_block` / `clear_meal_service_block` |
+| Cancel clears block | `orders.services.subscription_service.cancel_subscription` |
 | Resume on credit / cron | `resume_meal_service_after_balance_recovery` (via `maybe_resume_after_wallet_credit` on credit) |
 | Post-resume cutoff skip | `system_skip_past_cutoff_deliveries_for_customer` in `orders.services.meal_off` |
 

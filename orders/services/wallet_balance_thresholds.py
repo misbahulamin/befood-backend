@@ -8,7 +8,6 @@ from datetime import date
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 
 from orders.models import CustomerSubscription, OrderWalletSettings
@@ -269,13 +268,13 @@ def evaluate_meal_stop_after_debit(customer: CustomerProfile | None) -> bool:
 
 
 def candidate_customers_queryset():
-    """Active subscribers and currently blocked customers (for resume)."""
+    """Verified active users who currently have an active meal subscription."""
     active_ids = CustomerSubscription.objects.filter(
         status=CustomerSubscription.Status.ACTIVE,
     ).values_list('customer_id', flat=True)
     return (
         CustomerProfile.objects.filter(
-            Q(pk__in=active_ids) | Q(meal_service_blocked_low_balance=True),
+            pk__in=active_ids,
             is_email_verified=True,
             user__is_active=True,
         )
@@ -288,6 +287,26 @@ def candidate_customers_queryset():
         .distinct()
         .order_by('id')
     )
+
+
+def clear_orphan_low_balance_blocks() -> int:
+    """
+    Clear leftover meal-stop flags for customers with no ACTIVE subscription.
+
+    Silent hygiene for pre-fix cancels / never-subscribed profiles. Does not
+    send notifications. Returns the number of profiles cleared.
+    """
+    active_ids = CustomerSubscription.objects.filter(
+        status=CustomerSubscription.Status.ACTIVE,
+    ).values_list('customer_id', flat=True)
+    orphans = CustomerProfile.objects.filter(
+        meal_service_blocked_low_balance=True,
+    ).exclude(pk__in=active_ids)
+    cleared = 0
+    for customer in orphans.iterator(chunk_size=100):
+        if clear_meal_service_block(customer):
+            cleared += 1
+    return cleared
 
 
 def _build_row(
@@ -334,6 +353,19 @@ def run_wallet_threshold_check(
 
     result = WalletThresholdRunResult(business_date=business_date, dry_run=dry_run)
     affected_by_id: dict[int, AffectedUserRow] = {}
+
+    if not dry_run:
+        try:
+            orphan_cleared = clear_orphan_low_balance_blocks()
+            if orphan_cleared:
+                logger.info(
+                    'Cleared orphan low-balance blocks count=%s business_date=%s',
+                    orphan_cleared,
+                    business_date.isoformat(),
+                )
+        except Exception:
+            result.errors += 1
+            logger.exception('Orphan low-balance block cleanup failed')
 
     for customer in candidate_customers_queryset().iterator(chunk_size=100):
         result.evaluated += 1

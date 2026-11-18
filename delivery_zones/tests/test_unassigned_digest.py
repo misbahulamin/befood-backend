@@ -234,12 +234,10 @@ class UnassignedDigestEmailTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn('N/A', mail.outbox[0].body)
 
-    def test_empty_run_sends_summary(self):
+    def test_empty_run_skips_email(self):
         sent = notify_admins_unassigned_delivery_digest(rows=[], dry_run=False)
-        self.assertTrue(sent)
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertIn('none pending', mail.outbox[0].subject.lower())
-        self.assertIn('No unassigned active subscribers', mail.outbox[0].body)
+        self.assertFalse(sent)
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_dry_run_does_not_send(self):
         customer = _make_customer('digest_dry', '1718000202')
@@ -361,10 +359,9 @@ class UnassignedDigestCommandTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn('Salma', mail.outbox[0].body)
 
-    def test_command_empty_path_sends_summary(self):
+    def test_command_empty_path_skips_email(self):
         call_command('send_unassigned_delivery_digest')
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertIn('No unassigned active subscribers', mail.outbox[0].body)
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_command_dry_run_no_mail(self):
         customer = _make_customer('digest_cmd_dry', '1718000402')

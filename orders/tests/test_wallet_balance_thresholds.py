@@ -12,12 +12,14 @@ from PIL import Image
 from rest_framework.authtoken.models import Token
 
 from meals.models import MealCategory
-from orders.models import OrderDelivery, OrderWalletSettings
+from orders.models import CustomerSubscription, OrderDelivery, OrderWalletSettings
 from orders.services.auto_meal_delivery import eligible_delivery_queryset
 from orders.services.order_delivery import mark_delivery
-from orders.services.subscription_service import subscribe_customer
+from orders.services.subscription_service import cancel_subscription, subscribe_customer
 from orders.services.wallet_balance_thresholds import (
     apply_meal_service_block,
+    candidate_customers_queryset,
+    clear_orphan_low_balance_blocks,
     run_wallet_threshold_check,
 )
 from orders.tests.test_meal_delivery_wallet_payment import ensure_priced_delivery_slot
@@ -301,3 +303,146 @@ class WalletBalanceThresholdTests(TestCase):
         self.customer_profile.refresh_from_db()
         self.assertIsNone(self.customer_profile.last_low_balance_reminder_on)
         self.assertEqual(len(mail.outbox), 0)
+
+    def test_candidate_queryset_excludes_blocked_non_subscribers(self):
+        apply_meal_service_block(self.customer_profile)
+        self.customer_profile.refresh_from_db()
+        self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)
+        self.assertFalse(
+            candidate_customers_queryset().filter(pk=self.customer_profile.pk).exists()
+        )
+
+        subscription = self._subscribe()
+        self.assertTrue(
+            candidate_customers_queryset().filter(pk=self.customer_profile.pk).exists()
+        )
+
+        cancel_subscription(subscription, today=self.business_date, cancel_source='system')
+        self.assertFalse(
+            candidate_customers_queryset().filter(pk=self.customer_profile.pk).exists()
+        )
+
+    def test_cancel_clears_low_balance_block(self):
+        subscription = self._subscribe()
+        apply_meal_service_block(self.customer_profile)
+        self.customer_profile.refresh_from_db()
+        self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)
+
+        cancel_subscription(subscription, today=self.business_date, cancel_source='system')
+        self.customer_profile.refresh_from_db()
+        self.assertFalse(self.customer_profile.meal_service_blocked_low_balance)
+        self.assertIsNone(self.customer_profile.meal_service_blocked_at)
+
+        # Idempotent cancel does not re-raise or re-block.
+        cancel_subscription(subscription, today=self.business_date, cancel_source='system')
+        self.customer_profile.refresh_from_db()
+        self.assertFalse(self.customer_profile.meal_service_blocked_low_balance)
+
+    def test_orphan_block_cleanup_silent_no_notify(self):
+        apply_meal_service_block(self.customer_profile)
+        self.wallet.balance = Decimal('50.00')
+        self.wallet.save(update_fields=['balance', 'updated_at'])
+        DeviceToken.objects.create(
+            user=self.customer_user,
+            token='thresh-orphan-token',
+            platform=DeviceToken.Platform.ANDROID,
+            is_active=True,
+        )
+
+        with patch(
+            'notifications.services.wallet_threshold_notifications.send_to_tokens',
+            return_value=[],
+        ) as send_push:
+            cleared = clear_orphan_low_balance_blocks()
+            result = run_wallet_threshold_check(as_of=self.business_date, dry_run=False)
+
+        self.assertEqual(cleared, 1)
+        self.customer_profile.refresh_from_db()
+        self.assertFalse(self.customer_profile.meal_service_blocked_low_balance)
+        self.assertEqual(result.evaluated, 0)
+        self.assertEqual(result.affected, [])
+        self.assertEqual(send_push.call_count, 0)
+        customer_mails = [
+            m
+            for m in mail.outbox
+            if self.customer_user.email in m.to
+            and 'Low balance users report' not in m.subject
+        ]
+        self.assertEqual(customer_mails, [])
+        admin_mails = [m for m in mail.outbox if 'Low balance users report' in m.subject]
+        self.assertEqual(len(admin_mails), 1)
+        self.assertIn('No low-balance or meal-stopped users', admin_mails[0].body)
+
+    def test_cancelled_subscriber_omitted_from_admin_report_and_notify(self):
+        subscription = self._subscribe()
+        apply_meal_service_block(self.customer_profile)
+        # Simulate pre-fix cancel that left the block flag set.
+        CustomerSubscription.objects.filter(pk=subscription.pk).update(
+            status=CustomerSubscription.Status.CANCELLED,
+        )
+        self.customer_profile.meal_service_blocked_low_balance = True
+        self.customer_profile.save(
+            update_fields=['meal_service_blocked_low_balance', 'updated_at']
+        )
+        self.wallet.balance = Decimal('50.00')
+        self.wallet.save(update_fields=['balance', 'updated_at'])
+        DeviceToken.objects.create(
+            user=self.customer_user,
+            token='thresh-cancelled-token',
+            platform=DeviceToken.Platform.ANDROID,
+            is_active=True,
+        )
+
+        with patch(
+            'notifications.services.wallet_threshold_notifications.send_to_tokens',
+            return_value=[],
+        ) as send_push:
+            result = run_wallet_threshold_check(as_of=self.business_date, dry_run=False)
+
+        self.assertEqual(result.evaluated, 0)
+        self.assertEqual(result.stopped, 0)
+        self.assertEqual(result.reminded, 0)
+        self.assertEqual(result.affected, [])
+        self.assertEqual(send_push.call_count, 0)
+        self.customer_profile.refresh_from_db()
+        self.assertFalse(self.customer_profile.meal_service_blocked_low_balance)
+
+        admin_mails = [m for m in mail.outbox if 'Low balance users report' in m.subject]
+        self.assertEqual(len(admin_mails), 1)
+        self.assertNotIn('Rahim', admin_mails[0].body)
+        self.assertIn('No low-balance or meal-stopped users', admin_mails[0].body)
+
+    def test_active_subscriber_still_in_admin_report_with_package(self):
+        self._subscribe()
+        self.wallet.balance = Decimal('180.00')
+        self.wallet.save(update_fields=['balance', 'updated_at'])
+
+        with patch(
+            'notifications.services.wallet_threshold_notifications.send_to_tokens',
+            return_value=[],
+        ):
+            result = run_wallet_threshold_check(as_of=self.business_date, dry_run=False)
+
+        self.assertEqual(len(result.affected), 1)
+        self.assertEqual(result.affected[0].package_name, 'Student Package')
+        self.assertNotEqual(result.affected[0].package_name, 'N/A')
+
+        admin_mails = [m for m in mail.outbox if 'Low balance users report' in m.subject]
+        self.assertEqual(len(admin_mails), 1)
+        self.assertIn('Student Package', admin_mails[0].body)
+        self.assertIn('Total affected: 1', admin_mails[0].body)
+
+    def test_dry_run_skips_orphan_cleanup_and_still_counts_active(self):
+        apply_meal_service_block(self.customer_profile)
+        self._subscribe()
+        self.wallet.balance = Decimal('290.00')
+        self.wallet.save(update_fields=['balance', 'updated_at'])
+
+        dry = run_wallet_threshold_check(as_of=self.business_date, dry_run=True)
+        self.assertEqual(dry.reminded, 1)
+        self.assertEqual(len(mail.outbox), 0)
+        # Never-subscribed orphan would be a separate profile; active blocked stays.
+        self.customer_profile.refresh_from_db()
+        # Orphan cleanup must not run on dry-run; this profile is active so flag may
+        # remain until a live stop/resume path — dry-run does not mutate blocks.
+        self.assertTrue(self.customer_profile.meal_service_blocked_low_balance)

@@ -529,6 +529,20 @@ def cancel_subscription(
         reason_text=text,
         cancelled_by=cancelled_by_enum,
     )
+
+    # Drop leftover meal-stop flag so cancelled customers leave the low-balance cohort.
+    customer = locked.customer
+    if customer.meal_service_blocked_low_balance:
+        customer.meal_service_blocked_low_balance = False
+        customer.meal_service_blocked_at = None
+        customer.save(
+            update_fields=[
+                'meal_service_blocked_low_balance',
+                'meal_service_blocked_at',
+                'updated_at',
+            ]
+        )
+
     locked.refresh_from_db()
     return locked
 
